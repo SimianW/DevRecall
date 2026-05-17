@@ -1,7 +1,7 @@
 # DevRecall MVP (v1.0) — Design
 
 **Date:** 2026-05-16
-**Status:** Approved (pending user spec review)
+**Status:** Reviewed
 **Author:** Simian Wang
 
 ---
