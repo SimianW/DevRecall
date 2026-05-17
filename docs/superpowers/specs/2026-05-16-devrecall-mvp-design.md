@@ -2,7 +2,7 @@
 
 **Date:** 2026-05-16
 **Status:** Approved (pending user spec review)
-**Author:** Simian Wang (with Claude)
+**Author:** Simian Wang
 
 ---
 
@@ -81,7 +81,7 @@ Five components, talking via well-defined boundaries:
 
 ### Component responsibilities
 
-1. **Content Script** — extracts main page text via `@mozilla/readability` and tracks dwell time. Stateless. Runs `extract()` when asked by the worker.
+1. **Content Script** — extracts main page text via `@mozilla/readability`. Stateless: injected on-demand via `chrome.scripting.executeScript`, runs `extract()`, returns the result, and is torn down. Dwell time for manual saves is computed from `performance.now()` at injection time (approximate page-open duration). For auto-save, the dwell timer lives in the worker's `CaptureService` (§6).
 2. **Popup** — toolbar entry point. Save action only. Sends messages, never reads IndexedDB.
 3. **Side Panel** — main UI. Three views: search, library, page detail. Sends queries to the worker, renders ranked results.
 4. **Service Worker** — the brain. Hosts `CaptureService`, `RetrievalService`, the `LLMProvider` interface (with `OpenAIProvider`), and the Dexie repository layer.
@@ -158,8 +158,8 @@ interface SettingsRecord {
 
 interface CorpusStatsRecord {
   id: "singleton";
-  docCount: number;      // total number of ChunkRecords
-  totalTokens: number;   // sum of ChunkRecord.tokenCount across all chunks
+  docCount: number; // total number of ChunkRecords
+  totalTokens: number; // sum of ChunkRecord.tokenCount across all chunks
   // avgdl = totalTokens / docCount — recomputed in BM25 at query time, never stored
   schemaVersion: 1;
 }
@@ -183,7 +183,7 @@ interface CorpusStatsRecord {
 - **`schemaVersion: 1`** on records that may evolve. Dexie migrations key off this.
 - **No separate `tags` table.** Arrays on `PageRecord` are sufficient for v1.0.
 - **API key in `chrome.storage.local`, not IndexedDB.** `chrome.storage.local` is partitioned per extension and unreachable from content scripts. Defense in depth.
-- **`navigator.storage.persist()` at install time.** IndexedDB is best-effort storage by default — Chrome can silently evict it under disk pressure. Called in `chrome.runtime.onInstalled`; options page shows whether persistent storage was granted. Without this, large stores can be cleared without warning.
+- **`navigator.storage.persist()` at install time.** IndexedDB is best-effort storage by default — Chrome can silently evict it under disk pressure. Called from the popup on first open (the only guaranteed window context early in the extension lifecycle; `chrome.runtime.onInstalled` runs in the service worker where `persist()` is unavailable). Options page shows whether persistent storage was granted. Without this, large stores can be cleared without warning.
 
 ## 6. Capture pipeline
 
@@ -238,8 +238,16 @@ interface CorpusStatsRecord {
 
 - Listens to `chrome.tabs.onUpdated` for `status:'complete'`.
 - If `domain ∈ allowlist`, start a 30s dwell timer keyed on `tabId`.
-- If still on the page after 30s and tab active → `CaptureService.save(tabId, {mode:'auto'})`.
+- Also listens to `chrome.tabs.onActivated` — cancels any running dwell timer when the user switches away from a tab, since the page is no longer being viewed.
+- If still on the page after 30s and tab still active → `CaptureService.save(tabId, {mode:'auto'})`.
 - Allowlist hard-coded in v1.0: `['github.com', 'stackoverflow.com', 'developer.mozilla.org', 'kubernetes.io', 'docs.python.org', 'react.dev', 'nodejs.org', 'typescriptlang.org']`. User-editable in v1.1.
+
+### Delete flow
+
+- Triggered from side panel detail view or "Delete all data" on options page.
+- Single-page delete: `repo.tx('rw', pages, chunks, corpusStats, () => { delete page; delete its chunks; subtract chunk count + tokens from corpusStats })`. One transaction — either all gone or all kept.
+- "Delete all": `repo.tx('rw', pages, chunks, corpusStats, () => { clear all three tables; reset corpusStats to zero })`.
+- After either delete: broadcast `page.updated` → side panel refreshes, `RetrievalService` invalidates caches and reloads chunk array.
 
 ## 7. Retrieval pipeline
 
@@ -276,7 +284,7 @@ interface CorpusStatsRecord {
 - Score: `Σ_terms IDF(t) · (tf · (k1+1)) / (tf + k1·(1 - b + b·|d|/avgdl))`, `k1=1.5, b=0.75`.
 - `avgdl = corpusStats.totalTokens / corpusStats.docCount` — loaded from the `corpusStats` table at query time. Updated atomically inside the step-7 capture transaction on every page upsert and delete so scores don't drift as the corpus grows.
 - Keep top-K (default 50).
-- Plenty fast for 10k–20k chunks. Inverted index later only if measured slow.
+- Sufficient for 10k–20k chunks: each chunk is ~8KB (2KB text + 6KB Float32Array embedding), so a full scan loads ~80–160MB into worker memory. `RetrievalService` preloads all chunks at worker startup into an in-memory array (refreshed on `page.updated` broadcast) to avoid per-query IndexedDB deserialization. Memory budget is acceptable for a portfolio/demo workload; inverted index deferred to when measured slow on real data.
 
 **Vector — cosine over Float32Array, ~30 lines.**
 
@@ -373,7 +381,7 @@ Two surfaces only.
 
 ### Options page (full tab)
 
-- API key input (password field, show/hide toggle, "test connection" button that sends `POST /v1/embeddings` with a one-token input). This exercises the exact API path the extension uses and fails fast if the key lacks embedding permissions — unlike `GET /v1/models` which succeeds for any valid key regardless of scope.
+- API key input (password field, show/hide toggle, "test connection" button that sends `POST /v1/embeddings` with a one-token input). This exercises the exact API path the extension uses and fails fast if the key lacks embedding permissions — unlike `GET /v1/models` which succeeds for any valid key regardless of scope. Cost is negligible (~0.00002¢ per test) since a single token is embedded. A "Testing…" loading state prevents double-clicks.
 - Auto-save toggle + dwell threshold slider.
 - Storage usage: "X pages, Y chunks, Z MB."
 - "Export all data" (JSON download).
@@ -389,16 +397,16 @@ Two surfaces only.
 
 ### Failure modes
 
-| Failure                                         | Where caught                      | User sees                                                                                                        | Persisted?        |
-| ----------------------------------------------- | --------------------------------- | ---------------------------------------------------------------------------------------------------------------- | ----------------- |
-| No API key set                                  | Worker pre-check before LLM calls | Save button disabled; side panel banner "Set API key →"                                                          | n/a               |
-| Invalid API key (401)                           | `OpenAIProvider`                  | Toast "API key rejected. Check settings." + row `failed`, `errorReason: 'auth'`                                  | yes (retry)       |
-| Rate limit (429)                                | `OpenAIProvider`                  | Auto-retry with exponential backoff (3 attempts: 1s/2s/4s). On final failure: `errorReason: 'rate_limited'`      | yes               |
-| Network down                                    | `OpenAIProvider`                  | Same as rate limit but `errorReason: 'network'`                                                                  | yes               |
-| Readability returns nothing                     | `CaptureService` step 2           | Toast "Couldn't read page content" — no row created                                                              | no                |
-| Page is `chrome://`, `file://`, PDF, etc.       | `CaptureService` step 1           | Save button disabled with tooltip "DevRecall can't save this page type"                                          | no                |
-| LLM returns malformed tag JSON                  | `OpenAIProvider`                  | One retry with stricter prompt; on second failure save with `topics:[], technologies:[]` and log warning         | yes (best-effort) |
-| IndexedDB quota exceeded                        | `Repository`                      | Side panel banner "Storage full. Delete pages or export." + block new saves                                      | n/a               |
+| Failure                                         | Where caught                      | User sees                                                                                                                                                                                                                          | Persisted?        |
+| ----------------------------------------------- | --------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ----------------- |
+| No API key set                                  | Worker pre-check before LLM calls | Save button disabled; side panel banner "Set API key →"                                                                                                                                                                            | n/a               |
+| Invalid API key (401)                           | `OpenAIProvider`                  | Toast "API key rejected. Check settings." + row `failed`, `errorReason: 'auth'`                                                                                                                                                    | yes (retry)       |
+| Rate limit (429)                                | `OpenAIProvider`                  | Auto-retry with exponential backoff (3 attempts: 1s/2s/4s). On final failure: `errorReason: 'rate_limited'`                                                                                                                        | yes               |
+| Network down                                    | `OpenAIProvider`                  | Same as rate limit but `errorReason: 'network'`                                                                                                                                                                                    | yes               |
+| Readability returns nothing                     | `CaptureService` step 2           | Toast "Couldn't read page content" — no row created                                                                                                                                                                                | no                |
+| Page is `chrome://`, `file://`, PDF, etc.       | `CaptureService` step 1           | Save button disabled with tooltip "DevRecall can't save this page type"                                                                                                                                                            | no                |
+| LLM returns malformed tag JSON                  | `OpenAIProvider`                  | One retry with stricter prompt; on second failure save with `topics:[], technologies:[]` and log warning                                                                                                                           | yes (best-effort) |
+| IndexedDB quota exceeded                        | `Repository`                      | Side panel banner "Storage full. Delete pages or export." + block new saves                                                                                                                                                        | n/a               |
 | Worker killed mid-save (after step 4, before 7) | Recovery on next boot             | On worker init, scan `status:'pending' AND savedAt < now-5min`. If chunks exist for the page → status was written in step 7, mark `ready`. If no chunks exist → step 7 never ran, mark `failed` with `errorReason: 'interrupted'`. | yes               |
 
 ### Patterns
