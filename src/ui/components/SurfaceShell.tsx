@@ -15,7 +15,7 @@ export function SurfaceShell({ title, actions, children }: SurfaceShellProps) {
           <div className="flex items-center gap-2">{actions}</div>
         ) : null}
       </header>
-      <section className="px-4 py-4">{children}</section>
+      <div className="px-4 py-4">{children}</div>
     </main>
   );
 }
