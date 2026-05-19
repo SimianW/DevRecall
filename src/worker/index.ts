@@ -26,6 +26,10 @@ export async function handleRequest(
           persistentStorage: "unknown",
         },
       };
+
+    case "page.save":
+    case "page.list":
+      throw new Error("Not implemented: " + request.type);
   }
 }
 
