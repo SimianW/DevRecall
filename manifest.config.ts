@@ -17,6 +17,13 @@ export default defineManifest({
     service_worker: "src/worker/index.ts",
     type: "module",
   },
+  content_scripts: [
+    {
+      matches: ["http://*/*", "https://*/*"],
+      js: ["src/content/extract.ts"],
+      run_at: "document_idle",
+    },
+  ],
   permissions: ["activeTab", "sidePanel", "scripting", "storage", "tabs"],
   host_permissions: ["http://*/*", "https://*/*"],
 });
