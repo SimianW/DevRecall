@@ -29,6 +29,28 @@ describe("Popup", () => {
     expect(await screen.findByRole("button", { name: "Saved" })).toBeEnabled();
   });
 
+  it("shows saving state while the save is in flight", async () => {
+    const user = userEvent.setup();
+    let resolveSave: () => void;
+    const saveCurrentPage = vi
+      .fn()
+      .mockImplementation(
+        () => new Promise<void>((resolve) => { resolveSave = resolve; }),
+      );
+
+    render(<Popup saveCurrentPage={saveCurrentPage} />);
+
+    await user.click(screen.getByRole("button", { name: "Save this page" }));
+
+    expect(
+      screen.getByRole("button", { name: "Saving..." }),
+    ).toBeDisabled();
+    expect(saveCurrentPage).toHaveBeenCalledTimes(1);
+
+    resolveSave!();
+    expect(await screen.findByRole("button", { name: "Saved" })).toBeEnabled();
+  });
+
   it("shows an error state when save fails", async () => {
     const user = userEvent.setup();
     const saveCurrentPage = vi.fn().mockRejectedValue(new Error("no tab"));
