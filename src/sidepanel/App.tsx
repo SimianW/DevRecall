@@ -15,19 +15,23 @@ async function defaultListPages(): Promise<PageListItem[]> {
     return [];
   }
 
-  const request: DevRecallRequest = {
-    type: "page.list",
-    payload: { limit: 50 },
-  };
-  const response = (await chrome.runtime.sendMessage(
-    request,
-  )) as DevRecallResponse;
+  try {
+    const request: DevRecallRequest = {
+      type: "page.list",
+      payload: { limit: 50 },
+    };
+    const response = (await chrome.runtime.sendMessage(
+      request,
+    )) as DevRecallResponse;
 
-  if (response.type !== "page.listed") {
+    if (response.type !== "page.listed") {
+      return [];
+    }
+
+    return response.payload.pages ?? [];
+  } catch {
     return [];
   }
-
-  return response.payload.pages;
 }
 
 export function App({ listPages = defaultListPages }: AppProps) {
@@ -39,11 +43,18 @@ export function App({ listPages = defaultListPages }: AppProps) {
 
     async function loadPages() {
       setLoading(true);
-      const nextPages = await listPages();
+      try {
+        const nextPages = await listPages();
 
-      if (!cancelled) {
-        setPages(nextPages);
-        setLoading(false);
+        if (!cancelled) {
+          setPages(nextPages);
+          setLoading(false);
+        }
+      } catch {
+        if (!cancelled) {
+          setPages([]);
+          setLoading(false);
+        }
       }
     }
 
