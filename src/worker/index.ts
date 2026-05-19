@@ -5,7 +5,7 @@ import {
   type DevRecallResponse,
 } from "../shared/messages";
 import type { PageListItem, PageRecord } from "../shared/types";
-import { PageRepo } from "./repository/PageRepo";
+import { PageRepo, toPageListItem } from "./repository/PageRepo";
 import { CaptureService } from "./services/CaptureService";
 
 type CapturePort = {
@@ -70,21 +70,6 @@ export async function handleRequest(
   }
 }
 
-function toPageListItem(page: PageRecord): PageListItem {
-  return {
-    id: page.id,
-    url: page.url,
-    title: page.title,
-    domain: page.domain,
-    sourceType: page.sourceType,
-    summary: page.summary,
-    topics: page.topics,
-    technologies: page.technologies,
-    savedAt: page.savedAt,
-    status: page.status,
-  };
-}
-
 if (typeof chrome !== "undefined" && chrome.runtime?.onInstalled) {
   chrome.runtime.onInstalled.addListener(() => {
     console.info("[DevRecall] installed");
@@ -98,7 +83,9 @@ if (typeof chrome !== "undefined" && chrome.runtime?.onMessage) {
       _sender,
       sendResponse: (response: DevRecallResponse) => void,
     ) => {
-      void handleRequest(request).then(sendResponse);
+      void handleRequest(request).then(sendResponse).catch((error) => {
+        console.error("[DevRecall] handler error:", error);
+      });
       return true;
     },
   );
