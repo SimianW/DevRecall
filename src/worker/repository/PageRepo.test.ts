@@ -36,7 +36,7 @@ describe("PageRepo", () => {
         "The HorizontalPodAutoscaler automatically updates workload resources.",
       readingTimeMs: 42_000,
       saveMode: "manual",
-      status: "ready",
+      status: "pending",
       schemaVersion: 1,
     });
     expect(page.id).toMatch(/^[0-9A-HJKMNP-TV-Z]{26}$/);
@@ -96,5 +96,57 @@ describe("PageRepo", () => {
       "IndexedDB API",
     ]);
     expect(pages[0]).not.toHaveProperty("fullText");
+  });
+
+  it("retrieves a page by id", async () => {
+    const page = await repo.upsertCapturedPage({
+      url: "https://react.dev/reference/react/useState",
+      title: "useState",
+      fullText: "Returns a stateful value.",
+      readingTimeMs: 5000,
+      saveMode: "manual",
+    });
+
+    const found = await repo.getById(page.id);
+
+    expect(found).toMatchObject({ id: page.id, title: "useState" });
+  });
+
+  it("returns undefined for a missing id", async () => {
+    const found = await repo.getById("01NONEXISTENT0000000000000");
+
+    expect(found).toBeUndefined();
+  });
+
+  it("updates a page with partial data", async () => {
+    const page = await repo.upsertCapturedPage({
+      url: "https://react.dev/reference/react/useEffect",
+      title: "useEffect",
+      fullText: "Lets you synchronize a component.",
+      readingTimeMs: 6000,
+      saveMode: "manual",
+    });
+
+    await repo.updatePage(page.id, {
+      summary: "Synchronizes a component with an external system.",
+      sourceType: "official_docs",
+      topics: ["react", "hooks"],
+      technologies: ["React"],
+      intent: "reference",
+      status: "ready",
+    });
+
+    const updated = await repo.getById(page.id);
+
+    expect(updated).toMatchObject({
+      id: page.id,
+      title: "useEffect",
+      summary: "Synchronizes a component with an external system.",
+      sourceType: "official_docs",
+      topics: ["react", "hooks"],
+      technologies: ["React"],
+      intent: "reference",
+      status: "ready",
+    });
   });
 });

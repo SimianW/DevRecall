@@ -31,13 +31,24 @@ export class PageRepo {
       visitedAt: now,
       readingTimeMs: input.readingTimeMs,
       saveMode: input.saveMode,
-      status: "ready",
+      status: "pending",
       schemaVersion: 1,
     };
 
     await this.database.pages.put(page);
 
     return page;
+  }
+
+  async getById(id: string): Promise<PageRecord | undefined> {
+    return this.database.pages.get(id);
+  }
+
+  async updatePage(
+    id: string,
+    data: Partial<Omit<PageRecord, "id" | "schemaVersion">>,
+  ): Promise<void> {
+    await this.database.pages.update(id, data);
   }
 
   async listPages({ limit }: { limit: number }): Promise<PageListItem[]> {
