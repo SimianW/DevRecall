@@ -5,11 +5,16 @@ import {
   type DevRecallResponse,
 } from "../shared/messages";
 import type { PageListItem, PageRecord } from "../shared/types";
+import {
+  testOpenAIConnection,
+} from "./llm/OpenAIProvider";
 import { PageRepo, toPageListItem } from "./repository/PageRepo";
 import { CaptureService } from "./services/CaptureService";
+import { ChromeApiKeyStore, type ApiKeyStore } from "./settings/ApiKeyStore";
 
 type CapturePort = {
   save(tabId: number): Promise<PageRecord>;
+  processPage(pageId: string, apiKey: string): Promise<PageRecord>;
 };
 
 type PageListPort = {
@@ -19,12 +24,18 @@ type PageListPort = {
 type HandlerDeps = {
   captureService: CapturePort;
   pageRepo: PageListPort;
+  apiKeyStore: ApiKeyStore;
+  testConnection: (
+    apiKey: string,
+  ) => Promise<{ success: boolean; message: string }>;
 };
 
 const pageRepo = new PageRepo();
 const defaultDeps: HandlerDeps = {
-  captureService: new CaptureService(pageRepo),
+  captureService: new CaptureService(pageRepo, undefined, pageRepo),
   pageRepo,
+  apiKeyStore: new ChromeApiKeyStore(),
+  testConnection: testOpenAIConnection,
 };
 
 export async function handleRequest(
@@ -41,22 +52,61 @@ export async function handleRequest(
         },
       };
 
-    case "settings.getStatus":
+    case "settings.getStatus": {
+      const apiKey = await deps.apiKeyStore.getApiKey();
+
       return {
         type: "settings.status",
         payload: {
-          hasApiKey: false,
+          hasApiKey: apiKey !== null,
           persistentStorage: "unknown",
         },
       };
+    }
 
-    case "page.save":
+    case "settings.setApiKey": {
+      await deps.apiKeyStore.setApiKey(request.payload.apiKey);
+
+      return { type: "settings.apiKeySet" };
+    }
+
+    case "settings.testConnection": {
+      const apiKey = await deps.apiKeyStore.getApiKey();
+
+      if (!apiKey) {
+        return {
+          type: "settings.connectionTestResult",
+          payload: { success: false, message: "No API key set" },
+        };
+      }
+
+      const result = await deps.testConnection(apiKey);
+
+      return {
+        type: "settings.connectionTestResult",
+        payload: result,
+      };
+    }
+
+    case "page.save": {
+      const page = await deps.captureService.save(request.payload.tabId);
+      const apiKey = await deps.apiKeyStore.getApiKey();
+
+      if (apiKey) {
+        void deps.captureService
+          .processPage(page.id, apiKey)
+          .catch((error) => {
+            console.error("[DevRecall] LLM processing error:", error);
+          });
+      }
+
       return {
         type: "page.saved",
         payload: {
-          page: toPageListItem(await deps.captureService.save(request.payload.tabId)),
+          page: toPageListItem(page),
         },
       };
+    }
 
     case "page.list":
       return {
@@ -67,6 +117,9 @@ export async function handleRequest(
           }),
         },
       };
+
+    default:
+      throw new Error(`Unhandled request type: ${(request as { type: string }).type}`);
   }
 }
 
