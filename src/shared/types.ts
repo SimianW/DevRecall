@@ -63,3 +63,11 @@ export type ExtractedPage = {
 export type PageCaptureInput = ExtractedPage & {
   saveMode: SaveMode;
 };
+
+export type TaggingResult = {
+  summary: string;
+  sourceType: SourceType;
+  topics: string[];
+  technologies: string[];
+  intent: Intent;
+};

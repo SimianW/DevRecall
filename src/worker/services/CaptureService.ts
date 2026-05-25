@@ -6,7 +6,6 @@ import type {
   ExtractedPage,
   PageCaptureInput,
   PageRecord,
-  TaggingResult,
 } from "../../shared/types";
 import {
   OpenAIProvider,

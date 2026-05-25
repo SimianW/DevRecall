@@ -8,6 +8,8 @@ export type PersistentStorageState = "unknown" | "granted" | "denied";
 export type DevRecallRequest =
   | { type: "devrecall.ping" }
   | { type: "settings.getStatus" }
+  | { type: "settings.setApiKey"; payload: { apiKey: string } }
+  | { type: "settings.testConnection" }
   | { type: "page.save"; payload: { tabId: number } }
   | { type: "page.list"; payload: { limit: number } };
 
@@ -24,6 +26,14 @@ export type DevRecallResponse =
       payload: {
         hasApiKey: boolean;
         persistentStorage: PersistentStorageState;
+      };
+    }
+  | { type: "settings.apiKeySet" }
+  | {
+      type: "settings.connectionTestResult";
+      payload: {
+        success: boolean;
+        message: string;
       };
     }
   | {
