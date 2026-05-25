@@ -1,6 +1,6 @@
-import { useState } from "react";
+import { useEffect, useState } from "react";
 
-import type { DevRecallRequest } from "../shared/messages";
+import type { DevRecallRequest, DevRecallResponse } from "../shared/messages";
 import { SurfaceShell } from "../ui/components";
 
 type SaveState = "idle" | "saving" | "saved" | "failed";
@@ -8,7 +8,20 @@ type SaveState = "idle" | "saving" | "saved" | "failed";
 type PopupProps = {
   openSidePanel?: () => void;
   saveCurrentPage?: () => Promise<void>;
+  checkApiKey?: () => Promise<boolean>;
 };
+
+async function defaultCheckApiKey(): Promise<boolean> {
+  if (typeof chrome === "undefined" || !chrome.runtime?.sendMessage) {
+    return false;
+  }
+  const request: DevRecallRequest = { type: "settings.getStatus" };
+  const response = (await chrome.runtime.sendMessage(request)) as Extract<
+    DevRecallResponse,
+    { type: "settings.status" }
+  >;
+  return response?.payload?.hasApiKey ?? false;
+}
 
 function defaultOpenSidePanel() {
   if (typeof chrome === "undefined" || !chrome.sidePanel?.open) {
@@ -47,8 +60,14 @@ async function defaultSaveCurrentPage() {
 export function Popup({
   openSidePanel = defaultOpenSidePanel,
   saveCurrentPage = defaultSaveCurrentPage,
+  checkApiKey = defaultCheckApiKey,
 }: PopupProps) {
   const [saveState, setSaveState] = useState<SaveState>("idle");
+  const [hasApiKey, setHasApiKey] = useState<boolean | null>(null);
+
+  useEffect(() => {
+    void checkApiKey().then(setHasApiKey);
+  }, [checkApiKey]);
 
   async function handleSave() {
     setSaveState("saving");
@@ -61,6 +80,9 @@ export function Popup({
     }
   }
 
+  const isLoading = hasApiKey === null;
+  const isSaveDisabled = isLoading || hasApiKey === false || saveState === "saving";
+
   return (
     <SurfaceShell title="DevRecall">
       <div className="flex min-h-[180px] flex-col gap-4">
@@ -71,18 +93,23 @@ export function Popup({
           </p>
         </div>
 
-        <button
-          type="button"
-          disabled={saveState === "saving"}
-          onClick={handleSave}
-          className="w-full rounded-md bg-accent px-3 py-2 text-sm font-medium text-white disabled:bg-slate-300 disabled:text-slate-600"
-        >
-          {saveState === "saving"
-            ? "Saving..."
-            : saveState === "saved"
-              ? "Saved"
-              : "Save this page"}
-        </button>
+        <div>
+          <button
+            type="button"
+            disabled={isSaveDisabled}
+            onClick={handleSave}
+            className="w-full rounded-md bg-accent px-3 py-2 text-sm font-medium text-white disabled:bg-slate-300 disabled:text-slate-600"
+          >
+            {saveState === "saving"
+              ? "Saving..."
+              : saveState === "saved"
+                ? "Saved"
+                : "Save this page"}
+          </button>
+          {hasApiKey === false && (
+            <p className="mt-2 text-xs text-amber-600">Set API key in settings</p>
+          )}
+        </div>
 
         {saveState === "failed" ? (
           <p className="text-xs text-red-600">Failed to save page</p>
