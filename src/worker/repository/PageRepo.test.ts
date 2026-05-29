@@ -149,4 +149,22 @@ describe("PageRepo", () => {
       status: "ready",
     });
   });
+
+  it("looks up a page by url hash", async () => {
+    const page = await repo.upsertCapturedPage({
+      url: "https://github.com/alvinunreal/oh-my-opencode-slim",
+      title: "oh-my-opencode-slim",
+      fullText: "A slim variant.",
+      readingTimeMs: 4000,
+      saveMode: "manual",
+    });
+
+    const found = await repo.getByUrlHash(page.urlHash);
+
+    expect(found).toMatchObject({ id: page.id, title: "oh-my-opencode-slim" });
+  });
+
+  it("returns undefined for an unknown url hash", async () => {
+    await expect(repo.getByUrlHash("z".repeat(64))).resolves.toBeUndefined();
+  });
 });

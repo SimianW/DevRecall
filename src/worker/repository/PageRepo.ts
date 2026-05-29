@@ -44,6 +44,10 @@ export class PageRepo {
     return this.database.pages.get(id);
   }
 
+  async getByUrlHash(urlHash: string): Promise<PageRecord | undefined> {
+    return this.database.pages.where("urlHash").equals(urlHash).first();
+  }
+
   async updatePage(
     id: string,
     data: Partial<Omit<PageRecord, "id" | "schemaVersion">>,
