@@ -141,6 +141,7 @@ function makeDeps(
     },
     pageRepo: {
       listPages: vi.fn().mockResolvedValue([]),
+      getStats: vi.fn().mockResolvedValue({ pageCount: 0, totalTextBytes: 0 }),
     },
     apiKeyStore: {
       getApiKey: vi.fn().mockResolvedValue(overrides.apiKey ?? null),

@@ -51,6 +51,12 @@ export class PageRepo {
     await this.database.pages.update(id, data);
   }
 
+  async getStats(): Promise<{ pageCount: number; totalTextBytes: number }> {
+    const pages = await this.database.pages.toArray();
+    const totalTextBytes = pages.reduce((sum, p) => sum + p.fullText.length, 0);
+    return { pageCount: pages.length, totalTextBytes };
+  }
+
   async listPages({ limit }: { limit: number }): Promise<PageListItem[]> {
     const pages = await this.database.pages
       .orderBy("savedAt")

@@ -20,9 +20,7 @@ async function defaultListPages(): Promise<PageListItem[]> {
       type: "page.list",
       payload: { limit: 50 },
     };
-    const response = (await chrome.runtime.sendMessage(
-      request,
-    )) as DevRecallResponse;
+    const response = (await chrome.runtime.sendMessage(request)) as DevRecallResponse;
 
     if (response.type !== "page.listed") {
       return [];
@@ -73,6 +71,7 @@ export function App({ listPages = defaultListPages }: AppProps) {
           type="button"
           aria-label="Settings"
           className="rounded-md border border-slate-200 px-2 py-1 text-sm text-slate-600"
+          onClick={() => chrome.runtime.openOptionsPage()}
         >
           Settings
         </button>
@@ -103,12 +102,8 @@ export function App({ listPages = defaultListPages }: AppProps) {
           <p className="text-sm text-slate-500">Loading library...</p>
         ) : pages.length === 0 ? (
           <section className="rounded-md border border-dashed border-slate-300 bg-white px-4 py-8 text-center">
-            <h2 className="text-sm font-semibold text-slate-900">
-              No saved pages yet
-            </h2>
-            <p className="mt-2 text-sm text-slate-500">
-              Saved pages will appear here.
-            </p>
+            <h2 className="text-sm font-semibold text-slate-900">No saved pages yet</h2>
+            <p className="mt-2 text-sm text-slate-500">Saved pages will appear here.</p>
           </section>
         ) : (
           <div className="flex flex-col gap-3">

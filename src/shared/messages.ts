@@ -11,7 +11,8 @@ export type DevRecallRequest =
   | { type: "settings.setApiKey"; payload: { apiKey: string } }
   | { type: "settings.testConnection" }
   | { type: "page.save"; payload: { tabId: number } }
-  | { type: "page.list"; payload: { limit: number } };
+  | { type: "page.list"; payload: { limit: number } }
+  | { type: "storage.getStats" };
 
 export type DevRecallResponse =
   | {
@@ -46,6 +47,13 @@ export type DevRecallResponse =
       type: "page.listed";
       payload: {
         pages: PageListItem[];
+      };
+    }
+  | {
+      type: "storage.stats";
+      payload: {
+        pageCount: number;
+        totalTextBytes: number;
       };
     };
 

@@ -19,6 +19,7 @@ type CapturePort = {
 
 type PageListPort = {
   listPages(input: { limit: number }): Promise<PageListItem[]>;
+  getStats(): Promise<{ pageCount: number; totalTextBytes: number }>;
 };
 
 type HandlerDeps = {
@@ -117,6 +118,14 @@ export async function handleRequest(
           }),
         },
       };
+
+    case "storage.getStats": {
+      const stats = await deps.pageRepo.getStats();
+      return {
+        type: "storage.stats",
+        payload: stats,
+      };
+    }
 
     default:
       throw new Error(`Unhandled request type: ${(request as { type: string }).type}`);

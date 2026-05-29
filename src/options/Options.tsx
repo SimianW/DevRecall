@@ -3,11 +3,13 @@ import { SurfaceShell } from "../ui/components";
 
 type StatusResult = { hasApiKey: boolean };
 type TestResult = { success: boolean; message: string };
+type StorageStats = { pageCount: number; totalTextBytes: number };
 
 type OptionsProps = {
   loadStatus?: () => Promise<StatusResult>;
   saveApiKey?: (apiKey: string) => Promise<void>;
   testConnection?: () => Promise<TestResult>;
+  loadStorageStats?: () => Promise<StorageStats>;
 };
 
 const defaultLoadStatus = async (): Promise<StatusResult> => {
@@ -27,15 +29,22 @@ const defaultTestConnection = async (): Promise<TestResult> => {
   return response.payload;
 };
 
+const defaultLoadStorageStats = async (): Promise<StorageStats> => {
+  const response = await chrome.runtime.sendMessage({ type: "storage.getStats" });
+  return response.payload;
+};
+
 export function Options({
   loadStatus = defaultLoadStatus,
   saveApiKey = defaultSaveApiKey,
   testConnection = defaultTestConnection,
+  loadStorageStats = defaultLoadStorageStats,
 }: OptionsProps) {
   const [apiKey, setApiKey] = useState("");
   const [keySaved, setKeySaved] = useState(false);
   const [testResult, setTestResult] = useState<TestResult | null>(null);
   const [testing, setTesting] = useState(false);
+  const [storageStats, setStorageStats] = useState<StorageStats | null>(null);
 
   useEffect(() => {
     loadStatus().then((status) => {
@@ -44,6 +53,10 @@ export function Options({
       }
     });
   }, [loadStatus]);
+
+  useEffect(() => {
+    loadStorageStats().then(setStorageStats).catch(() => {});
+  }, [loadStorageStats]);
 
   const handleSave = async () => {
     if (!apiKey.trim()) return;
@@ -115,7 +128,11 @@ export function Options({
 
         <section className="rounded-md border border-slate-200 bg-white p-4">
           <h2 className="text-sm font-semibold text-slate-900">Storage</h2>
-          <p className="mt-2 text-sm text-slate-500">0 pages, 0 chunks, 0 MB</p>
+          <p className="mt-2 text-sm text-slate-500">
+            {storageStats == null
+              ? "Loading..."
+              : `${storageStats.pageCount} ${storageStats.pageCount === 1 ? "page" : "pages"}, ${(storageStats.totalTextBytes / 1_048_576).toFixed(2)} MB`}
+          </p>
         </section>
       </form>
     </SurfaceShell>
