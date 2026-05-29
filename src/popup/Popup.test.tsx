@@ -247,6 +247,10 @@ describe("Popup", () => {
     expect(
       await screen.findByRole("button", { name: /Saved ✓/ }),
     ).toBeInTheDocument();
+    // Pin down that the transition came from the post-save refetch (mount + retry),
+    // not a stray poll tick: failed status never starts an interval.
+    expect(saveCurrentPage).toHaveBeenCalledTimes(1);
+    expect(loadUrlStatus).toHaveBeenCalledTimes(2);
   });
 
   it("polls every 2s while status is pending", async () => {
