@@ -98,6 +98,30 @@ describe("Popup", () => {
     expect(loadUrlStatus).toHaveBeenCalledTimes(1);
   });
 
+  it("shows 'Saving...' (disabled) while a local save is in progress", async () => {
+    const user = userEvent.setup();
+    const checkApiKey = vi.fn().mockResolvedValue(true);
+    const loadUrlStatus = makeUrlStatus({ saved: false });
+    // saveCurrentPage never resolves — keeps the component in the saving state
+    const saveCurrentPage = vi.fn().mockReturnValue(new Promise(() => {}));
+
+    render(
+      <Popup
+        saveCurrentPage={saveCurrentPage}
+        checkApiKey={checkApiKey}
+        loadUrlStatus={loadUrlStatus}
+      />,
+    );
+
+    await waitFor(() => {
+      expect(screen.getByRole("button", { name: "Save this page" })).toBeEnabled();
+    });
+
+    await user.click(screen.getByRole("button", { name: "Save this page" }));
+
+    expect(screen.getByRole("button", { name: "Saving..." })).toBeDisabled();
+  });
+
   it("shows 'Processing...' (disabled) when loadUrlStatus returns pending", async () => {
     const checkApiKey = vi.fn().mockResolvedValue(true);
     const loadUrlStatus = makeUrlStatus({
