@@ -5,14 +5,7 @@ import { SurfaceShell } from "../ui/components";
 
 type SaveState = "idle" | "saving" | "saved" | "failed";
 
-export type UrlStatus =
-  | { saved: false }
-  | {
-      saved: true;
-      status: "pending" | "ready" | "failed";
-      savedAt: number;
-      errorReason?: string;
-    };
+export type UrlStatus = Extract<DevRecallResponse, { type: "page.urlStatus" }>["payload"];
 
 type PopupProps = {
   openSidePanel?: () => void;
