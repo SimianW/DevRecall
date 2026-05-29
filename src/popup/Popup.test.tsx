@@ -3,7 +3,7 @@ import userEvent from "@testing-library/user-event";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
 import type { UrlStatus } from "./Popup";
-import { Popup } from "./Popup";
+import { defaultSaveCurrentPage, Popup } from "./Popup";
 
 // Helper to make a resolved loadUrlStatus mock
 const makeUrlStatus = (status: UrlStatus) => vi.fn().mockResolvedValue(status);
@@ -220,5 +220,41 @@ describe("Popup", () => {
     } finally {
       vi.useRealTimers();
     }
+  });
+});
+
+describe("defaultSaveCurrentPage", () => {
+  afterEach(() => {
+    vi.unstubAllGlobals();
+  });
+
+  it("throws with the worker's message when the response is an error", async () => {
+    const sendMessage = vi.fn().mockResolvedValue({
+      type: "error",
+      payload: {
+        message: "Could not establish connection. Receiving end does not exist.",
+      },
+    });
+    vi.stubGlobal("chrome", {
+      tabs: { query: vi.fn().mockResolvedValue([{ id: 1 }]) },
+      runtime: { sendMessage },
+    });
+
+    await expect(defaultSaveCurrentPage()).rejects.toThrow(
+      "Could not establish connection. Receiving end does not exist.",
+    );
+  });
+
+  it("resolves when the worker responds normally", async () => {
+    const sendMessage = vi.fn().mockResolvedValue({
+      type: "page.saved",
+      payload: { page: {} },
+    });
+    vi.stubGlobal("chrome", {
+      tabs: { query: vi.fn().mockResolvedValue([{ id: 1 }]) },
+      runtime: { sendMessage },
+    });
+
+    await expect(defaultSaveCurrentPage()).resolves.toBeUndefined();
   });
 });

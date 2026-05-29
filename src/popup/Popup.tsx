@@ -34,7 +34,7 @@ function defaultOpenSidePanel() {
   void chrome.sidePanel.open({ windowId: chrome.windows.WINDOW_ID_CURRENT });
 }
 
-async function defaultSaveCurrentPage() {
+export async function defaultSaveCurrentPage() {
   if (
     typeof chrome === "undefined" ||
     !chrome.tabs?.query ||

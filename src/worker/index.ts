@@ -158,17 +158,21 @@ export async function handleMessage(
   sendResponse: (response: DevRecallResponse) => void,
   deps: HandlerDeps = defaultDeps,
 ): Promise<void> {
+  let response: DevRecallResponse;
+
   try {
-    sendResponse(await handleRequest(request, deps));
+    response = await handleRequest(request, deps);
   } catch (error) {
     console.error("[DevRecall] handler error:", error);
-    sendResponse({
+    response = {
       type: "error",
       payload: {
         message: error instanceof Error ? error.message : "Unknown error",
       },
-    });
+    };
   }
+
+  sendResponse(response);
 }
 
 if (typeof chrome !== "undefined" && chrome.runtime?.onInstalled) {
