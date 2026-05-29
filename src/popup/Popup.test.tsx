@@ -187,6 +187,68 @@ describe("Popup", () => {
     ).toBeEnabled();
   });
 
+  it("shows immediate feedback when retrying a failed save", async () => {
+    const user = userEvent.setup();
+    const checkApiKey = vi.fn().mockResolvedValue(true);
+    const loadUrlStatus = makeUrlStatus({
+      saved: true,
+      status: "failed",
+      savedAt: Date.now(),
+    });
+    // never-resolving save keeps the component in the saving state
+    const saveCurrentPage = vi.fn().mockReturnValue(new Promise(() => {}));
+
+    render(
+      <Popup
+        saveCurrentPage={saveCurrentPage}
+        checkApiKey={checkApiKey}
+        loadUrlStatus={loadUrlStatus}
+      />,
+    );
+
+    await user.click(
+      await screen.findByRole("button", { name: "Save failed — try again" }),
+    );
+
+    expect(screen.getByRole("button", { name: "Saving..." })).toBeDisabled();
+    expect(saveCurrentPage).toHaveBeenCalledTimes(1);
+  });
+
+  it("transitions to saved after retrying without reopening", async () => {
+    const user = userEvent.setup();
+    const checkApiKey = vi.fn().mockResolvedValue(true);
+    // first load: failed; after the retry re-fetch: ready
+    const loadUrlStatus = vi
+      .fn()
+      .mockResolvedValueOnce({
+        saved: true,
+        status: "failed",
+        savedAt: Date.now(),
+      })
+      .mockResolvedValue({
+        saved: true,
+        status: "ready",
+        savedAt: Date.now(),
+      });
+    const saveCurrentPage = vi.fn().mockResolvedValue(undefined);
+
+    render(
+      <Popup
+        saveCurrentPage={saveCurrentPage}
+        checkApiKey={checkApiKey}
+        loadUrlStatus={loadUrlStatus}
+      />,
+    );
+
+    await user.click(
+      await screen.findByRole("button", { name: "Save failed — try again" }),
+    );
+
+    expect(
+      await screen.findByRole("button", { name: /Saved ✓/ }),
+    ).toBeInTheDocument();
+  });
+
   it("polls every 2s while status is pending", async () => {
     vi.useFakeTimers();
     try {

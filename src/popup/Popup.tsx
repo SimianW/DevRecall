@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 
 import type { DevRecallRequest, DevRecallResponse } from "../shared/messages";
 import { SurfaceShell } from "../ui/components";
@@ -115,31 +115,32 @@ export function Popup({
     void checkApiKey().then(setHasApiKey);
   }, [checkApiKey]);
 
-  useEffect(() => {
-    let intervalId: ReturnType<typeof setInterval> | null = null;
+  const intervalRef = useRef<ReturnType<typeof setInterval> | null>(null);
 
-    async function fetchStatus() {
-      const status = await loadUrlStatus();
-      setUrlStatus(status);
+  const refreshStatus = useCallback(async () => {
+    const status = await loadUrlStatus();
+    setUrlStatus(status);
 
-      if (status.saved && status.status === "pending") {
-        if (!intervalId) {
-          intervalId = setInterval(() => void fetchStatus(), 2000);
-        }
-      } else {
-        if (intervalId) {
-          clearInterval(intervalId);
-          intervalId = null;
-        }
+    if (status.saved && status.status === "pending") {
+      if (!intervalRef.current) {
+        intervalRef.current = setInterval(() => void refreshStatus(), 2000);
       }
+    } else if (intervalRef.current) {
+      clearInterval(intervalRef.current);
+      intervalRef.current = null;
     }
+  }, [loadUrlStatus]);
 
-    void fetchStatus();
+  useEffect(() => {
+    void refreshStatus();
 
     return () => {
-      if (intervalId) clearInterval(intervalId);
+      if (intervalRef.current) {
+        clearInterval(intervalRef.current);
+        intervalRef.current = null;
+      }
     };
-  }, [loadUrlStatus]);
+  }, [refreshStatus]);
 
   async function handleSave() {
     setSaveState("saving");
@@ -147,18 +148,24 @@ export function Popup({
     try {
       await saveCurrentPage();
       setSaveState("saved");
+      void refreshStatus();
     } catch {
       setSaveState("failed");
     }
   }
 
-  // Derive button label and disabled state from the behavior matrix
+  // Derive button label and disabled state.
+  // An in-flight local save takes priority over any stale remote status,
+  // so retrying a failed page gives immediate feedback.
   let buttonLabel: string;
   let isSaveDisabled: boolean;
 
   const isLoading = hasApiKey === null;
 
-  if (urlStatus !== null && urlStatus.saved) {
+  if (saveState === "saving") {
+    buttonLabel = "Saving...";
+    isSaveDisabled = true;
+  } else if (urlStatus !== null && urlStatus.saved) {
     if (urlStatus.status === "pending") {
       buttonLabel = "Processing...";
       isSaveDisabled = true;
@@ -170,18 +177,12 @@ export function Popup({
       buttonLabel = "Save failed — try again";
       isSaveDisabled = isLoading || hasApiKey === false;
     }
+  } else if (saveState === "saved") {
+    buttonLabel = "Saved";
+    isSaveDisabled = false;
   } else {
-    // No record in DB — fall back to local saveState
-    if (saveState === "saving") {
-      buttonLabel = "Saving...";
-      isSaveDisabled = true;
-    } else if (saveState === "saved") {
-      buttonLabel = "Saved";
-      isSaveDisabled = false;
-    } else {
-      buttonLabel = "Save this page";
-      isSaveDisabled = isLoading || hasApiKey === false;
-    }
+    buttonLabel = "Save this page";
+    isSaveDisabled = isLoading || hasApiKey === false;
   }
 
   const showFailedError =
