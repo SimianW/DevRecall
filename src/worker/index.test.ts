@@ -1,5 +1,6 @@
 import { describe, expect, it, vi } from "vitest";
 
+import { normalizeUrl } from "../lib/urlNormalize";
 import { APP_NAME, APP_VERSION } from "../shared/messages";
 import type { PageListItem, PageRecord } from "../shared/types";
 import { handleRequest } from "./index";
@@ -137,6 +138,9 @@ describe("worker request handler", () => {
         deps,
       ),
     ).resolves.toEqual({ type: "page.urlStatus", payload: { saved: false } });
+
+    const { urlHash } = await normalizeUrl("https://example.com/x");
+    expect(deps.pageRepo.getByUrlHash).toHaveBeenCalledWith(urlHash);
   });
 
   it("returns saved status with timestamp when the URL is known", async () => {
@@ -156,6 +160,9 @@ describe("worker request handler", () => {
       type: "page.urlStatus",
       payload: { saved: true, status: "ready", savedAt: 1717000000000 },
     });
+
+    const { urlHash } = await normalizeUrl(pendingPage.url);
+    expect(deps.pageRepo.getByUrlHash).toHaveBeenCalledWith(urlHash);
   });
 });
 
