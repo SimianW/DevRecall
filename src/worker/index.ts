@@ -153,6 +153,24 @@ export async function handleRequest(
   }
 }
 
+export async function handleMessage(
+  request: DevRecallRequest,
+  sendResponse: (response: DevRecallResponse) => void,
+  deps: HandlerDeps = defaultDeps,
+): Promise<void> {
+  try {
+    sendResponse(await handleRequest(request, deps));
+  } catch (error) {
+    console.error("[DevRecall] handler error:", error);
+    sendResponse({
+      type: "error",
+      payload: {
+        message: error instanceof Error ? error.message : "Unknown error",
+      },
+    });
+  }
+}
+
 if (typeof chrome !== "undefined" && chrome.runtime?.onInstalled) {
   chrome.runtime.onInstalled.addListener(() => {
     console.info("[DevRecall] installed");
@@ -166,9 +184,7 @@ if (typeof chrome !== "undefined" && chrome.runtime?.onMessage) {
       _sender,
       sendResponse: (response: DevRecallResponse) => void,
     ) => {
-      void handleRequest(request).then(sendResponse).catch((error) => {
-        console.error("[DevRecall] handler error:", error);
-      });
+      void handleMessage(request, sendResponse);
       return true;
     },
   );

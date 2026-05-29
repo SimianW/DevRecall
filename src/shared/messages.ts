@@ -67,6 +67,12 @@ export type DevRecallResponse =
             savedAt: number;
             errorReason?: string;
           };
+    }
+  | {
+      type: "error";
+      payload: {
+        message: string;
+      };
     };
 
 export type ContentExtractRequest = { type: "content.extract" };

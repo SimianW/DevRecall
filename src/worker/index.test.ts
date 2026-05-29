@@ -3,7 +3,7 @@ import { describe, expect, it, vi } from "vitest";
 import { normalizeUrl } from "../lib/urlNormalize";
 import { APP_NAME, APP_VERSION } from "../shared/messages";
 import type { PageListItem, PageRecord } from "../shared/types";
-import { handleRequest } from "./index";
+import { handleMessage, handleRequest } from "./index";
 
 const pendingPage = {
   id: "01HZ0000000000000000000000",
@@ -163,6 +163,46 @@ describe("worker request handler", () => {
 
     const { urlHash } = await normalizeUrl(pendingPage.url);
     expect(deps.pageRepo.getByUrlHash).toHaveBeenCalledWith(urlHash);
+  });
+
+  it("responds with an error message when the handler throws", async () => {
+    const deps = makeDeps();
+    deps.captureService.save = vi
+      .fn()
+      .mockRejectedValue(
+        new Error("Could not establish connection. Receiving end does not exist."),
+      );
+    const sendResponse = vi.fn();
+
+    await handleMessage(
+      { type: "page.save", payload: { tabId: 1 } },
+      sendResponse,
+      deps,
+    );
+
+    expect(sendResponse).toHaveBeenCalledWith({
+      type: "error",
+      payload: {
+        message: "Could not establish connection. Receiving end does not exist.",
+      },
+    });
+  });
+
+  it("responds with the handler result when the handler succeeds", async () => {
+    const deps = makeDeps({ apiKey: "sk-test" });
+    deps.captureService.save = vi.fn().mockResolvedValue(pendingPage);
+    const sendResponse = vi.fn();
+
+    await handleMessage(
+      { type: "page.save", payload: { tabId: 7 } },
+      sendResponse,
+      deps,
+    );
+
+    expect(sendResponse).toHaveBeenCalledWith({
+      type: "page.saved",
+      payload: { page: pendingListItem },
+    });
   });
 });
 

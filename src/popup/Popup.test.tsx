@@ -57,7 +57,9 @@ describe("Popup", () => {
 
     await user.click(screen.getByRole("button", { name: "Save this page" }));
 
-    expect(await screen.findByText("Failed to save page")).toBeInTheDocument();
+    expect(
+      await screen.findByText("Couldn't read this page — reload it and try again."),
+    ).toBeInTheDocument();
   });
 
   it("opens the side panel through the injected callback", async () => {

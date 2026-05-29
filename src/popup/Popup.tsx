@@ -57,7 +57,13 @@ async function defaultSaveCurrentPage() {
     payload: { tabId: tab.id },
   };
 
-  await chrome.runtime.sendMessage(request);
+  const response = (await chrome.runtime.sendMessage(request)) as
+    | DevRecallResponse
+    | undefined;
+
+  if (response?.type === "error") {
+    throw new Error(response.payload.message);
+  }
 }
 
 async function defaultLoadUrlStatus(): Promise<UrlStatus> {
@@ -206,7 +212,7 @@ export function Popup({
         </div>
 
         {showFailedError ? (
-          <p className="text-xs text-red-600">Failed to save page</p>
+          <p className="text-xs text-red-600">Couldn't read this page — reload it and try again.</p>
         ) : (
           <p className="text-xs text-slate-500">
             Manual capture stores title, URL, and readable text.
