@@ -5,6 +5,7 @@ import {
   type DevRecallResponse,
 } from "../shared/messages";
 import type { PageListItem, PageRecord } from "../shared/types";
+import { normalizeUrl } from "../lib/urlNormalize";
 import {
   testOpenAIConnection,
 } from "./llm/OpenAIProvider";
@@ -20,6 +21,7 @@ type CapturePort = {
 type PageListPort = {
   listPages(input: { limit: number }): Promise<PageListItem[]>;
   getStats(): Promise<{ pageCount: number; totalTextBytes: number }>;
+  getByUrlHash(urlHash: string): Promise<PageRecord | undefined>;
 };
 
 type HandlerDeps = {
@@ -124,6 +126,25 @@ export async function handleRequest(
       return {
         type: "storage.stats",
         payload: stats,
+      };
+    }
+
+    case "page.statusForUrl": {
+      const { urlHash } = await normalizeUrl(request.payload.url);
+      const page = await deps.pageRepo.getByUrlHash(urlHash);
+
+      if (!page) {
+        return { type: "page.urlStatus", payload: { saved: false } };
+      }
+
+      return {
+        type: "page.urlStatus",
+        payload: {
+          saved: true,
+          status: page.status,
+          savedAt: page.savedAt,
+          ...(page.errorReason ? { errorReason: page.errorReason } : {}),
+        },
       };
     }
 

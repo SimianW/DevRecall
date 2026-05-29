@@ -126,6 +126,37 @@ describe("worker request handler", () => {
     });
     expect(deps.pageRepo.listPages).toHaveBeenCalledWith({ limit: 25 });
   });
+
+  it("returns saved:false when the URL is unknown", async () => {
+    const deps = makeDeps();
+    deps.pageRepo.getByUrlHash = vi.fn().mockResolvedValue(undefined);
+
+    await expect(
+      handleRequest(
+        { type: "page.statusForUrl", payload: { url: "https://example.com/x" } },
+        deps,
+      ),
+    ).resolves.toEqual({ type: "page.urlStatus", payload: { saved: false } });
+  });
+
+  it("returns saved status with timestamp when the URL is known", async () => {
+    const deps = makeDeps();
+    deps.pageRepo.getByUrlHash = vi.fn().mockResolvedValue({
+      ...pendingPage,
+      status: "ready",
+      savedAt: 1717000000000,
+    });
+
+    await expect(
+      handleRequest(
+        { type: "page.statusForUrl", payload: { url: pendingPage.url } },
+        deps,
+      ),
+    ).resolves.toEqual({
+      type: "page.urlStatus",
+      payload: { saved: true, status: "ready", savedAt: 1717000000000 },
+    });
+  });
 });
 
 function makeDeps(
@@ -142,6 +173,7 @@ function makeDeps(
     pageRepo: {
       listPages: vi.fn().mockResolvedValue([]),
       getStats: vi.fn().mockResolvedValue({ pageCount: 0, totalTextBytes: 0 }),
+      getByUrlHash: vi.fn().mockResolvedValue(undefined),
     },
     apiKeyStore: {
       getApiKey: vi.fn().mockResolvedValue(overrides.apiKey ?? null),
