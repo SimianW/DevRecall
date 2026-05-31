@@ -4,6 +4,7 @@ import type { PageListItem } from "../../shared/types";
 
 type PageCardProps = {
   page: PageListItem;
+  onDelete?: (id: string) => void;
 };
 
 function StatusBadge({ status }: { status: PageListItem["status"] }) {
@@ -32,7 +33,7 @@ function Chip({ label }: { label: string }) {
   );
 }
 
-export function PageCard({ page }: PageCardProps) {
+export function PageCard({ page, onDelete }: PageCardProps) {
   const [expanded, setExpanded] = useState(false);
 
   const savedDate = new Date(page.savedAt).toLocaleDateString(undefined, {
@@ -84,15 +85,29 @@ export function PageCard({ page }: PageCardProps) {
             <span className="text-xs text-slate-400">
               {page.sourceType.replace(/_/g, " ")} · {savedDate}
             </span>
-            <a
-              href={page.url}
-              target="_blank"
-              rel="noopener noreferrer"
-              className="text-xs font-medium text-accent hover:underline"
-              onClick={(e) => e.stopPropagation()}
-            >
-              Open →
-            </a>
+            <div className="flex items-center gap-3">
+              {onDelete && (
+                <button
+                  type="button"
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    onDelete(page.id);
+                  }}
+                  className="text-xs font-medium text-red-600 hover:underline"
+                >
+                  Delete
+                </button>
+              )}
+              <a
+                href={page.url}
+                target="_blank"
+                rel="noopener noreferrer"
+                className="text-xs font-medium text-accent hover:underline"
+                onClick={(e) => e.stopPropagation()}
+              >
+                Open →
+              </a>
+            </div>
           </div>
         </div>
       )}

@@ -1,6 +1,7 @@
 import { beforeEach, describe, expect, it } from "vitest";
 
 import { DevRecallDatabase } from "./db";
+import { ChunkRepo } from "./ChunkRepo";
 import { PageRepo } from "./PageRepo";
 
 describe("PageRepo", () => {
@@ -165,5 +166,57 @@ describe("PageRepo", () => {
 
   it("returns undefined for an unknown url hash", async () => {
     await expect(repo.getByUrlHash("z".repeat(64))).resolves.toBeUndefined();
+  });
+
+  it("deletes a page and its chunks in one transaction", async () => {
+    const chunkRepo = new ChunkRepo(database);
+
+    const saved = await repo.upsertCapturedPage({
+      url: "https://example.test/delete-me",
+      title: "Delete me",
+      fullText: "body",
+      readingTimeMs: 0,
+      saveMode: "manual",
+    });
+    await chunkRepo.replaceChunksForPage(saved.id, ["chunk one", "chunk two"]);
+
+    await repo.deleteWithChunks(saved.id);
+
+    expect(await repo.getById(saved.id)).toBeUndefined();
+    expect(await chunkRepo.allChunks()).toHaveLength(0);
+  });
+
+  it("lists ready pages missing embeddings and counts them in stats", async () => {
+    const chunkRepo = new ChunkRepo(database);
+
+    const m4 = await repo.upsertCapturedPage({
+      url: "https://example.test/m4",
+      title: "M4 page",
+      fullText: "body",
+      readingTimeMs: 0,
+      saveMode: "manual",
+    });
+    await repo.updatePage(m4.id, { status: "ready" });
+    await chunkRepo.replaceChunksForPage(m4.id, ["word chunk, no vector"]);
+
+    const m5 = await repo.upsertCapturedPage({
+      url: "https://example.test/m5",
+      title: "M5 page",
+      fullText: "body",
+      readingTimeMs: 0,
+      saveMode: "manual",
+    });
+    await chunkRepo.commitProcessedPage(
+      m5.id,
+      [{ text: "token chunk", embedding: Float32Array.from([1, 0]), tokenCount: 2 }],
+      "openai:text-embedding-3-small",
+      { status: "ready" },
+    );
+
+    expect(await repo.pageIdsMissingEmbeddings()).toEqual([m4.id]);
+
+    const stats = await repo.getStats();
+    expect(stats.pagesMissingEmbeddings).toBe(1);
+    expect(stats.pageCount).toBe(2);
   });
 });

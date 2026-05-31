@@ -71,11 +71,14 @@ export type ChunkRecord = {
   id: string; // ULID
   pageId: string; // FK → PageRecord.id
   ordinal: number; // 0-based position within the page
-  text: string; // simple word-window chunk; re-chunked in M5
+  text: string; // word-window until processPage re-chunks it to token-based
+  embedding?: Float32Array; // 1536 dims, L2-normalized at insert; absent until embedded
+  embeddingModel?: string; // e.g. "openai:text-embedding-3-small"; absent until embedded
+  tokenCount?: number; // tiktoken count; metadata only, not used by retrieval scoring
   schemaVersion: 1;
 };
 
-export type SearchMatchReason = "keyword"; // M5 adds "vector" | "both"
+export type SearchMatchReason = "keyword" | "vector" | "both";
 
 export type PageHit = {
   page: PageListItem;
@@ -84,6 +87,10 @@ export type PageHit = {
     ordinal: number;
     highlightedHtml: string; // matched terms wrapped in <mark>, HTML-escaped
   };
-  score: number;
+  scores: {
+    keyword: number | null; // BM25 score, or null if the keyword arm missed this chunk
+    vector: number | null; // cosine score, or null if the vector arm missed this chunk
+    fused: number; // RRF fused score (the ranking key)
+  };
   matchReason: SearchMatchReason;
 };
