@@ -1,7 +1,13 @@
 import { ulid } from "ulid";
 
-import type { ChunkRecord } from "../../shared/types";
+import type { ChunkRecord, PageRecord } from "../../shared/types";
 import { db, type DevRecallDatabase } from "./db";
+
+export type EmbeddedChunkInput = {
+  text: string;
+  embedding: Float32Array;
+  tokenCount: number;
+};
 
 export class ChunkRepo {
   constructor(private readonly database: DevRecallDatabase = db) {}
@@ -24,6 +30,36 @@ export class ChunkRepo {
     });
 
     return chunks;
+  }
+
+  async commitProcessedPage(
+    pageId: string,
+    chunks: EmbeddedChunkInput[],
+    embeddingModel: string,
+    pageUpdate: Partial<Omit<PageRecord, "id" | "schemaVersion">>,
+  ): Promise<ChunkRecord[]> {
+    const records: ChunkRecord[] = chunks.map((chunk, ordinal) => ({
+      id: ulid(),
+      pageId,
+      ordinal,
+      text: chunk.text,
+      embedding: chunk.embedding,
+      embeddingModel,
+      tokenCount: chunk.tokenCount,
+      schemaVersion: 1,
+    }));
+
+    await this.database.transaction("rw", this.database.pages, this.database.chunks, async () => {
+      await this.database.chunks.where("pageId").equals(pageId).delete();
+
+      if (records.length > 0) {
+        await this.database.chunks.bulkPut(records);
+      }
+
+      await this.database.pages.update(pageId, pageUpdate);
+    });
+
+    return records;
   }
 
   async allChunks(): Promise<ChunkRecord[]> {
