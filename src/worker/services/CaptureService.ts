@@ -90,6 +90,11 @@ export class CaptureService {
         tokenChunks.map((chunk) => chunk.text),
         apiKey,
       );
+      if (vectors.length !== tokenChunks.length) {
+        throw new Error(
+          `Embedding count mismatch: expected ${tokenChunks.length}, got ${vectors.length}`,
+        );
+      }
       const embedded: EmbeddedChunkInput[] = tokenChunks.map((chunk, index) => ({
         text: chunk.text,
         embedding: vectors[index],

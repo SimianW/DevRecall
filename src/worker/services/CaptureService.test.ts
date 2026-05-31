@@ -181,6 +181,34 @@ describe("CaptureService", () => {
     expect(result.status).toBe("failed");
   });
 
+  it("marks a page failed when the embedder returns a mismatched vector count", async () => {
+    const reader: PageReader = {
+      getById: vi.fn().mockResolvedValue(pendingPage),
+      updatePage: vi.fn().mockResolvedValue(undefined),
+    };
+    const tagger: PageTagger = { summarizeAndTag: vi.fn().mockResolvedValue(taggingResult) };
+    const chunkWriter = mockChunkWriter();
+    const embedder = mockEmbedder({
+      embedBatch: vi.fn().mockResolvedValue([]), // zero vectors for >=1 chunk → mismatch
+    });
+
+    const result = await new CaptureService(
+      { upsertCapturedPage: vi.fn() },
+      { extract: vi.fn() },
+      reader,
+      tagger,
+      chunkWriter,
+      embedder,
+    ).processPage(pendingPage.id, "sk-test");
+
+    expect(chunkWriter.commitProcessedPage).not.toHaveBeenCalled();
+    expect(reader.updatePage).toHaveBeenCalledWith(pendingPage.id, {
+      status: "failed",
+      errorReason: expect.stringContaining("mismatch"),
+    });
+    expect(result.status).toBe("failed");
+  });
+
   it("embeds chunks and marks the page ready end-to-end (integration)", async () => {
     const database = new DevRecallDatabase(`devrecall-test-${crypto.randomUUID()}`);
     await database.delete();
