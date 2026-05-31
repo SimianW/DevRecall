@@ -78,7 +78,7 @@ export type ChunkRecord = {
   schemaVersion: 1;
 };
 
-export type SearchMatchReason = "keyword"; // M5 adds "vector" | "both"
+export type SearchMatchReason = "keyword" | "vector" | "both";
 
 export type PageHit = {
   page: PageListItem;
@@ -87,6 +87,10 @@ export type PageHit = {
     ordinal: number;
     highlightedHtml: string; // matched terms wrapped in <mark>, HTML-escaped
   };
-  score: number;
+  scores: {
+    keyword: number | null; // BM25 score, or null if the keyword arm missed this chunk
+    vector: number | null; // cosine score, or null if the vector arm missed this chunk
+    fused: number; // RRF fused score (the ranking key)
+  };
   matchReason: SearchMatchReason;
 };

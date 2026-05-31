@@ -45,7 +45,7 @@ const searchHit = {
     ordinal: 0,
     highlightedHtml: "IndexedDB stores <mark>structured</mark> data.",
   },
-  score: 1.5,
+  scores: { keyword: 1.5, vector: null, fused: 1.5 },
   matchReason: "keyword",
 } satisfies PageHit;
 

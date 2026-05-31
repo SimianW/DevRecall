@@ -28,7 +28,7 @@ const hits = [
       ordinal: 0,
       highlightedHtml: "The HorizontalPodAutoscaler automatically scales <mark>pods</mark>.",
     },
-    score: 2.1,
+    scores: { keyword: 2.1, vector: null, fused: 2.1 },
     matchReason: "keyword",
   },
 ] satisfies PageHit[];
