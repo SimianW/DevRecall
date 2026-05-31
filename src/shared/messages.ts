@@ -1,4 +1,4 @@
-import type { ExtractedPage, PageListItem } from "./types";
+import type { ExtractedPage, PageHit, PageListItem, PageStatus } from "./types";
 
 export const APP_NAME = "DevRecall";
 export const APP_VERSION = "0.1.0";
@@ -11,7 +11,10 @@ export type DevRecallRequest =
   | { type: "settings.setApiKey"; payload: { apiKey: string } }
   | { type: "settings.testConnection" }
   | { type: "page.save"; payload: { tabId: number } }
-  | { type: "page.list"; payload: { limit: number } };
+  | { type: "page.list"; payload: { limit: number } }
+  | { type: "storage.getStats" }
+  | { type: "page.statusForUrl"; payload: { url: string } }
+  | { type: "search.run"; payload: { query: string; topK?: number } };
 
 export type DevRecallResponse =
   | {
@@ -46,6 +49,36 @@ export type DevRecallResponse =
       type: "page.listed";
       payload: {
         pages: PageListItem[];
+      };
+    }
+  | {
+      type: "storage.stats";
+      payload: {
+        pageCount: number;
+        totalTextBytes: number;
+      };
+    }
+  | {
+      type: "page.urlStatus";
+      payload:
+        | { saved: false }
+        | {
+            saved: true;
+            status: PageStatus;
+            savedAt: number;
+            errorReason?: string;
+          };
+    }
+  | {
+      type: "search.results";
+      payload: {
+        hits: PageHit[];
+      };
+    }
+  | {
+      type: "error";
+      payload: {
+        message: string;
       };
     };
 

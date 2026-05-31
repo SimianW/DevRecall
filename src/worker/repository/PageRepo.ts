@@ -9,10 +9,7 @@ export class PageRepo {
 
   async upsertCapturedPage(input: PageCaptureInput): Promise<PageRecord> {
     const normalized = await normalizeUrl(input.url);
-    const existing = await this.database.pages
-      .where("urlHash")
-      .equals(normalized.urlHash)
-      .first();
+    const existing = await this.database.pages.where("urlHash").equals(normalized.urlHash).first();
     const now = Date.now();
 
     const page: PageRecord = {
@@ -44,6 +41,10 @@ export class PageRepo {
     return this.database.pages.get(id);
   }
 
+  async getByUrlHash(urlHash: string): Promise<PageRecord | undefined> {
+    return this.database.pages.where("urlHash").equals(urlHash).first();
+  }
+
   async updatePage(
     id: string,
     data: Partial<Omit<PageRecord, "id" | "schemaVersion">>,
@@ -51,12 +52,14 @@ export class PageRepo {
     await this.database.pages.update(id, data);
   }
 
+  async getStats(): Promise<{ pageCount: number; totalTextBytes: number }> {
+    const pages = await this.database.pages.toArray();
+    const totalTextBytes = pages.reduce((sum, p) => sum + p.fullText.length, 0);
+    return { pageCount: pages.length, totalTextBytes };
+  }
+
   async listPages({ limit }: { limit: number }): Promise<PageListItem[]> {
-    const pages = await this.database.pages
-      .orderBy("savedAt")
-      .reverse()
-      .limit(limit)
-      .toArray();
+    const pages = await this.database.pages.orderBy("savedAt").reverse().limit(limit).toArray();
 
     return pages.map(toPageListItem);
   }

@@ -11,24 +11,17 @@ describe("SurfaceShell", () => {
       </SurfaceShell>,
     );
 
-    expect(
-      screen.getByRole("heading", { name: "DevRecall" }),
-    ).toBeInTheDocument();
+    expect(screen.getByRole("heading", { name: "DevRecall" })).toBeInTheDocument();
     expect(screen.getByText("Ready")).toBeInTheDocument();
   });
 
   it("renders optional actions", () => {
     render(
-      <SurfaceShell
-        title="DevRecall"
-        actions={<button type="button">Settings</button>}
-      >
+      <SurfaceShell title="DevRecall" actions={<button type="button">Settings</button>}>
         <p>Ready</p>
       </SurfaceShell>,
     );
 
-    expect(
-      screen.getByRole("button", { name: "Settings" }),
-    ).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Settings" })).toBeInTheDocument();
   });
 });

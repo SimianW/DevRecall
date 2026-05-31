@@ -69,10 +69,7 @@ export class OpenAIProvider implements PageTagger {
     return parseTaggingResponse(responseBody);
   }
 
-  private async fetchWithRetry(
-    apiKey: string,
-    body: string,
-  ): Promise<unknown> {
+  private async fetchWithRetry(apiKey: string, body: string): Promise<unknown> {
     const maxAttempts = this.retryDelays.length + 1;
 
     for (let attempt = 0; attempt < maxAttempts; attempt++) {
@@ -93,10 +90,7 @@ export class OpenAIProvider implements PageTagger {
         throw new Error("Invalid API key");
       }
 
-      if (
-        (response.status === 429 || response.status >= 500) &&
-        attempt < maxAttempts - 1
-      ) {
+      if ((response.status === 429 || response.status >= 500) && attempt < maxAttempts - 1) {
         await sleep(this.retryDelays[attempt]);
         continue;
       }
@@ -132,9 +126,7 @@ function parseTaggingResponse(body: unknown): TaggingResult {
     technologies: Array.isArray(parsed.technologies)
       ? parsed.technologies.filter((t): t is string => typeof t === "string")
       : [],
-    intent: VALID_INTENTS.has(parsed.intent as string)
-      ? (parsed.intent as Intent)
-      : "reference",
+    intent: VALID_INTENTS.has(parsed.intent as string) ? (parsed.intent as Intent) : "reference",
   };
 }
 

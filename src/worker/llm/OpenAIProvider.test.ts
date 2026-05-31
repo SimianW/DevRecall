@@ -45,20 +45,16 @@ describe("OpenAIProvider", () => {
     const [url, options] = vi.mocked(fetch).mock.calls[0];
 
     expect(url).toBe("https://api.openai.com/v1/chat/completions");
-    expect((options?.headers as Record<string, string>).Authorization).toBe(
-      "Bearer sk-test123",
-    );
+    expect((options?.headers as Record<string, string>).Authorization).toBe("Bearer sk-test123");
   });
 
   it("throws on 401 without retrying", async () => {
-    globalThis.fetch = vi
-      .fn()
-      .mockResolvedValue({ ok: false, status: 401 });
+    globalThis.fetch = vi.fn().mockResolvedValue({ ok: false, status: 401 });
     const provider = new OpenAIProvider([]);
 
-    await expect(
-      provider.summarizeAndTag("text", "title", "url", "sk-bad"),
-    ).rejects.toThrow("Invalid API key");
+    await expect(provider.summarizeAndTag("text", "title", "url", "sk-bad")).rejects.toThrow(
+      "Invalid API key",
+    );
     expect(fetch).toHaveBeenCalledOnce();
   });
 
@@ -75,12 +71,7 @@ describe("OpenAIProvider", () => {
       });
     const provider = new OpenAIProvider([0]);
 
-    const result = await provider.summarizeAndTag(
-      "text",
-      "title",
-      "url",
-      "sk-test",
-    );
+    const result = await provider.summarizeAndTag("text", "title", "url", "sk-test");
 
     expect(result).toEqual(taggingResult);
     expect(fetch).toHaveBeenCalledTimes(2);
@@ -107,12 +98,7 @@ describe("OpenAIProvider", () => {
     });
     const provider = new OpenAIProvider([]);
 
-    const result = await provider.summarizeAndTag(
-      "text",
-      "title",
-      "url",
-      "sk-test",
-    );
+    const result = await provider.summarizeAndTag("text", "title", "url", "sk-test");
 
     expect(result).toEqual({
       summary: "A summary",
@@ -132,9 +118,7 @@ describe("testOpenAIConnection", () => {
   });
 
   it("returns success for a valid key", async () => {
-    globalThis.fetch = vi
-      .fn()
-      .mockResolvedValue({ ok: true, json: () => Promise.resolve({}) });
+    globalThis.fetch = vi.fn().mockResolvedValue({ ok: true, json: () => Promise.resolve({}) });
 
     const result = await testOpenAIConnection("sk-valid");
 
@@ -145,9 +129,7 @@ describe("testOpenAIConnection", () => {
   });
 
   it("returns failure for an invalid key", async () => {
-    globalThis.fetch = vi
-      .fn()
-      .mockResolvedValue({ ok: false, status: 401 });
+    globalThis.fetch = vi.fn().mockResolvedValue({ ok: false, status: 401 });
 
     const result = await testOpenAIConnection("sk-invalid");
 
@@ -158,9 +140,7 @@ describe("testOpenAIConnection", () => {
   });
 
   it("returns failure on network error", async () => {
-    globalThis.fetch = vi
-      .fn()
-      .mockRejectedValue(new Error("Network error"));
+    globalThis.fetch = vi.fn().mockRejectedValue(new Error("Network error"));
 
     const result = await testOpenAIConnection("sk-test");
 

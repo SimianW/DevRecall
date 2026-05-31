@@ -3,6 +3,7 @@ import { describe, expect, it, vi } from "vitest";
 import type { ExtractedPage, PageRecord, TaggingResult } from "../../shared/types";
 import {
   CaptureService,
+  type ChunkWriter,
   type PageExtractor,
   type PageReader,
   type PageTagger,
@@ -45,21 +46,33 @@ const taggingResult: TaggingResult = {
 };
 
 describe("CaptureService", () => {
-  it("extracts the tab and stores a pending page", async () => {
+  it("extracts the tab, stores a pending page, and writes chunks", async () => {
     const extractor: PageExtractor = {
       extract: vi.fn().mockResolvedValue(extracted),
     };
     const writer: PageWriter = {
       upsertCapturedPage: vi.fn().mockResolvedValue(pendingPage),
     };
+    const chunkWriter: ChunkWriter = {
+      replaceChunksForPage: vi.fn().mockResolvedValue([]),
+    };
 
-    const result = await new CaptureService(writer, extractor).save(123);
+    const result = await new CaptureService(
+      writer,
+      extractor,
+      undefined,
+      undefined,
+      chunkWriter,
+    ).save(123);
 
     expect(extractor.extract).toHaveBeenCalledWith(123);
     expect(writer.upsertCapturedPage).toHaveBeenCalledWith({
       ...extracted,
       saveMode: "manual",
     });
+    expect(chunkWriter.replaceChunksForPage).toHaveBeenCalledWith(pendingPage.id, [
+      pendingPage.fullText,
+    ]);
     expect(result).toBe(pendingPage);
   });
 
