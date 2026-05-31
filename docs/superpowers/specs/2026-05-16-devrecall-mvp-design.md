@@ -104,6 +104,11 @@ type DevRecallRequest =
   | { type: "settings.getStatus" };
 ```
 
+Two message directions exist beyond the request/response RPC above:
+
+- **Worker → UI broadcasts.** The worker pushes `{ type: "page.updated" }` (and related state-change events) via `chrome.runtime.sendMessage` with no specific recipient. The side panel subscribes with `chrome.runtime.onMessage` and reconciles its in-memory state — updating or inserting the affected card in place rather than reloading the whole list. This is what makes a `pending → ready` transition appear live while the side panel stays open. Wired in M5.
+- **`chrome.commands` keyboard shortcut.** A user-rebindable command (default `Ctrl+Shift+K` / `Cmd+Shift+K`, editable at `chrome://extensions/shortcuts`) opens the side panel directly, bypassing the popup → "Open library" two-step. The command handler calls `chrome.sidePanel.open()` synchronously within the command event (same user-gesture constraint as the popup button). Declared in the manifest; wired in M5.
+
 ## 5. Data model
 
 Three tables in IndexedDB via Dexie.
@@ -286,6 +291,13 @@ interface CorpusStatsRecord {
 - Keep top-K (default 50).
 - Sufficient for 10k–20k chunks: each chunk is ~8KB (2KB text + 6KB Float32Array embedding), so a full scan loads ~80–160MB into worker memory. `RetrievalService` preloads all chunks at worker startup into an in-memory array (refreshed on `page.updated` broadcast) to avoid per-query IndexedDB deserialization. Memory budget is acceptable for a portfolio/demo workload; inverted index deferred to when measured slow on real data.
 
+**CJK / non-space-delimited tokenization (M5).** The `\W+` splitter drops CJK text entirely — Chinese, Japanese, and Korean have no word spaces, and the Unicode word-boundary class treats a run of Han characters as a single non-`\W` token (or strips it, depending on the regex). The M4 tokenizer therefore returns nothing for a Chinese query, so keyword search silently fails on Chinese pages. M5 fixes this without a heavyweight segmenter:
+
+- Detect CJK codepoint ranges in both the query and chunk text.
+- Emit **character bigrams** for CJK runs (e.g. `自动扩缩` → `自动`, `动扩`, `扩缩`) while keeping the existing whitespace/`\W+` tokenization for Latin-script runs. The two token streams are concatenated, so mixed-language text ("React 服务端渲染") tokenizes correctly.
+- Bigrams are a deliberate middle ground: no dictionary, no WASM segmenter (`jieba`-class libraries are 1–5MB and complicate the MV3 bundle), but materially better recall than unigrams and good enough precision for BM25 ranking. A real segmenter is deferred to v1.2+ if measured insufficient.
+- Vector search is the primary path for cross-lingual and semantic recall; `text-embedding-3-small` is multilingual, so Chinese queries match Chinese (and even English) chunks by meaning regardless of tokenization. CJK bigrams make the keyword arm of the hybrid useful rather than dead weight.
+
 **Vector — cosine over Float32Array, ~30 lines.**
 
 - Embed query via `LLMProvider.embed(query)` → `Float32Array(1536)`.
@@ -342,6 +354,7 @@ Two surfaces only.
 - Save button states: idle → "Saving…" → "Saved ✓" (1.5s) → idle. On error: "Failed — open settings?"
 - If no API key: button disabled with inline "Set API key in settings."
 - "Open library ↗" calls `chrome.sidePanel.open()` **synchronously in the click handler** — no `await` before this call. Chrome requires `sidePanel.open()` to execute within the original user gesture; any async work (e.g., checking API key status) must happen after the call, not before.
+- A keyboard shortcut (`chrome.commands`, default `Cmd/Ctrl+Shift+K`) opens the side panel directly without going through the popup. The command handler in the worker calls `chrome.sidePanel.open()` under the same user-gesture rule. Users rebind it at `chrome://extensions/shortcuts`. Added in M5.
 
 ### Side Panel (resizable, default 400px, persistent across tabs)
 
@@ -560,7 +573,7 @@ Six commits' worth of meaningful checkpoints, each independently demoable.
 | M2  | **Capture (manual)**              | Click Save in popup → row in IndexedDB with title, URL, fullText. No LLM yet. Library view in side panel lists saved rows.                                |
 | M3  | **LLM tagging + summary**         | Save generates summary, sourceType, topics, technologies, intent via `OpenAIProvider`. Pending/ready/failed states visible. Options page accepts API key. |
 | M4  | **Keyword search**                | Side panel search box runs BM25 over chunks-of-fullText (simple chunking, no embeddings yet). Results show match highlighting.                            |
-| M5  | **Embeddings + hybrid retrieval** | Real token-based chunking; embeddings stored; vector search; RRF fusion; "matched by meaning" badge. The 5 hybrid-vs-keyword test queries pass.           |
+| M5  | **Embeddings + hybrid retrieval** | Real token-based chunking; embeddings stored; vector search; RRF fusion; "matched by meaning" badge. The 5 hybrid-vs-keyword test queries pass. Side panel refreshes live on `page.updated` (card-level, no full reload). CJK bigram tokenization makes Chinese keyword search work. Keyboard shortcut opens the side panel directly. |
 | M6  | **Polish + auto-save + ship**     | Allowlist auto-save on technical domains. Export-all-data. Detail view. Dark-mode pass. README with demo GIF. v1.0 tag.                                   |
 
 Estimated effort: M1–M3 each ≈ one weekend; M4–M5 each ≈ one weekend; M6 ≈ one weekend. Total ≈ 6 weekends.
