@@ -217,7 +217,7 @@ export function App({
           ) : (
             <div className="flex flex-col gap-3">
               {hits.map((hit) => (
-                <SearchResultCard key={hit.page.id} hit={hit} />
+                <SearchResultCard key={hit.page.id} hit={hit} onDelete={handleDelete} />
               ))}
             </div>
           )

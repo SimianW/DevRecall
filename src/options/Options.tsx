@@ -181,6 +181,26 @@ export function Options({
         </label>
 
         <section className="rounded-md border border-slate-200 bg-white p-4">
+          <h2 className="text-sm font-semibold text-slate-900">Keyboard shortcut</h2>
+          <p className="mt-2 text-sm text-slate-500">
+            <kbd className="rounded border border-slate-200 bg-slate-100 px-1 py-0.5 font-mono text-xs">
+              ⌘ Shift K
+            </kbd>{" "}
+            /{" "}
+            <kbd className="rounded border border-slate-200 bg-slate-100 px-1 py-0.5 font-mono text-xs">
+              Ctrl Shift K
+            </kbd>{" "}
+            opens the side panel. To customize, open{" "}
+            <span className="font-medium text-slate-700">chrome://extensions/shortcuts</span>{" "}
+            in Chrome and find DevRecall.
+          </p>
+          <p className="mt-1 text-xs text-slate-400">
+            Note: the shortcut opens the panel but cannot toggle it closed — this is a Chrome
+            limitation.
+          </p>
+        </section>
+
+        <section className="rounded-md border border-slate-200 bg-white p-4">
           <h2 className="text-sm font-semibold text-slate-900">Storage</h2>
           <p className="mt-2 text-sm text-slate-500">
             {storageStats == null

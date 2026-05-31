@@ -23,6 +23,9 @@ export type SearchOptions = {
 const DEFAULT_TOP_K = 10;
 const VECTOR_TOP_K = 50;
 const MAX_QUERY_CACHE = 20;
+// Minimum cosine similarity to include a vector hit; prevents gibberish queries
+// from surfacing weakly-related results via the vector arm alone.
+const MIN_VECTOR_SCORE = 0.5;
 
 type FusedChunk = {
   chunk: ChunkRecord;
@@ -119,6 +122,7 @@ export class RetrievalService {
       try {
         const queryVector = await this.embedder.embed(trimmed, apiKey);
         for (const hit of cosineTopK(queryVector, allChunks, VECTOR_TOP_K)) {
+          if (hit.score < MIN_VECTOR_SCORE) break; // results are sorted desc, can break early
           const id = allChunks[hit.index].id;
           vectorRanking.push(id);
           vectorScore.set(id, hit.score);

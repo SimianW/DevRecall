@@ -82,6 +82,23 @@ function makeService(
   return new RetrievalService(chunkSource, pageSource, embedder);
 }
 
+describe("RetrievalService vector threshold", () => {
+  it("filters out vector results below the similarity threshold", async () => {
+    // c1 has embedding [1, 0]; query [0, 1] → cosine similarity = 0 → below threshold
+    const lowSimChunks = [chunk("c1", "p1", 0, "horizontal pod autoscaler", [1, 0])];
+    const embedder = fakeEmbedder({ "perpendicular query": [0, 1] });
+    const chunkSource: ChunkSource = { allChunks: vi.fn().mockResolvedValue(lowSimChunks) };
+    const pageSource: PageSource = {
+      getById: vi.fn().mockImplementation((id: string) => pages.get(id)),
+    };
+    const service = new RetrievalService(chunkSource, pageSource, embedder);
+
+    const hits = await service.search("perpendicular query", { apiKey: "sk-test" });
+
+    expect(hits).toEqual([]);
+  });
+});
+
 describe("RetrievalService caching", () => {
   function countingService() {
     const allChunks = vi.fn().mockResolvedValue(keywordChunks);

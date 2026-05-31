@@ -2,6 +2,7 @@ import type { PageHit, SearchMatchReason } from "../../shared/types";
 
 type SearchResultCardProps = {
   hit: PageHit;
+  onDelete?: (id: string) => void;
 };
 
 const BADGE: Record<SearchMatchReason, { label: string; className: string }> = {
@@ -10,7 +11,7 @@ const BADGE: Record<SearchMatchReason, { label: string; className: string }> = {
   both: { label: "keyword + meaning", className: "bg-sky-100 text-sky-700" },
 };
 
-export function SearchResultCard({ hit }: SearchResultCardProps) {
+export function SearchResultCard({ hit, onDelete }: SearchResultCardProps) {
   const { page, bestChunk, matchReason } = hit;
   const badge = BADGE[matchReason];
 
@@ -48,6 +49,26 @@ export function SearchResultCard({ hit }: SearchResultCardProps) {
           ))}
         </div>
       )}
+
+      <div className="mt-3 flex items-center justify-end gap-3 border-t border-slate-100 pt-2">
+        {onDelete && (
+          <button
+            type="button"
+            onClick={() => onDelete(page.id)}
+            className="text-xs font-medium text-red-600 hover:underline"
+          >
+            Delete
+          </button>
+        )}
+        <a
+          href={page.url}
+          target="_blank"
+          rel="noopener noreferrer"
+          className="text-xs font-medium text-accent hover:underline"
+        >
+          Open →
+        </a>
+      </div>
     </article>
   );
 }

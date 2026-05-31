@@ -180,3 +180,23 @@ it("labels a vector-only hit as matched by meaning", async () => {
 
   expect(await screen.findByText("matched by meaning")).toBeInTheDocument();
 });
+
+it("can delete a page from a search result card", async () => {
+  const user = userEvent.setup();
+  const deletePage = vi.fn().mockResolvedValue(undefined);
+  const runSearch = vi.fn().mockResolvedValue([vectorHit]);
+
+  render(
+    <App
+      listPages={vi.fn().mockResolvedValue([])}
+      runSearch={runSearch}
+      deletePage={deletePage}
+      subscribe={makeSubscribe().subscribe}
+    />,
+  );
+
+  await user.type(screen.getByRole("searchbox", { name: "Search saved pages" }), "elastic scaling");
+  await user.click(await screen.findByRole("button", { name: "Delete" }));
+
+  expect(deletePage).toHaveBeenCalledWith(pages[0].id);
+});
