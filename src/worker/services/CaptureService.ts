@@ -1,8 +1,13 @@
 import type { ContentExtractRequest, ContentExtractResponse } from "../../shared/messages";
 import type { ChunkRecord, ExtractedPage, PageCaptureInput, PageRecord } from "../../shared/types";
 import { chunkText } from "../../lib/chunking";
-import { OpenAIProvider, type PageTagger as OpenAIPageTagger } from "../llm/OpenAIProvider";
-import { ChunkRepo } from "../repository/ChunkRepo";
+import { chunkTokens } from "../../lib/tokenChunking";
+import {
+  OpenAIProvider,
+  type Embedder,
+  type PageTagger as OpenAIPageTagger,
+} from "../llm/OpenAIProvider";
+import { ChunkRepo, type EmbeddedChunkInput } from "../repository/ChunkRepo";
 import { PageRepo } from "../repository/PageRepo";
 
 export type PageExtractor = {
@@ -20,6 +25,12 @@ export type PageReader = {
 
 export type ChunkWriter = {
   replaceChunksForPage(pageId: string, texts: string[]): Promise<ChunkRecord[]>;
+  commitProcessedPage(
+    pageId: string,
+    chunks: EmbeddedChunkInput[],
+    embeddingModel: string,
+    pageUpdate: Partial<Omit<PageRecord, "id" | "schemaVersion">>,
+  ): Promise<ChunkRecord[]>;
 };
 
 export type PageTagger = OpenAIPageTagger;
@@ -48,6 +59,7 @@ export class CaptureService {
     private readonly reader: PageReader = new PageRepo(),
     private readonly tagger: PageTagger = new OpenAIProvider(),
     private readonly chunkWriter: ChunkWriter = new ChunkRepo(),
+    private readonly embedder: Embedder = new OpenAIProvider(),
   ) {}
 
   async save(tabId: number): Promise<PageRecord> {
@@ -73,7 +85,21 @@ export class CaptureService {
     try {
       const result = await this.tagger.summarizeAndTag(page.fullText, page.title, page.url, apiKey);
 
-      await this.reader.updatePage(pageId, { ...result, status: "ready" });
+      const tokenChunks = chunkTokens(page.fullText);
+      const vectors = await this.embedder.embedBatch(
+        tokenChunks.map((chunk) => chunk.text),
+        apiKey,
+      );
+      const embedded: EmbeddedChunkInput[] = tokenChunks.map((chunk, index) => ({
+        text: chunk.text,
+        embedding: vectors[index],
+        tokenCount: chunk.tokenCount,
+      }));
+
+      await this.chunkWriter.commitProcessedPage(pageId, embedded, this.embedder.embeddingModel, {
+        ...result,
+        status: "ready",
+      });
 
       return { ...page, ...result, status: "ready" };
     } catch (error) {
