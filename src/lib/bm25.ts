@@ -26,11 +26,54 @@ const STOPWORDS: ReadonlySet<string> = new Set([
   "with",
 ]);
 
+// BMP Unicode ranges for scripts written without spaces: Hiragana/Katakana
+// (U+3040–30FF), CJK Ext-A (U+3400–4DBF), CJK Unified (U+4E00–9FFF), Hangul
+// syllables (U+AC00–D7AF). Bigram tokenization gives these a useful keyword arm.
+const CJK_CHAR = /[぀-ヿ㐀-䶿一-鿿가-힯]/;
+
+function cjkBigrams(run: string): string[] {
+  const chars = Array.from(run);
+
+  if (chars.length === 1) {
+    return [chars[0]];
+  }
+
+  const bigrams: string[] = [];
+  for (let i = 0; i < chars.length - 1; i += 1) {
+    bigrams.push(chars[i] + chars[i + 1]);
+  }
+
+  return bigrams;
+}
+
 export function tokenize(text: string): string[] {
-  return text
-    .toLowerCase()
-    .split(/[^a-z0-9]+/)
-    .filter((token) => token.length > 0 && !STOPWORDS.has(token));
+  const lower = text.toLowerCase();
+  const tokens: string[] = [];
+  let i = 0;
+
+  while (i < lower.length) {
+    if (CJK_CHAR.test(lower[i])) {
+      let j = i;
+      while (j < lower.length && CJK_CHAR.test(lower[j])) {
+        j += 1;
+      }
+      tokens.push(...cjkBigrams(lower.slice(i, j)));
+      i = j;
+    } else {
+      let j = i;
+      while (j < lower.length && !CJK_CHAR.test(lower[j])) {
+        j += 1;
+      }
+      for (const token of lower.slice(i, j).split(/[^a-z0-9]+/)) {
+        if (token.length > 0 && !STOPWORDS.has(token)) {
+          tokens.push(token);
+        }
+      }
+      i = j;
+    }
+  }
+
+  return tokens;
 }
 
 export type Bm25Options = {
