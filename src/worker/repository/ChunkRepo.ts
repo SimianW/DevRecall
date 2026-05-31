@@ -50,13 +50,17 @@ export class ChunkRepo {
     }));
 
     await this.database.transaction("rw", this.database.pages, this.database.chunks, async () => {
+      const updated = await this.database.pages.update(pageId, pageUpdate);
+
+      if (updated === 0) {
+        throw new Error(`commitProcessedPage: page ${pageId} not found`);
+      }
+
       await this.database.chunks.where("pageId").equals(pageId).delete();
 
       if (records.length > 0) {
         await this.database.chunks.bulkPut(records);
       }
-
-      await this.database.pages.update(pageId, pageUpdate);
     });
 
     return records;

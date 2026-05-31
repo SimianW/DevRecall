@@ -134,4 +134,17 @@ describe("ChunkRepo.commitProcessedPage", () => {
     expect(stored[0].embedding?.constructor.name).toBe("Float32Array");
     expect(Array.from(stored[0].embedding!)).toEqual([1]);
   });
+
+  it("rolls back without writing chunks when the page is missing", async () => {
+    await expect(
+      repo.commitProcessedPage(
+        "missing-page",
+        [{ text: "orphan", embedding: Float32Array.from([1]), tokenCount: 1 }],
+        "openai:text-embedding-3-small",
+        { status: "ready" },
+      ),
+    ).rejects.toThrow(/not found/);
+
+    expect(await repo.allChunks()).toHaveLength(0);
+  });
 });
