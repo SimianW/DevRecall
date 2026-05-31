@@ -1,7 +1,7 @@
 import type { ExtractedPage, PageHit, PageListItem, PageStatus } from "./types";
 
 export const APP_NAME = "DevRecall";
-export const APP_VERSION = "0.1.0";
+export const APP_VERSION = "0.5.4.4";
 
 export type PersistentStorageState = "unknown" | "granted" | "denied";
 
@@ -14,7 +14,9 @@ export type DevRecallRequest =
   | { type: "page.list"; payload: { limit: number } }
   | { type: "storage.getStats" }
   | { type: "page.statusForUrl"; payload: { url: string } }
-  | { type: "search.run"; payload: { query: string; topK?: number } };
+  | { type: "search.run"; payload: { query: string; topK?: number } }
+  | { type: "page.delete"; payload: { id: string } }
+  | { type: "library.reindex" };
 
 export type DevRecallResponse =
   | {
@@ -56,6 +58,7 @@ export type DevRecallResponse =
       payload: {
         pageCount: number;
         totalTextBytes: number;
+        pagesMissingEmbeddings: number;
       };
     }
   | {
@@ -75,12 +78,19 @@ export type DevRecallResponse =
         hits: PageHit[];
       };
     }
+  | { type: "page.deleted"; payload: { id: string } }
+  | { type: "library.reindexStarted"; payload: { total: number } }
   | {
       type: "error";
       payload: {
         message: string;
       };
     };
+
+export type WorkerBroadcast =
+  | { type: "page.updated"; payload: { page: PageListItem } }
+  | { type: "page.removed"; payload: { id: string } }
+  | { type: "library.reindexProgress"; payload: { done: number; total: number } };
 
 export type ContentExtractRequest = { type: "content.extract" };
 

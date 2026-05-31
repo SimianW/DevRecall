@@ -50,3 +50,34 @@ describe("bm25Search", () => {
     expect(hits).toHaveLength(1);
   });
 });
+
+describe("tokenize — CJK support", () => {
+  it("emits character bigrams for a Han run", () => {
+    expect(tokenize("自动扩缩")).toEqual(["自动", "动扩", "扩缩"]);
+  });
+
+  it("emits a unigram for a single CJK character", () => {
+    expect(tokenize("水")).toEqual(["水"]);
+  });
+
+  it("tokenizes mixed Latin + CJK text", () => {
+    expect(tokenize("React 服务端渲染")).toEqual([
+      "react",
+      "服务",
+      "务端",
+      "端渲",
+      "渲染",
+    ]);
+  });
+
+  it("supports Hiragana, Katakana, and Hangul runs", () => {
+    expect(tokenize("ひらがな")).toEqual(["ひら", "らが", "がな"]);
+    expect(tokenize("カタカナ")).toEqual(["カタ", "タカ", "カナ"]);
+    expect(tokenize("한국어")).toEqual(["한국", "국어"]);
+  });
+
+  it("preserves M4 Latin/stopword behavior", () => {
+    expect(tokenize("The quick brown fox")).toEqual(["quick", "brown", "fox"]);
+    expect(tokenize("React 18 hooks")).toEqual(["react", "18", "hooks"]);
+  });
+});

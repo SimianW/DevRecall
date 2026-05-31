@@ -52,10 +52,39 @@ export class PageRepo {
     await this.database.pages.update(id, data);
   }
 
-  async getStats(): Promise<{ pageCount: number; totalTextBytes: number }> {
+  async deleteWithChunks(id: string): Promise<void> {
+    await this.database.transaction("rw", this.database.pages, this.database.chunks, async () => {
+      await this.database.chunks.where("pageId").equals(id).delete();
+      await this.database.pages.delete(id);
+    });
+  }
+
+  async pageIdsMissingEmbeddings(): Promise<string[]> {
+    const [readyPages, chunks] = await Promise.all([
+      this.database.pages.where("status").equals("ready").toArray(),
+      this.database.chunks.toArray(),
+    ]);
+
+    const embeddedPageIds = new Set<string>();
+    for (const chunk of chunks) {
+      if (chunk.embedding !== undefined) {
+        embeddedPageIds.add(chunk.pageId);
+      }
+    }
+
+    return readyPages.map((page) => page.id).filter((id) => !embeddedPageIds.has(id));
+  }
+
+  async getStats(): Promise<{
+    pageCount: number;
+    totalTextBytes: number;
+    pagesMissingEmbeddings: number;
+  }> {
     const pages = await this.database.pages.toArray();
     const totalTextBytes = pages.reduce((sum, p) => sum + p.fullText.length, 0);
-    return { pageCount: pages.length, totalTextBytes };
+    const pagesMissingEmbeddings = (await this.pageIdsMissingEmbeddings()).length;
+
+    return { pageCount: pages.length, totalTextBytes, pagesMissingEmbeddings };
   }
 
   async listPages({ limit }: { limit: number }): Promise<PageListItem[]> {

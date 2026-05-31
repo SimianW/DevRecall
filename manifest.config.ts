@@ -1,10 +1,12 @@
 import { defineManifest } from "@crxjs/vite-plugin";
 
+import pkg from "./package.json";
+
 export default defineManifest({
   manifest_version: 3,
   name: "DevRecall",
   description: "Local-first recall for technical browsing sessions.",
-  version: "0.1.0",
+  version: pkg.version,
   action: {
     default_title: "DevRecall",
     default_popup: "src/popup/index.html",
@@ -22,8 +24,15 @@ export default defineManifest({
       matches: ["http://*/*", "https://*/*"],
       js: ["src/content/extract.ts"],
       run_at: "document_idle",
+      all_frames: true,
     },
   ],
+  commands: {
+    "open-side-panel": {
+      suggested_key: { default: "Ctrl+Shift+K", mac: "Command+Shift+K" },
+      description: "Open the DevRecall side panel",
+    },
+  },
   permissions: ["activeTab", "sidePanel", "scripting", "storage", "tabs"],
   host_permissions: ["http://*/*", "https://*/*"],
 });

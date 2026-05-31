@@ -3,10 +3,11 @@ import {
   APP_VERSION,
   type DevRecallRequest,
   type DevRecallResponse,
+  type WorkerBroadcast,
 } from "../shared/messages";
 import type { PageHit, PageListItem, PageRecord } from "../shared/types";
 import { normalizeUrl } from "../lib/urlNormalize";
-import { testOpenAIConnection } from "./llm/OpenAIProvider";
+import { OpenAIProvider, testOpenAIConnection } from "./llm/OpenAIProvider";
 import { ChunkRepo } from "./repository/ChunkRepo";
 import { PageRepo, toPageListItem } from "./repository/PageRepo";
 import { CaptureService } from "./services/CaptureService";
@@ -16,16 +17,31 @@ import { ChromeApiKeyStore, type ApiKeyStore } from "./settings/ApiKeyStore";
 type CapturePort = {
   save(tabId: number): Promise<PageRecord>;
   processPage(pageId: string, apiKey: string): Promise<PageRecord>;
+  reindexPages(
+    pageIds: string[],
+    apiKey: string,
+    onProgress: (done: number, total: number) => void,
+  ): Promise<void>;
 };
 
 type PageListPort = {
   listPages(input: { limit: number }): Promise<PageListItem[]>;
-  getStats(): Promise<{ pageCount: number; totalTextBytes: number }>;
+  getStats(): Promise<{
+    pageCount: number;
+    totalTextBytes: number;
+    pagesMissingEmbeddings: number;
+  }>;
   getByUrlHash(urlHash: string): Promise<PageRecord | undefined>;
+  deleteWithChunks(id: string): Promise<void>;
+  pageIdsMissingEmbeddings(): Promise<string[]>;
 };
 
 type SearchPort = {
-  search(query: string, options?: { topK?: number }): Promise<PageHit[]>;
+  search(
+    query: string,
+    options?: { topK?: number; apiKey?: string | null },
+  ): Promise<PageHit[]>;
+  invalidate(): void;
 };
 
 type HandlerDeps = {
@@ -34,16 +50,28 @@ type HandlerDeps = {
   apiKeyStore: ApiKeyStore;
   testConnection: (apiKey: string) => Promise<{ success: boolean; message: string }>;
   retrievalService: SearchPort;
+  broadcast: (message: WorkerBroadcast) => void;
 };
+
+function broadcast(message: WorkerBroadcast): void {
+  if (typeof chrome === "undefined" || !chrome.runtime?.sendMessage) {
+    return;
+  }
+  // Fire-and-forget. With no open receiver, Chrome rejects with
+  // "Receiving end does not exist" — harmless here, so swallow it.
+  void chrome.runtime.sendMessage(message).catch(() => {});
+}
 
 const pageRepo = new PageRepo();
 const chunkRepo = new ChunkRepo();
+const openai = new OpenAIProvider();
 const defaultDeps: HandlerDeps = {
-  captureService: new CaptureService(pageRepo, undefined, pageRepo, undefined, chunkRepo),
+  captureService: new CaptureService(pageRepo, undefined, pageRepo, openai, chunkRepo, openai),
   pageRepo,
   apiKeyStore: new ChromeApiKeyStore(),
   testConnection: testOpenAIConnection,
-  retrievalService: new RetrievalService(chunkRepo, pageRepo),
+  retrievalService: new RetrievalService(chunkRepo, pageRepo, openai),
+  broadcast,
 };
 
 export async function handleRequest(
@@ -98,20 +126,28 @@ export async function handleRequest(
 
     case "page.save": {
       const page = await deps.captureService.save(request.payload.tabId);
-      const apiKey = await deps.apiKeyStore.getApiKey();
+      const listItem = toPageListItem(page);
 
+      deps.retrievalService.invalidate();
+      deps.broadcast({ type: "page.updated", payload: { page: listItem } });
+
+      const apiKey = await deps.apiKeyStore.getApiKey();
       if (apiKey) {
-        void deps.captureService.processPage(page.id, apiKey).catch((error) => {
-          console.error("[DevRecall] LLM processing error:", error);
-        });
+        void deps.captureService
+          .processPage(page.id, apiKey)
+          .then((processed) => {
+            deps.retrievalService.invalidate();
+            deps.broadcast({
+              type: "page.updated",
+              payload: { page: toPageListItem(processed) },
+            });
+          })
+          .catch((error) => {
+            console.error("[DevRecall] LLM processing error:", error);
+          });
       }
 
-      return {
-        type: "page.saved",
-        payload: {
-          page: toPageListItem(page),
-        },
-      };
+      return { type: "page.saved", payload: { page: listItem } };
     }
 
     case "page.list":
@@ -151,15 +187,48 @@ export async function handleRequest(
       };
     }
 
-    case "search.run":
+    case "search.run": {
+      const apiKey = await deps.apiKeyStore.getApiKey();
+
       return {
         type: "search.results",
         payload: {
           hits: await deps.retrievalService.search(request.payload.query, {
             topK: request.payload.topK,
+            apiKey,
           }),
         },
       };
+    }
+
+    case "page.delete": {
+      await deps.pageRepo.deleteWithChunks(request.payload.id);
+      deps.retrievalService.invalidate();
+      deps.broadcast({ type: "page.removed", payload: { id: request.payload.id } });
+
+      return { type: "page.deleted", payload: { id: request.payload.id } };
+    }
+
+    case "library.reindex": {
+      const apiKey = await deps.apiKeyStore.getApiKey();
+
+      if (!apiKey) {
+        return { type: "error", payload: { message: "No API key set" } };
+      }
+
+      const pageIds = await deps.pageRepo.pageIdsMissingEmbeddings();
+
+      void deps.captureService
+        .reindexPages(pageIds, apiKey, (done, total) => {
+          deps.retrievalService.invalidate();
+          deps.broadcast({ type: "library.reindexProgress", payload: { done, total } });
+        })
+        .catch((error) => {
+          console.error("[DevRecall] reindex error:", error);
+        });
+
+      return { type: "library.reindexStarted", payload: { total: pageIds.length } };
+    }
 
     default:
       throw new Error(`Unhandled request type: ${(request as { type: string }).type}`);
@@ -201,4 +270,13 @@ if (typeof chrome !== "undefined" && chrome.runtime?.onMessage) {
       return true;
     },
   );
+}
+
+if (typeof chrome !== "undefined" && chrome.commands?.onCommand) {
+  chrome.commands.onCommand.addListener((command) => {
+    if (command === "open-side-panel" && chrome.sidePanel?.open) {
+      // Synchronous within the command gesture — no await before open().
+      void chrome.sidePanel.open({ windowId: chrome.windows.WINDOW_ID_CURRENT });
+    }
+  });
 }
