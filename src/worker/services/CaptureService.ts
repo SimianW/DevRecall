@@ -3,14 +3,17 @@ import type {
   ContentExtractResponse,
 } from "../../shared/messages";
 import type {
+  ChunkRecord,
   ExtractedPage,
   PageCaptureInput,
   PageRecord,
 } from "../../shared/types";
+import { chunkText } from "../../lib/chunking";
 import {
   OpenAIProvider,
   type PageTagger as OpenAIPageTagger,
 } from "../llm/OpenAIProvider";
+import { ChunkRepo } from "../repository/ChunkRepo";
 import { PageRepo } from "../repository/PageRepo";
 
 export type PageExtractor = {
@@ -27,6 +30,10 @@ export type PageReader = {
     id: string,
     data: Partial<Omit<PageRecord, "id" | "schemaVersion">>,
   ): Promise<void>;
+};
+
+export type ChunkWriter = {
+  replaceChunksForPage(pageId: string, texts: string[]): Promise<ChunkRecord[]>;
 };
 
 export type PageTagger = OpenAIPageTagger;
@@ -57,15 +64,23 @@ export class CaptureService {
     private readonly extractor: PageExtractor = new ChromePageExtractor(),
     private readonly reader: PageReader = new PageRepo(),
     private readonly tagger: PageTagger = new OpenAIProvider(),
+    private readonly chunkWriter: ChunkWriter = new ChunkRepo(),
   ) {}
 
   async save(tabId: number): Promise<PageRecord> {
     const extracted = await this.extractor.extract(tabId);
 
-    return this.writer.upsertCapturedPage({
+    const page = await this.writer.upsertCapturedPage({
       ...extracted,
       saveMode: "manual",
     });
+
+    await this.chunkWriter.replaceChunksForPage(
+      page.id,
+      chunkText(page.fullText),
+    );
+
+    return page;
   }
 
   async processPage(pageId: string, apiKey: string): Promise<PageRecord> {
