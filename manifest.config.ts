@@ -24,6 +24,7 @@ export default defineManifest({
       matches: ["http://*/*", "https://*/*"],
       js: ["src/content/extract.ts"],
       run_at: "document_idle",
+      all_frames: true,
     },
   ],
   commands: {

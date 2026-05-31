@@ -8,7 +8,9 @@ import { MockLLMProvider } from "../llm/MockLLMProvider";
 import type { Embedder } from "../llm/OpenAIProvider";
 import {
   CaptureService,
+  mergeFrameExtractions,
   type ChunkWriter,
+  type FrameExtraction,
   type PageExtractor,
   type PageReader,
   type PageTagger,
@@ -289,5 +291,66 @@ describe("CaptureService", () => {
     const reread = await pageRepo.getById(saved.id);
     expect(reread?.status).toBe("ready");
     expect(reread?.summary).not.toBe("");
+  });
+});
+
+describe("mergeFrameExtractions", () => {
+  const topFrame: FrameExtraction = {
+    frameId: 0,
+    page: {
+      url: "https://learn.uwaterloo.ca/d2l/le/content/123/viewContent/456",
+      title: "FRTF Bridging: Creating a One-Pager Report",
+      fullText: "One-Pager Report Loading... Web Page Activity Details",
+      readingTimeMs: 10,
+    },
+  };
+
+  const contentFrame: FrameExtraction = {
+    frameId: 7,
+    page: {
+      url: "https://content.uwaterloo.ca/d2l/iframe/topic.html",
+      title: "One-Pager Article",
+      fullText:
+        "A one-pager is a concise, single-page document that provides a high-level overview. " +
+        "It distills complex ideas for a broad audience of stakeholders and investors.",
+      readingTimeMs: 25,
+    },
+  };
+
+  it("keeps the body text from the frame with the most content", () => {
+    const result = mergeFrameExtractions([topFrame, contentFrame]);
+
+    expect(result.fullText).toBe(contentFrame.page.fullText);
+    expect(result.readingTimeMs).toBe(contentFrame.page.readingTimeMs);
+  });
+
+  it("uses the top frame's url and title even when a child frame is richer", () => {
+    const result = mergeFrameExtractions([topFrame, contentFrame]);
+
+    expect(result.url).toBe(topFrame.page.url);
+    expect(result.title).toBe(topFrame.page.title);
+  });
+
+  it("falls back to the richest frame's identity when no top frame is present", () => {
+    const result = mergeFrameExtractions([contentFrame]);
+
+    expect(result.url).toBe(contentFrame.page.url);
+    expect(result.title).toBe(contentFrame.page.title);
+    expect(result.fullText).toBe(contentFrame.page.fullText);
+  });
+
+  it("uses a child frame's title when the top frame has no title", () => {
+    const titlelessTop: FrameExtraction = {
+      frameId: 0,
+      page: { ...topFrame.page, title: "" },
+    };
+
+    const result = mergeFrameExtractions([titlelessTop, contentFrame]);
+
+    expect(result.title).toBe(contentFrame.page.title);
+  });
+
+  it("throws when there are no frame extractions", () => {
+    expect(() => mergeFrameExtractions([])).toThrow();
   });
 });

@@ -35,6 +35,36 @@ export type ChunkWriter = {
 
 export type PageTagger = OpenAIPageTagger;
 
+export type FrameExtraction = {
+  frameId: number;
+  page: ExtractedPage;
+};
+
+/**
+ * Picks the best extraction across a page's frames. Brightspace/D2L-style sites
+ * render the real article inside a child iframe while the top frame holds only
+ * navigation chrome, so the richest body text usually comes from a sub-frame.
+ * Page identity (url + title), however, must stay anchored to the top frame —
+ * the iframe's own url is not the page the user saved.
+ */
+export function mergeFrameExtractions(frames: FrameExtraction[]): ExtractedPage {
+  if (frames.length === 0) {
+    throw new Error("No readable page text found");
+  }
+
+  const richest = frames.reduce((best, current) =>
+    current.page.fullText.length > best.page.fullText.length ? current : best,
+  ).page;
+  const top = frames.find((frame) => frame.frameId === 0)?.page;
+
+  return {
+    url: top?.url ?? richest.url,
+    title: top?.title || richest.title,
+    fullText: richest.fullText,
+    readingTimeMs: richest.readingTimeMs,
+  };
+}
+
 export class ChromePageExtractor implements PageExtractor {
   async extract(tabId: number): Promise<ExtractedPage> {
     if (typeof chrome === "undefined" || !chrome.tabs?.sendMessage) {
@@ -42,13 +72,56 @@ export class ChromePageExtractor implements PageExtractor {
     }
 
     const request: ContentExtractRequest = { type: "content.extract" };
-    const response = (await chrome.tabs.sendMessage(tabId, request)) as ContentExtractResponse;
+    const frameIds = await this.frameIds(tabId);
 
-    if (response.type === "content.extractFailed") {
-      throw new Error(response.payload.message);
+    const settled = await Promise.all(
+      frameIds.map(async (frameId): Promise<FrameExtraction | null> => {
+        try {
+          const response = (await chrome.tabs.sendMessage(tabId, request, {
+            frameId,
+          })) as ContentExtractResponse;
+          return response.type === "content.extracted"
+            ? { frameId, page: response.payload }
+            : null;
+        } catch {
+          // Frame has no content script (about:blank/srcdoc, injection blocked) — skip it.
+          return null;
+        }
+      }),
+    );
+
+    const frames = settled.filter((entry): entry is FrameExtraction => entry !== null);
+
+    if (frames.length === 0) {
+      throw new Error("No readable page text found");
     }
 
-    return response.payload;
+    return mergeFrameExtractions(frames);
+  }
+
+  /**
+   * Enumerates the tab's injectable frame ids via a no-op `scripting` injection,
+   * which reuses the already-granted `scripting` permission instead of adding
+   * `webNavigation` (whose "read browsing history" warning conflicts with the
+   * local-first privacy posture). Falls back to the top frame when unavailable.
+   */
+  private async frameIds(tabId: number): Promise<number[]> {
+    if (!chrome.scripting?.executeScript) {
+      return [0];
+    }
+
+    try {
+      const injections = await chrome.scripting.executeScript({
+        target: { tabId, allFrames: true },
+        func: () => true,
+      });
+      const ids = injections
+        .map((injection) => injection.frameId)
+        .filter((frameId): frameId is number => typeof frameId === "number");
+      return ids.length > 0 ? ids : [0];
+    } catch {
+      return [0];
+    }
   }
 }
 
