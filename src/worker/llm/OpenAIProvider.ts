@@ -1,4 +1,5 @@
 import type { Intent, SourceType, TaggingResult } from "../../shared/types";
+import { normalize } from "../../lib/vector";
 
 export type PageTagger = {
   summarizeAndTag(
@@ -9,7 +10,16 @@ export type PageTagger = {
   ): Promise<TaggingResult>;
 };
 
+export type Embedder = {
+  readonly embeddingModel: string;
+  embed(text: string, apiKey: string): Promise<Float32Array>;
+  embedBatch(texts: string[], apiKey: string): Promise<Float32Array[]>;
+};
+
 const OPENAI_CHAT_URL = "https://api.openai.com/v1/chat/completions";
+const OPENAI_EMBEDDINGS_URL = "https://api.openai.com/v1/embeddings";
+const EMBEDDING_MODEL = "text-embedding-3-small";
+export const EMBEDDING_MODEL_ID = "openai:text-embedding-3-small";
 const MODEL = "gpt-4o-mini";
 const MAX_TEXT_LENGTH = 8000;
 const DEFAULT_RETRY_DELAYS = [1000, 2000, 4000];
@@ -42,7 +52,9 @@ const SYSTEM_PROMPT = `You are a technical document classifier for a developer's
 
 Return ONLY the JSON object.`;
 
-export class OpenAIProvider implements PageTagger {
+export class OpenAIProvider implements PageTagger, Embedder {
+  readonly embeddingModel = EMBEDDING_MODEL_ID;
+
   constructor(private readonly retryDelays: number[] = DEFAULT_RETRY_DELAYS) {}
 
   async summarizeAndTag(
@@ -64,16 +76,32 @@ export class OpenAIProvider implements PageTagger {
       temperature: 0.2,
     });
 
-    const responseBody = await this.fetchWithRetry(apiKey, body);
+    const responseBody = await this.fetchWithRetry(OPENAI_CHAT_URL, apiKey, body);
 
     return parseTaggingResponse(responseBody);
   }
 
-  private async fetchWithRetry(apiKey: string, body: string): Promise<unknown> {
+  async embedBatch(texts: string[], apiKey: string): Promise<Float32Array[]> {
+    if (texts.length === 0) {
+      return [];
+    }
+
+    const body = JSON.stringify({ model: EMBEDDING_MODEL, input: texts });
+    const responseBody = await this.fetchWithRetry(OPENAI_EMBEDDINGS_URL, apiKey, body);
+
+    return parseEmbeddingResponse(responseBody, texts.length);
+  }
+
+  async embed(text: string, apiKey: string): Promise<Float32Array> {
+    const [vector] = await this.embedBatch([text], apiKey);
+    return vector;
+  }
+
+  private async fetchWithRetry(url: string, apiKey: string, body: string): Promise<unknown> {
     const maxAttempts = this.retryDelays.length + 1;
 
     for (let attempt = 0; attempt < maxAttempts; attempt++) {
-      const response = await fetch(OPENAI_CHAT_URL, {
+      const response = await fetch(url, {
         method: "POST",
         headers: {
           "Content-Type": "application/json",
@@ -132,6 +160,24 @@ function parseTaggingResponse(body: unknown): TaggingResult {
 
 function sleep(ms: number): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+function parseEmbeddingResponse(body: unknown, expectedCount: number): Float32Array[] {
+  const data = body as { data?: Array<{ embedding?: number[]; index?: number }> };
+
+  if (!Array.isArray(data.data) || data.data.length !== expectedCount) {
+    throw new Error("Unexpected embedding response shape");
+  }
+
+  return [...data.data]
+    .sort((a, b) => (a.index ?? 0) - (b.index ?? 0))
+    .map((row) => {
+      if (!Array.isArray(row.embedding) || row.embedding.length === 0) {
+        throw new Error("Missing embedding in OpenAI response");
+      }
+
+      return normalize(Float32Array.from(row.embedding));
+    });
 }
 
 export async function testOpenAIConnection(
