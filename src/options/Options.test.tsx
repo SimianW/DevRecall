@@ -1,8 +1,26 @@
-import { render, screen } from "@testing-library/react";
+import { act, render, screen } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { describe, expect, it, vi } from "vitest";
 
+import type { WorkerBroadcast } from "../shared/messages";
 import { Options } from "./Options";
+
+function makeSubscribe() {
+  let handler: ((m: WorkerBroadcast) => void) | null = null;
+  return {
+    subscribe: (h: (m: WorkerBroadcast) => void) => {
+      handler = h;
+      return () => {
+        handler = null;
+      };
+    },
+    emit: async (m: WorkerBroadcast) => {
+      await act(async () => {
+        handler?.(m);
+      });
+    },
+  };
+}
 
 const renderOptions = (props: Partial<React.ComponentProps<typeof Options>> = {}) => {
   const defaultProps = {
@@ -88,4 +106,38 @@ describe("Options", () => {
     expect(message).toBeInTheDocument();
     expect(message).toHaveClass("text-red-600");
   });
+});
+
+it("disables re-index when no pages are missing embeddings", async () => {
+  renderOptions({
+    loadStatus: vi.fn().mockResolvedValue({ hasApiKey: true }),
+    loadStorageStats: vi
+      .fn()
+      .mockResolvedValue({ pageCount: 3, totalTextBytes: 100, pagesMissingEmbeddings: 0 }),
+  });
+
+  const button = await screen.findByRole("button", { name: /Re-index library/ });
+  expect(button).toBeDisabled();
+});
+
+it("starts a re-index and shows live progress", async () => {
+  const { subscribe, emit } = makeSubscribe();
+  const startReindex = vi.fn().mockResolvedValue({ total: 2 });
+
+  renderOptions({
+    loadStatus: vi.fn().mockResolvedValue({ hasApiKey: true }),
+    loadStorageStats: vi
+      .fn()
+      .mockResolvedValue({ pageCount: 2, totalTextBytes: 100, pagesMissingEmbeddings: 2 }),
+    startReindex,
+    subscribe,
+  });
+
+  const user = userEvent.setup();
+  const button = await screen.findByRole("button", { name: /Re-index library \(2\)/ });
+  await user.click(button);
+
+  expect(startReindex).toHaveBeenCalled();
+  await emit({ type: "library.reindexProgress", payload: { done: 1, total: 2 } });
+  expect(await screen.findByText(/Re-indexing 1\s*\/\s*2/)).toBeInTheDocument();
 });

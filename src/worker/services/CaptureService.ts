@@ -75,6 +75,19 @@ export class CaptureService {
     return page;
   }
 
+  async reindexPages(
+    pageIds: string[],
+    apiKey: string,
+    onProgress: (done: number, total: number) => void,
+  ): Promise<void> {
+    let done = 0;
+    for (const id of pageIds) {
+      await this.processPage(id, apiKey);
+      done += 1;
+      onProgress(done, pageIds.length);
+    }
+  }
+
   async processPage(pageId: string, apiKey: string): Promise<PageRecord> {
     const page = await this.reader.getById(pageId);
 

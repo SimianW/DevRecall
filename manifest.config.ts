@@ -4,7 +4,7 @@ export default defineManifest({
   manifest_version: 3,
   name: "DevRecall",
   description: "Local-first recall for technical browsing sessions.",
-  version: "0.1.0",
+  version: "0.5.4",
   action: {
     default_title: "DevRecall",
     default_popup: "src/popup/index.html",
@@ -24,6 +24,12 @@ export default defineManifest({
       run_at: "document_idle",
     },
   ],
+  commands: {
+    "open-side-panel": {
+      suggested_key: { default: "Ctrl+Shift+K", mac: "Command+Shift+K" },
+      description: "Open the DevRecall side panel",
+    },
+  },
   permissions: ["activeTab", "sidePanel", "scripting", "storage", "tabs"],
   host_permissions: ["http://*/*", "https://*/*"],
 });

@@ -1,15 +1,18 @@
 import { useEffect, useState } from "react";
 import { SurfaceShell } from "../ui/components";
+import type { DevRecallRequest, DevRecallResponse, WorkerBroadcast } from "../shared/messages";
 
 type StatusResult = { hasApiKey: boolean };
 type TestResult = { success: boolean; message: string };
-type StorageStats = { pageCount: number; totalTextBytes: number };
+type StorageStats = { pageCount: number; totalTextBytes: number; pagesMissingEmbeddings: number };
 
 type OptionsProps = {
   loadStatus?: () => Promise<StatusResult>;
   saveApiKey?: (apiKey: string) => Promise<void>;
   testConnection?: () => Promise<TestResult>;
   loadStorageStats?: () => Promise<StorageStats>;
+  startReindex?: () => Promise<{ total: number }>;
+  subscribe?: (handler: (message: WorkerBroadcast) => void) => () => void;
 };
 
 const defaultLoadStatus = async (): Promise<StatusResult> => {
@@ -34,17 +37,36 @@ const defaultLoadStorageStats = async (): Promise<StorageStats> => {
   return response.payload;
 };
 
+const defaultStartReindex = async (): Promise<{ total: number }> => {
+  const request: DevRecallRequest = { type: "library.reindex" };
+  const response = (await chrome.runtime.sendMessage(request)) as DevRecallResponse;
+  return response.type === "library.reindexStarted" ? response.payload : { total: 0 };
+};
+
+const defaultSubscribe = (handler: (message: WorkerBroadcast) => void): (() => void) => {
+  if (typeof chrome === "undefined" || !chrome.runtime?.onMessage) {
+    return () => {};
+  }
+  const listener = (message: unknown) => handler(message as WorkerBroadcast);
+  chrome.runtime.onMessage.addListener(listener);
+  return () => chrome.runtime.onMessage.removeListener(listener);
+};
+
 export function Options({
   loadStatus = defaultLoadStatus,
   saveApiKey = defaultSaveApiKey,
   testConnection = defaultTestConnection,
   loadStorageStats = defaultLoadStorageStats,
+  startReindex = defaultStartReindex,
+  subscribe = defaultSubscribe,
 }: OptionsProps) {
   const [apiKey, setApiKey] = useState("");
   const [keySaved, setKeySaved] = useState(false);
   const [testResult, setTestResult] = useState<TestResult | null>(null);
   const [testing, setTesting] = useState(false);
   const [storageStats, setStorageStats] = useState<StorageStats | null>(null);
+  const [reindexing, setReindexing] = useState(false);
+  const [progress, setProgress] = useState<{ done: number; total: number } | null>(null);
 
   useEffect(() => {
     loadStatus().then((status) => {
@@ -59,6 +81,19 @@ export function Options({
       .then(setStorageStats)
       .catch(() => {});
   }, [loadStorageStats]);
+
+  useEffect(() => {
+    const unsubscribe = subscribe((message) => {
+      if (message.type === "library.reindexProgress") {
+        setProgress(message.payload);
+        if (message.payload.done >= message.payload.total) {
+          setReindexing(false);
+          loadStorageStats().then(setStorageStats).catch(() => {});
+        }
+      }
+    });
+    return unsubscribe;
+  }, [subscribe, loadStorageStats]);
 
   const handleSave = async () => {
     if (!apiKey.trim()) return;
@@ -76,6 +111,20 @@ export function Options({
       setTestResult(result);
     } finally {
       setTesting(false);
+    }
+  };
+
+  const handleReindex = async () => {
+    setReindexing(true);
+    setProgress({ done: 0, total: 0 });
+    try {
+      const { total } = await startReindex();
+      setProgress({ done: 0, total });
+      if (total === 0) {
+        setReindexing(false);
+      }
+    } catch {
+      setReindexing(false);
     }
   };
 
@@ -138,6 +187,26 @@ export function Options({
               ? "Loading..."
               : `${storageStats.pageCount} ${storageStats.pageCount === 1 ? "page" : "pages"}, ${(storageStats.totalTextBytes / 1_048_576).toFixed(2)} MB`}
           </p>
+
+          <button
+            type="button"
+            onClick={handleReindex}
+            disabled={
+              !keySaved || reindexing || (storageStats?.pagesMissingEmbeddings ?? 0) === 0
+            }
+            className="mt-3 rounded-md bg-slate-200 px-3 py-2 text-sm font-medium text-slate-700 disabled:bg-slate-100 disabled:text-slate-400"
+          >
+            {reindexing && progress
+              ? `Re-indexing ${progress.done} / ${progress.total}...`
+              : `Re-index library${
+                  storageStats && storageStats.pagesMissingEmbeddings > 0
+                    ? ` (${storageStats.pagesMissingEmbeddings})`
+                    : ""
+                }`}
+          </button>
+          {!keySaved && (
+            <p className="mt-1 text-xs text-amber-600">Set an API key to re-index.</p>
+          )}
         </section>
       </form>
     </SurfaceShell>

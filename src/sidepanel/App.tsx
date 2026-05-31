@@ -1,6 +1,6 @@
-import { useEffect, useState } from "react";
+import { useCallback, useEffect, useState } from "react";
 
-import type { DevRecallRequest, DevRecallResponse } from "../shared/messages";
+import type { DevRecallRequest, DevRecallResponse, WorkerBroadcast } from "../shared/messages";
 import type { PageHit, PageListItem } from "../shared/types";
 import { PageCard, SearchResultCard, SurfaceShell } from "../ui/components";
 
@@ -9,6 +9,8 @@ const filters = ["All", "Docs", "SO", "GH"] as const;
 type AppProps = {
   listPages?: () => Promise<PageListItem[]>;
   runSearch?: (query: string) => Promise<PageHit[]>;
+  deletePage?: (id: string) => Promise<void>;
+  subscribe?: (handler: (message: WorkerBroadcast) => void) => () => void;
 };
 
 async function defaultListPages(): Promise<PageListItem[]> {
@@ -17,10 +19,7 @@ async function defaultListPages(): Promise<PageListItem[]> {
   }
 
   try {
-    const request: DevRecallRequest = {
-      type: "page.list",
-      payload: { limit: 50 },
-    };
+    const request: DevRecallRequest = { type: "page.list", payload: { limit: 50 } };
     const response = (await chrome.runtime.sendMessage(request)) as DevRecallResponse;
 
     if (response.type !== "page.listed") {
@@ -39,10 +38,7 @@ async function defaultRunSearch(query: string): Promise<PageHit[]> {
   }
 
   try {
-    const request: DevRecallRequest = {
-      type: "search.run",
-      payload: { query },
-    };
+    const request: DevRecallRequest = { type: "search.run", payload: { query } };
     const response = (await chrome.runtime.sendMessage(request)) as DevRecallResponse;
 
     if (response.type !== "search.results") {
@@ -55,7 +51,33 @@ async function defaultRunSearch(query: string): Promise<PageHit[]> {
   }
 }
 
-export function App({ listPages = defaultListPages, runSearch = defaultRunSearch }: AppProps) {
+async function defaultDeletePage(id: string): Promise<void> {
+  if (typeof chrome === "undefined" || !chrome.runtime?.sendMessage) {
+    return;
+  }
+
+  const request: DevRecallRequest = { type: "page.delete", payload: { id } };
+  await chrome.runtime.sendMessage(request);
+}
+
+function defaultSubscribe(handler: (message: WorkerBroadcast) => void): () => void {
+  if (typeof chrome === "undefined" || !chrome.runtime?.onMessage) {
+    return () => {};
+  }
+
+  const listener = (message: unknown) => {
+    handler(message as WorkerBroadcast);
+  };
+  chrome.runtime.onMessage.addListener(listener);
+  return () => chrome.runtime.onMessage.removeListener(listener);
+}
+
+export function App({
+  listPages = defaultListPages,
+  runSearch = defaultRunSearch,
+  deletePage = defaultDeletePage,
+  subscribe = defaultSubscribe,
+}: AppProps) {
   const [pages, setPages] = useState<PageListItem[]>([]);
   const [loading, setLoading] = useState(true);
   const [query, setQuery] = useState("");
@@ -70,7 +92,6 @@ export function App({ listPages = defaultListPages, runSearch = defaultRunSearch
       setLoading(true);
       try {
         const nextPages = await listPages();
-
         if (!cancelled) {
           setPages(nextPages);
           setLoading(false);
@@ -92,7 +113,6 @@ export function App({ listPages = defaultListPages, runSearch = defaultRunSearch
 
   useEffect(() => {
     const handle = setTimeout(() => setSubmittedQuery(query.trim()), 200);
-
     return () => clearTimeout(handle);
   }, [query]);
 
@@ -117,6 +137,35 @@ export function App({ listPages = defaultListPages, runSearch = defaultRunSearch
       cancelled = true;
     };
   }, [submittedQuery, runSearch]);
+
+  // Live refresh: reconcile the library list in place from worker broadcasts.
+  // Search results are a query snapshot and are intentionally left untouched.
+  useEffect(() => {
+    const unsubscribe = subscribe((message) => {
+      if (message.type === "page.updated") {
+        setPages((prev) => {
+          const index = prev.findIndex((p) => p.id === message.payload.page.id);
+          if (index === -1) {
+            return [message.payload.page, ...prev];
+          }
+          const next = prev.slice();
+          next[index] = message.payload.page;
+          return next;
+        });
+      } else if (message.type === "page.removed") {
+        setPages((prev) => prev.filter((p) => p.id !== message.payload.id));
+      }
+    });
+
+    return unsubscribe;
+  }, [subscribe]);
+
+  const handleDelete = useCallback(
+    (id: string) => {
+      void deletePage(id);
+    },
+    [deletePage],
+  );
 
   const isSearching = submittedQuery.length > 0;
 
@@ -182,7 +231,7 @@ export function App({ listPages = defaultListPages, runSearch = defaultRunSearch
         ) : (
           <div className="flex flex-col gap-3">
             {pages.map((page) => (
-              <PageCard key={page.id} page={page} />
+              <PageCard key={page.id} page={page} onDelete={handleDelete} />
             ))}
           </div>
         )}
