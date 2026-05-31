@@ -25,7 +25,10 @@ type PageListPort = {
 };
 
 type SearchPort = {
-  search(query: string, options?: { topK?: number }): Promise<PageHit[]>;
+  search(
+    query: string,
+    options?: { topK?: number; apiKey?: string | null },
+  ): Promise<PageHit[]>;
 };
 
 type HandlerDeps = {
@@ -44,7 +47,7 @@ const defaultDeps: HandlerDeps = {
   pageRepo,
   apiKeyStore: new ChromeApiKeyStore(),
   testConnection: testOpenAIConnection,
-  retrievalService: new RetrievalService(chunkRepo, pageRepo),
+  retrievalService: new RetrievalService(chunkRepo, pageRepo, openai),
 };
 
 export async function handleRequest(
@@ -152,15 +155,19 @@ export async function handleRequest(
       };
     }
 
-    case "search.run":
+    case "search.run": {
+      const apiKey = await deps.apiKeyStore.getApiKey();
+
       return {
         type: "search.results",
         payload: {
           hits: await deps.retrievalService.search(request.payload.query, {
             topK: request.payload.topK,
+            apiKey,
           }),
         },
       };
+    }
 
     default:
       throw new Error(`Unhandled request type: ${(request as { type: string }).type}`);

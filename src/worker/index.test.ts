@@ -134,6 +134,7 @@ describe("worker request handler", () => {
     });
     expect(deps.retrievalService.search).toHaveBeenCalledWith("structured data", {
       topK: undefined,
+      apiKey: null,
     });
   });
 
