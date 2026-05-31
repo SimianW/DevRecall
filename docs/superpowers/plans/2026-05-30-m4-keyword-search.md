@@ -60,6 +60,7 @@ Expected: all pass. The repository is at M3 (capture + LLM tagging + options API
 ## Task 1: Extend Shared Types And Message Contract
 
 **Files:**
+
 - Modify: `src/shared/types.ts`
 - Modify: `src/shared/messages.ts`
 
@@ -140,6 +141,7 @@ git commit -m "feat: add m4 chunk and search message contract"
 ## Task 2: Add Simple Chunking
 
 **Files:**
+
 - Create: `src/lib/chunking.test.ts`
 - Create: `src/lib/chunking.ts`
 
@@ -258,6 +260,7 @@ git commit -m "feat: add simple word-window chunking"
 ## Task 3: Add BM25-lite Scorer
 
 **Files:**
+
 - Create: `src/lib/bm25.test.ts`
 - Create: `src/lib/bm25.ts`
 
@@ -334,9 +337,31 @@ Create `src/lib/bm25.ts`:
 
 ```ts
 const STOPWORDS: ReadonlySet<string> = new Set([
-  "a", "an", "and", "are", "as", "at", "be", "by", "for", "from", "has", "he",
-  "in", "is", "it", "its", "of", "on", "that", "the", "to", "was", "were",
-  "will", "with",
+  "a",
+  "an",
+  "and",
+  "are",
+  "as",
+  "at",
+  "be",
+  "by",
+  "for",
+  "from",
+  "has",
+  "he",
+  "in",
+  "is",
+  "it",
+  "its",
+  "of",
+  "on",
+  "that",
+  "the",
+  "to",
+  "was",
+  "were",
+  "will",
+  "with",
 ]);
 
 export function tokenize(text: string): string[] {
@@ -459,6 +484,7 @@ git commit -m "feat: add bm25-lite keyword scorer"
 ## Task 4: Add Keyword Highlighter
 
 **Files:**
+
 - Create: `src/lib/highlight.test.ts`
 - Create: `src/lib/highlight.ts`
 
@@ -562,6 +588,7 @@ git commit -m "feat: add html-escaping keyword highlighter"
 ## Task 5: Add Chunks Table And ChunkRepo
 
 **Files:**
+
 - Modify: `src/worker/repository/db.ts`
 - Create: `src/worker/repository/ChunkRepo.test.ts`
 - Create: `src/worker/repository/ChunkRepo.ts`
@@ -618,10 +645,7 @@ describe("ChunkRepo", () => {
   });
 
   it("stores chunks with sequential ordinals", async () => {
-    const chunks = await repo.replaceChunksForPage("page-1", [
-      "first chunk",
-      "second chunk",
-    ]);
+    const chunks = await repo.replaceChunksForPage("page-1", ["first chunk", "second chunk"]);
 
     expect(chunks.map((chunk) => chunk.ordinal)).toEqual([0, 1]);
     expect(chunks.every((chunk) => chunk.pageId === "page-1")).toBe(true);
@@ -681,10 +705,7 @@ import { db, type DevRecallDatabase } from "./db";
 export class ChunkRepo {
   constructor(private readonly database: DevRecallDatabase = db) {}
 
-  async replaceChunksForPage(
-    pageId: string,
-    texts: string[],
-  ): Promise<ChunkRecord[]> {
+  async replaceChunksForPage(pageId: string, texts: string[]): Promise<ChunkRecord[]> {
     const chunks: ChunkRecord[] = texts.map((text, ordinal) => ({
       id: ulid(),
       pageId,
@@ -733,6 +754,7 @@ git commit -m "feat: persist page chunks in a dexie table"
 ## Task 6: Chunk On Capture
 
 **Files:**
+
 - Modify: `src/worker/services/CaptureService.ts`
 - Modify: `src/worker/services/CaptureService.test.ts`
 
@@ -754,36 +776,35 @@ import {
 Replace the first test (`"extracts the tab and stores a pending page"`) with:
 
 ```ts
-  it("extracts the tab, stores a pending page, and writes chunks", async () => {
-    const extractor: PageExtractor = {
-      extract: vi.fn().mockResolvedValue(extracted),
-    };
-    const writer: PageWriter = {
-      upsertCapturedPage: vi.fn().mockResolvedValue(pendingPage),
-    };
-    const chunkWriter: ChunkWriter = {
-      replaceChunksForPage: vi.fn().mockResolvedValue([]),
-    };
+it("extracts the tab, stores a pending page, and writes chunks", async () => {
+  const extractor: PageExtractor = {
+    extract: vi.fn().mockResolvedValue(extracted),
+  };
+  const writer: PageWriter = {
+    upsertCapturedPage: vi.fn().mockResolvedValue(pendingPage),
+  };
+  const chunkWriter: ChunkWriter = {
+    replaceChunksForPage: vi.fn().mockResolvedValue([]),
+  };
 
-    const result = await new CaptureService(
-      writer,
-      extractor,
-      undefined,
-      undefined,
-      chunkWriter,
-    ).save(123);
+  const result = await new CaptureService(
+    writer,
+    extractor,
+    undefined,
+    undefined,
+    chunkWriter,
+  ).save(123);
 
-    expect(extractor.extract).toHaveBeenCalledWith(123);
-    expect(writer.upsertCapturedPage).toHaveBeenCalledWith({
-      ...extracted,
-      saveMode: "manual",
-    });
-    expect(chunkWriter.replaceChunksForPage).toHaveBeenCalledWith(
-      pendingPage.id,
-      [pendingPage.fullText],
-    );
-    expect(result).toBe(pendingPage);
+  expect(extractor.extract).toHaveBeenCalledWith(123);
+  expect(writer.upsertCapturedPage).toHaveBeenCalledWith({
+    ...extracted,
+    saveMode: "manual",
   });
+  expect(chunkWriter.replaceChunksForPage).toHaveBeenCalledWith(pendingPage.id, [
+    pendingPage.fullText,
+  ]);
+  expect(result).toBe(pendingPage);
+});
 ```
 
 (`pendingPage.fullText` is `"Autoscaling docs"`, a single short chunk, so the expected chunk array is `[pendingPage.fullText]`.)
@@ -801,21 +822,10 @@ Expected: FAIL because `ChunkWriter` is not exported and the constructor has no 
 Replace `src/worker/services/CaptureService.ts` with:
 
 ```ts
-import type {
-  ContentExtractRequest,
-  ContentExtractResponse,
-} from "../../shared/messages";
-import type {
-  ChunkRecord,
-  ExtractedPage,
-  PageCaptureInput,
-  PageRecord,
-} from "../../shared/types";
+import type { ContentExtractRequest, ContentExtractResponse } from "../../shared/messages";
+import type { ChunkRecord, ExtractedPage, PageCaptureInput, PageRecord } from "../../shared/types";
 import { chunkText } from "../../lib/chunking";
-import {
-  OpenAIProvider,
-  type PageTagger as OpenAIPageTagger,
-} from "../llm/OpenAIProvider";
+import { OpenAIProvider, type PageTagger as OpenAIPageTagger } from "../llm/OpenAIProvider";
 import { ChunkRepo } from "../repository/ChunkRepo";
 import { PageRepo } from "../repository/PageRepo";
 
@@ -829,10 +839,7 @@ export type PageWriter = {
 
 export type PageReader = {
   getById(id: string): Promise<PageRecord | undefined>;
-  updatePage(
-    id: string,
-    data: Partial<Omit<PageRecord, "id" | "schemaVersion">>,
-  ): Promise<void>;
+  updatePage(id: string, data: Partial<Omit<PageRecord, "id" | "schemaVersion">>): Promise<void>;
 };
 
 export type ChunkWriter = {
@@ -848,10 +855,7 @@ export class ChromePageExtractor implements PageExtractor {
     }
 
     const request: ContentExtractRequest = { type: "content.extract" };
-    const response = (await chrome.tabs.sendMessage(
-      tabId,
-      request,
-    )) as ContentExtractResponse;
+    const response = (await chrome.tabs.sendMessage(tabId, request)) as ContentExtractResponse;
 
     if (response.type === "content.extractFailed") {
       throw new Error(response.payload.message);
@@ -878,10 +882,7 @@ export class CaptureService {
       saveMode: "manual",
     });
 
-    await this.chunkWriter.replaceChunksForPage(
-      page.id,
-      chunkText(page.fullText),
-    );
+    await this.chunkWriter.replaceChunksForPage(page.id, chunkText(page.fullText));
 
     return page;
   }
@@ -894,19 +895,13 @@ export class CaptureService {
     }
 
     try {
-      const result = await this.tagger.summarizeAndTag(
-        page.fullText,
-        page.title,
-        page.url,
-        apiKey,
-      );
+      const result = await this.tagger.summarizeAndTag(page.fullText, page.title, page.url, apiKey);
 
       await this.reader.updatePage(pageId, { ...result, status: "ready" });
 
       return { ...page, ...result, status: "ready" };
     } catch (error) {
-      const errorReason =
-        error instanceof Error ? error.message : "Unknown error";
+      const errorReason = error instanceof Error ? error.message : "Unknown error";
 
       await this.reader.updatePage(pageId, {
         status: "failed",
@@ -938,6 +933,7 @@ git commit -m "feat: write chunks when a page is captured"
 ## Task 7: Add RetrievalService
 
 **Files:**
+
 - Create: `src/worker/services/RetrievalService.test.ts`
 - Create: `src/worker/services/RetrievalService.ts`
 
@@ -949,18 +945,9 @@ Create `src/worker/services/RetrievalService.test.ts`:
 import { describe, expect, it, vi } from "vitest";
 
 import type { ChunkRecord, PageRecord } from "../../shared/types";
-import {
-  RetrievalService,
-  type ChunkSource,
-  type PageSource,
-} from "./RetrievalService";
+import { RetrievalService, type ChunkSource, type PageSource } from "./RetrievalService";
 
-function chunk(
-  id: string,
-  pageId: string,
-  ordinal: number,
-  text: string,
-): ChunkRecord {
+function chunk(id: string, pageId: string, ordinal: number, text: string): ChunkRecord {
   return { id, pageId, ordinal, text, schemaVersion: 1 };
 }
 
@@ -1171,6 +1158,7 @@ git commit -m "feat: add keyword retrieval service"
 ## Task 8: Wire Worker Dispatch
 
 **Files:**
+
 - Modify: `src/worker/index.ts`
 - Modify: `src/worker/index.test.ts`
 
@@ -1200,23 +1188,20 @@ const searchHit = {
 Add this test inside the `describe("worker request handler", ...)` block, after the `"lists saved pages through PageRepo"` test:
 
 ```ts
-  it("runs a keyword search through RetrievalService", async () => {
-    const deps = makeDeps();
-    deps.retrievalService.search = vi.fn().mockResolvedValue([searchHit]);
+it("runs a keyword search through RetrievalService", async () => {
+  const deps = makeDeps();
+  deps.retrievalService.search = vi.fn().mockResolvedValue([searchHit]);
 
-    await expect(
-      handleRequest(
-        { type: "search.run", payload: { query: "structured data" } },
-        deps,
-      ),
-    ).resolves.toEqual({
-      type: "search.results",
-      payload: { hits: [searchHit] },
-    });
-    expect(deps.retrievalService.search).toHaveBeenCalledWith("structured data", {
-      topK: undefined,
-    });
+  await expect(
+    handleRequest({ type: "search.run", payload: { query: "structured data" } }, deps),
+  ).resolves.toEqual({
+    type: "search.results",
+    payload: { hits: [searchHit] },
   });
+  expect(deps.retrievalService.search).toHaveBeenCalledWith("structured data", {
+    topK: undefined,
+  });
+});
 ```
 
 In the `makeDeps` helper, add a `retrievalService` mock to the returned object (after the `testConnection` mock):
@@ -1252,9 +1237,7 @@ In `src/worker/index.ts`, update the imports near the top. Add `PageHit` to the 
 ```ts
 import type { PageHit, PageListItem, PageRecord } from "../shared/types";
 import { normalizeUrl } from "../lib/urlNormalize";
-import {
-  testOpenAIConnection,
-} from "./llm/OpenAIProvider";
+import { testOpenAIConnection } from "./llm/OpenAIProvider";
 import { ChunkRepo } from "./repository/ChunkRepo";
 import { PageRepo, toPageListItem } from "./repository/PageRepo";
 import { CaptureService } from "./services/CaptureService";
@@ -1277,9 +1260,7 @@ type HandlerDeps = {
   captureService: CapturePort;
   pageRepo: PageListPort;
   apiKeyStore: ApiKeyStore;
-  testConnection: (
-    apiKey: string,
-  ) => Promise<{ success: boolean; message: string }>;
+  testConnection: (apiKey: string) => Promise<{ success: boolean; message: string }>;
   retrievalService: SearchPort;
 };
 ```
@@ -1333,6 +1314,7 @@ git commit -m "feat: dispatch keyword search in the worker"
 ## Task 9: Wire Side Panel Search UI
 
 **Files:**
+
 - Create: `src/ui/components/SearchResultCard.tsx`
 - Modify: `src/ui/components/index.ts`
 - Modify: `src/sidepanel/App.test.tsx`
@@ -1356,12 +1338,7 @@ export function SearchResultCard({ hit }: SearchResultCardProps) {
     <article className="rounded-md border border-slate-200 bg-white px-3 py-3">
       <div className="flex items-start justify-between gap-2">
         <h2 className="text-sm font-semibold text-slate-900">
-          <a
-            href={page.url}
-            target="_blank"
-            rel="noopener noreferrer"
-            className="hover:underline"
-          >
+          <a href={page.url} target="_blank" rel="noopener noreferrer" className="hover:underline">
             {page.title}
           </a>
         </h2>
@@ -1437,8 +1414,7 @@ const hits = [
     bestChunk: {
       text: "The HorizontalPodAutoscaler automatically scales pods.",
       ordinal: 0,
-      highlightedHtml:
-        "The HorizontalPodAutoscaler automatically scales <mark>pods</mark>.",
+      highlightedHtml: "The HorizontalPodAutoscaler automatically scales <mark>pods</mark>.",
     },
     score: 2.1,
     matchReason: "keyword",
@@ -1447,20 +1423,11 @@ const hits = [
 
 describe("Side panel app", () => {
   it("renders the library search shell", async () => {
-    render(
-      <App listPages={vi.fn().mockResolvedValue([])} runSearch={vi.fn()} />,
-    );
+    render(<App listPages={vi.fn().mockResolvedValue([])} runSearch={vi.fn()} />);
 
-    expect(
-      screen.getByRole("heading", { name: "DevRecall" }),
-    ).toBeInTheDocument();
-    expect(
-      screen.getByRole("searchbox", { name: "Search saved pages" }),
-    ).toBeInTheDocument();
-    expect(screen.getByRole("button", { name: "All" })).toHaveAttribute(
-      "aria-pressed",
-      "true",
-    );
+    expect(screen.getByRole("heading", { name: "DevRecall" })).toBeInTheDocument();
+    expect(screen.getByRole("searchbox", { name: "Search saved pages" })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "All" })).toHaveAttribute("aria-pressed", "true");
     expect(await screen.findByText("No saved pages yet")).toBeInTheDocument();
   });
 
@@ -1482,9 +1449,7 @@ describe("Side panel app", () => {
     const user = userEvent.setup();
     const runSearch = vi.fn().mockResolvedValue(hits);
 
-    render(
-      <App listPages={vi.fn().mockResolvedValue([])} runSearch={runSearch} />,
-    );
+    render(<App listPages={vi.fn().mockResolvedValue([])} runSearch={runSearch} />);
 
     await user.type(
       screen.getByRole("searchbox", { name: "Search saved pages" }),
@@ -1504,18 +1469,11 @@ describe("Side panel app", () => {
     const user = userEvent.setup();
     const runSearch = vi.fn().mockResolvedValue([]);
 
-    render(
-      <App listPages={vi.fn().mockResolvedValue([])} runSearch={runSearch} />,
-    );
+    render(<App listPages={vi.fn().mockResolvedValue([])} runSearch={runSearch} />);
 
-    await user.type(
-      screen.getByRole("searchbox", { name: "Search saved pages" }),
-      "nomatch",
-    );
+    await user.type(screen.getByRole("searchbox", { name: "Search saved pages" }), "nomatch");
 
-    expect(
-      await screen.findByText("No matches for your search"),
-    ).toBeInTheDocument();
+    expect(await screen.findByText("No matches for your search")).toBeInTheDocument();
   });
 });
 ```
@@ -1590,10 +1548,7 @@ async function defaultRunSearch(query: string): Promise<PageHit[]> {
   }
 }
 
-export function App({
-  listPages = defaultListPages,
-  runSearch = defaultRunSearch,
-}: AppProps) {
+export function App({ listPages = defaultListPages, runSearch = defaultRunSearch }: AppProps) {
   const [pages, setPages] = useState<PageListItem[]>([]);
   const [loading, setLoading] = useState(true);
   const [query, setQuery] = useState("");
@@ -1700,12 +1655,8 @@ export function App({
             <p className="text-sm text-slate-500">Searching...</p>
           ) : hits.length === 0 ? (
             <section className="rounded-md border border-dashed border-slate-300 bg-white px-4 py-8 text-center">
-              <h2 className="text-sm font-semibold text-slate-900">
-                No matches for your search
-              </h2>
-              <p className="mt-2 text-sm text-slate-500">
-                Try different keywords.
-              </p>
+              <h2 className="text-sm font-semibold text-slate-900">No matches for your search</h2>
+              <p className="mt-2 text-sm text-slate-500">Try different keywords.</p>
             </section>
           ) : (
             <div className="flex flex-col gap-3">
@@ -1753,6 +1704,7 @@ git commit -m "feat: wire side panel keyword search"
 ## Task 10: Final M4 Verification
 
 **Files:**
+
 - Review all files changed in Tasks 1-9.
 
 - [ ] **Step 1: Run the full automated suite**
@@ -1828,4 +1780,7 @@ git commit -m "feat: complete keyword search milestone"
 - **Type consistency.** `ChunkRecord`, `PageHit`, and the `search.run`/`search.results` messages are defined once in `src/shared` and reused across `ChunkRepo`, `RetrievalService`, the worker dispatcher, and the side panel. `PageHit.page` reuses the existing `PageListItem` DTO rather than introducing a parallel shape.
 - **Schema migration.** `db.ts` keeps the version(1) `pages` declaration and adds version(2) with the `chunks` table, so existing installs upgrade in place without dropping saved pages.
 - **M5 hooks.** `SearchMatchReason` is a single-member union (`"keyword"`) that M5 widens to `"vector" | "both"`; `ChunkRecord` gains `embedding`/`embeddingModel`/`tokenCount` in M5; `chunkText` is replaced by token-based chunking. None of these require reshaping the M4 message contract.
+
+```
+
 ```

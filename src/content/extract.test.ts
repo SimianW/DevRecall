@@ -32,8 +32,6 @@ describe("extractPage", () => {
   it("throws when no readable text exists", () => {
     document.body.innerHTML = "<main></main>";
 
-    expect(() => extractPage(document, () => 1)).toThrow(
-      "No readable page text found",
-    );
+    expect(() => extractPage(document, () => 1)).toThrow("No readable page text found");
   });
 });

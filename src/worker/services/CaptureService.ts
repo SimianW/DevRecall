@@ -1,18 +1,7 @@
-import type {
-  ContentExtractRequest,
-  ContentExtractResponse,
-} from "../../shared/messages";
-import type {
-  ChunkRecord,
-  ExtractedPage,
-  PageCaptureInput,
-  PageRecord,
-} from "../../shared/types";
+import type { ContentExtractRequest, ContentExtractResponse } from "../../shared/messages";
+import type { ChunkRecord, ExtractedPage, PageCaptureInput, PageRecord } from "../../shared/types";
 import { chunkText } from "../../lib/chunking";
-import {
-  OpenAIProvider,
-  type PageTagger as OpenAIPageTagger,
-} from "../llm/OpenAIProvider";
+import { OpenAIProvider, type PageTagger as OpenAIPageTagger } from "../llm/OpenAIProvider";
 import { ChunkRepo } from "../repository/ChunkRepo";
 import { PageRepo } from "../repository/PageRepo";
 
@@ -26,10 +15,7 @@ export type PageWriter = {
 
 export type PageReader = {
   getById(id: string): Promise<PageRecord | undefined>;
-  updatePage(
-    id: string,
-    data: Partial<Omit<PageRecord, "id" | "schemaVersion">>,
-  ): Promise<void>;
+  updatePage(id: string, data: Partial<Omit<PageRecord, "id" | "schemaVersion">>): Promise<void>;
 };
 
 export type ChunkWriter = {
@@ -45,10 +31,7 @@ export class ChromePageExtractor implements PageExtractor {
     }
 
     const request: ContentExtractRequest = { type: "content.extract" };
-    const response = (await chrome.tabs.sendMessage(
-      tabId,
-      request,
-    )) as ContentExtractResponse;
+    const response = (await chrome.tabs.sendMessage(tabId, request)) as ContentExtractResponse;
 
     if (response.type === "content.extractFailed") {
       throw new Error(response.payload.message);
@@ -75,10 +58,7 @@ export class CaptureService {
       saveMode: "manual",
     });
 
-    await this.chunkWriter.replaceChunksForPage(
-      page.id,
-      chunkText(page.fullText),
-    );
+    await this.chunkWriter.replaceChunksForPage(page.id, chunkText(page.fullText));
 
     return page;
   }
@@ -91,19 +71,13 @@ export class CaptureService {
     }
 
     try {
-      const result = await this.tagger.summarizeAndTag(
-        page.fullText,
-        page.title,
-        page.url,
-        apiKey,
-      );
+      const result = await this.tagger.summarizeAndTag(page.fullText, page.title, page.url, apiKey);
 
       await this.reader.updatePage(pageId, { ...result, status: "ready" });
 
       return { ...page, ...result, status: "ready" };
     } catch (error) {
-      const errorReason =
-        error instanceof Error ? error.message : "Unknown error";
+      const errorReason = error instanceof Error ? error.message : "Unknown error";
 
       await this.reader.updatePage(pageId, {
         status: "failed",

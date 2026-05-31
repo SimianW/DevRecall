@@ -51,9 +51,7 @@ const searchHit = {
 
 describe("worker request handler", () => {
   it("responds to a ping request", async () => {
-    await expect(
-      handleRequest({ type: "devrecall.ping" }, makeDeps()),
-    ).resolves.toEqual({
+    await expect(handleRequest({ type: "devrecall.ping" }, makeDeps())).resolves.toEqual({
       type: "devrecall.pong",
       payload: { appName: APP_NAME, version: APP_VERSION },
     });
@@ -62,9 +60,7 @@ describe("worker request handler", () => {
   it("returns settings status with hasApiKey from store", async () => {
     const deps = makeDeps({ apiKey: "sk-test" });
 
-    await expect(
-      handleRequest({ type: "settings.getStatus" }, deps),
-    ).resolves.toEqual({
+    await expect(handleRequest({ type: "settings.getStatus" }, deps)).resolves.toEqual({
       type: "settings.status",
       payload: { hasApiKey: true, persistentStorage: "unknown" },
     });
@@ -73,9 +69,7 @@ describe("worker request handler", () => {
   it("returns hasApiKey false when no key is stored", async () => {
     const deps = makeDeps({ apiKey: null });
 
-    await expect(
-      handleRequest({ type: "settings.getStatus" }, deps),
-    ).resolves.toEqual({
+    await expect(handleRequest({ type: "settings.getStatus" }, deps)).resolves.toEqual({
       type: "settings.status",
       payload: { hasApiKey: false, persistentStorage: "unknown" },
     });
@@ -85,10 +79,7 @@ describe("worker request handler", () => {
     const deps = makeDeps();
 
     await expect(
-      handleRequest(
-        { type: "settings.setApiKey", payload: { apiKey: "sk-new" } },
-        deps,
-      ),
+      handleRequest({ type: "settings.setApiKey", payload: { apiKey: "sk-new" } }, deps),
     ).resolves.toEqual({ type: "settings.apiKeySet" });
     expect(deps.apiKeyStore.setApiKey).toHaveBeenCalledWith("sk-new");
   });
@@ -99,9 +90,7 @@ describe("worker request handler", () => {
       connectionResult: { success: true, message: "Connection successful" },
     });
 
-    await expect(
-      handleRequest({ type: "settings.testConnection" }, deps),
-    ).resolves.toEqual({
+    await expect(handleRequest({ type: "settings.testConnection" }, deps)).resolves.toEqual({
       type: "settings.connectionTestResult",
       payload: { success: true, message: "Connection successful" },
     });
@@ -112,10 +101,7 @@ describe("worker request handler", () => {
     deps.captureService.save = vi.fn().mockResolvedValue(pendingPage);
 
     await expect(
-      handleRequest(
-        { type: "page.save", payload: { tabId: 7 } },
-        deps,
-      ),
+      handleRequest({ type: "page.save", payload: { tabId: 7 } }, deps),
     ).resolves.toEqual({
       type: "page.saved",
       payload: { page: pendingListItem },
@@ -128,10 +114,7 @@ describe("worker request handler", () => {
     deps.pageRepo.listPages = vi.fn().mockResolvedValue([pendingListItem]);
 
     await expect(
-      handleRequest(
-        { type: "page.list", payload: { limit: 25 } },
-        deps,
-      ),
+      handleRequest({ type: "page.list", payload: { limit: 25 } }, deps),
     ).resolves.toEqual({
       type: "page.listed",
       payload: { pages: [pendingListItem] },
@@ -144,10 +127,7 @@ describe("worker request handler", () => {
     deps.retrievalService.search = vi.fn().mockResolvedValue([searchHit]);
 
     await expect(
-      handleRequest(
-        { type: "search.run", payload: { query: "structured data" } },
-        deps,
-      ),
+      handleRequest({ type: "search.run", payload: { query: "structured data" } }, deps),
     ).resolves.toEqual({
       type: "search.results",
       payload: { hits: [searchHit] },
@@ -162,10 +142,7 @@ describe("worker request handler", () => {
     deps.pageRepo.getByUrlHash = vi.fn().mockResolvedValue(undefined);
 
     await expect(
-      handleRequest(
-        { type: "page.statusForUrl", payload: { url: "https://example.com/x" } },
-        deps,
-      ),
+      handleRequest({ type: "page.statusForUrl", payload: { url: "https://example.com/x" } }, deps),
     ).resolves.toEqual({ type: "page.urlStatus", payload: { saved: false } });
 
     const { urlHash } = await normalizeUrl("https://example.com/x");
@@ -181,10 +158,7 @@ describe("worker request handler", () => {
     });
 
     await expect(
-      handleRequest(
-        { type: "page.statusForUrl", payload: { url: pendingPage.url } },
-        deps,
-      ),
+      handleRequest({ type: "page.statusForUrl", payload: { url: pendingPage.url } }, deps),
     ).resolves.toEqual({
       type: "page.urlStatus",
       payload: { saved: true, status: "ready", savedAt: 1717000000000 },
@@ -203,11 +177,7 @@ describe("worker request handler", () => {
       );
     const sendResponse = vi.fn();
 
-    await handleMessage(
-      { type: "page.save", payload: { tabId: 1 } },
-      sendResponse,
-      deps,
-    );
+    await handleMessage({ type: "page.save", payload: { tabId: 1 } }, sendResponse, deps);
 
     expect(sendResponse).toHaveBeenCalledWith({
       type: "error",
@@ -222,11 +192,7 @@ describe("worker request handler", () => {
     deps.captureService.save = vi.fn().mockResolvedValue(pendingPage);
     const sendResponse = vi.fn();
 
-    await handleMessage(
-      { type: "page.save", payload: { tabId: 7 } },
-      sendResponse,
-      deps,
-    );
+    await handleMessage({ type: "page.save", payload: { tabId: 7 } }, sendResponse, deps);
 
     expect(sendResponse).toHaveBeenCalledWith({
       type: "page.saved",
@@ -255,14 +221,12 @@ function makeDeps(
       getApiKey: vi.fn().mockResolvedValue(overrides.apiKey ?? null),
       setApiKey: vi.fn().mockResolvedValue(undefined),
     },
-    testConnection: vi
-      .fn()
-      .mockResolvedValue(
-        overrides.connectionResult ?? {
-          success: true,
-          message: "Connection successful",
-        },
-      ),
+    testConnection: vi.fn().mockResolvedValue(
+      overrides.connectionResult ?? {
+        success: true,
+        message: "Connection successful",
+      },
+    ),
     retrievalService: {
       search: vi.fn().mockResolvedValue([]),
     },

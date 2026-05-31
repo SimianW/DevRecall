@@ -35,11 +35,7 @@ function defaultOpenSidePanel() {
 }
 
 export async function defaultSaveCurrentPage() {
-  if (
-    typeof chrome === "undefined" ||
-    !chrome.tabs?.query ||
-    !chrome.runtime?.sendMessage
-  ) {
+  if (typeof chrome === "undefined" || !chrome.tabs?.query || !chrome.runtime?.sendMessage) {
     throw new Error("Chrome extension APIs are unavailable");
   }
 
@@ -57,9 +53,7 @@ export async function defaultSaveCurrentPage() {
     payload: { tabId: tab.id },
   };
 
-  const response = (await chrome.runtime.sendMessage(request)) as
-    | DevRecallResponse
-    | undefined;
+  const response = (await chrome.runtime.sendMessage(request)) as DevRecallResponse | undefined;
 
   if (response?.type === "error") {
     throw new Error(response.payload.message);
@@ -67,11 +61,7 @@ export async function defaultSaveCurrentPage() {
 }
 
 async function defaultLoadUrlStatus(): Promise<UrlStatus> {
-  if (
-    typeof chrome === "undefined" ||
-    !chrome.tabs?.query ||
-    !chrome.runtime?.sendMessage
-  ) {
+  if (typeof chrome === "undefined" || !chrome.tabs?.query || !chrome.runtime?.sendMessage) {
     return { saved: false };
   }
 
@@ -185,17 +175,14 @@ export function Popup({
     isSaveDisabled = isLoading || hasApiKey === false;
   }
 
-  const showFailedError =
-    saveState === "failed" && (urlStatus === null || !urlStatus.saved);
+  const showFailedError = saveState === "failed" && (urlStatus === null || !urlStatus.saved);
 
   return (
     <SurfaceShell title="DevRecall">
       <div className="flex min-h-[180px] flex-col gap-4">
         <div>
           <p className="text-sm font-medium text-slate-900">Current page</p>
-          <p className="mt-1 truncate text-sm text-slate-500">
-            Ready to save into your library
-          </p>
+          <p className="mt-1 truncate text-sm text-slate-500">Ready to save into your library</p>
         </div>
 
         <div>

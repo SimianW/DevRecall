@@ -55,10 +55,7 @@ async function defaultRunSearch(query: string): Promise<PageHit[]> {
   }
 }
 
-export function App({
-  listPages = defaultListPages,
-  runSearch = defaultRunSearch,
-}: AppProps) {
+export function App({ listPages = defaultListPages, runSearch = defaultRunSearch }: AppProps) {
   const [pages, setPages] = useState<PageListItem[]>([]);
   const [loading, setLoading] = useState(true);
   const [query, setQuery] = useState("");
@@ -165,12 +162,8 @@ export function App({
             <p className="text-sm text-slate-500">Searching...</p>
           ) : hits.length === 0 ? (
             <section className="rounded-md border border-dashed border-slate-300 bg-white px-4 py-8 text-center">
-              <h2 className="text-sm font-semibold text-slate-900">
-                No matches for your search
-              </h2>
-              <p className="mt-2 text-sm text-slate-500">
-                Try different keywords.
-              </p>
+              <h2 className="text-sm font-semibold text-slate-900">No matches for your search</h2>
+              <p className="mt-2 text-sm text-slate-500">Try different keywords.</p>
             </section>
           ) : (
             <div className="flex flex-col gap-3">

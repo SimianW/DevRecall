@@ -11,12 +11,7 @@ export function SearchResultCard({ hit }: SearchResultCardProps) {
     <article className="rounded-md border border-slate-200 bg-white px-3 py-3">
       <div className="flex items-start justify-between gap-2">
         <h2 className="text-sm font-semibold text-slate-900">
-          <a
-            href={page.url}
-            target="_blank"
-            rel="noopener noreferrer"
-            className="hover:underline"
-          >
+          <a href={page.url} target="_blank" rel="noopener noreferrer" className="hover:underline">
             {page.title}
           </a>
         </h2>

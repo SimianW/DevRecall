@@ -6,10 +6,7 @@ import { db, type DevRecallDatabase } from "./db";
 export class ChunkRepo {
   constructor(private readonly database: DevRecallDatabase = db) {}
 
-  async replaceChunksForPage(
-    pageId: string,
-    texts: string[],
-  ): Promise<ChunkRecord[]> {
+  async replaceChunksForPage(pageId: string, texts: string[]): Promise<ChunkRecord[]> {
     const chunks: ChunkRecord[] = texts.map((text, ordinal) => ({
       id: ulid(),
       pageId,

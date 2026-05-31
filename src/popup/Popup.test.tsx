@@ -68,11 +68,7 @@ describe("Popup", () => {
     const checkApiKey = vi.fn().mockResolvedValue(true);
 
     render(
-      <Popup
-        openSidePanel={openSidePanel}
-        saveCurrentPage={vi.fn()}
-        checkApiKey={checkApiKey}
-      />,
+      <Popup openSidePanel={openSidePanel} saveCurrentPage={vi.fn()} checkApiKey={checkApiKey} />,
     );
 
     await user.click(screen.getByRole("button", { name: "Open library" }));
@@ -87,11 +83,7 @@ describe("Popup", () => {
     const loadUrlStatus = makeUrlStatus({ saved: false });
 
     render(
-      <Popup
-        saveCurrentPage={vi.fn()}
-        checkApiKey={checkApiKey}
-        loadUrlStatus={loadUrlStatus}
-      />,
+      <Popup saveCurrentPage={vi.fn()} checkApiKey={checkApiKey} loadUrlStatus={loadUrlStatus} />,
     );
 
     await waitFor(() => {
@@ -133,11 +125,7 @@ describe("Popup", () => {
     });
 
     render(
-      <Popup
-        saveCurrentPage={vi.fn()}
-        checkApiKey={checkApiKey}
-        loadUrlStatus={loadUrlStatus}
-      />,
+      <Popup saveCurrentPage={vi.fn()} checkApiKey={checkApiKey} loadUrlStatus={loadUrlStatus} />,
     );
 
     expect(await screen.findByRole("button", { name: "Processing..." })).toBeDisabled();
@@ -152,11 +140,7 @@ describe("Popup", () => {
     });
 
     render(
-      <Popup
-        saveCurrentPage={vi.fn()}
-        checkApiKey={checkApiKey}
-        loadUrlStatus={loadUrlStatus}
-      />,
+      <Popup saveCurrentPage={vi.fn()} checkApiKey={checkApiKey} loadUrlStatus={loadUrlStatus} />,
     );
 
     await waitFor(() => {
@@ -175,16 +159,10 @@ describe("Popup", () => {
     });
 
     render(
-      <Popup
-        saveCurrentPage={vi.fn()}
-        checkApiKey={checkApiKey}
-        loadUrlStatus={loadUrlStatus}
-      />,
+      <Popup saveCurrentPage={vi.fn()} checkApiKey={checkApiKey} loadUrlStatus={loadUrlStatus} />,
     );
 
-    expect(
-      await screen.findByRole("button", { name: "Save failed — try again" }),
-    ).toBeEnabled();
+    expect(await screen.findByRole("button", { name: "Save failed — try again" })).toBeEnabled();
   });
 
   it("shows immediate feedback when retrying a failed save", async () => {
@@ -206,9 +184,7 @@ describe("Popup", () => {
       />,
     );
 
-    await user.click(
-      await screen.findByRole("button", { name: "Save failed — try again" }),
-    );
+    await user.click(await screen.findByRole("button", { name: "Save failed — try again" }));
 
     expect(screen.getByRole("button", { name: "Saving..." })).toBeDisabled();
     expect(saveCurrentPage).toHaveBeenCalledTimes(1);
@@ -240,13 +216,9 @@ describe("Popup", () => {
       />,
     );
 
-    await user.click(
-      await screen.findByRole("button", { name: "Save failed — try again" }),
-    );
+    await user.click(await screen.findByRole("button", { name: "Save failed — try again" }));
 
-    expect(
-      await screen.findByRole("button", { name: /Saved ✓/ }),
-    ).toBeInTheDocument();
+    expect(await screen.findByRole("button", { name: /Saved ✓/ })).toBeInTheDocument();
     // Pin down that the transition came from the post-save refetch (mount + retry),
     // not a stray poll tick: failed status never starts an interval.
     expect(saveCurrentPage).toHaveBeenCalledTimes(1);
@@ -264,11 +236,7 @@ describe("Popup", () => {
       });
 
       render(
-        <Popup
-          saveCurrentPage={vi.fn()}
-          checkApiKey={checkApiKey}
-          loadUrlStatus={loadUrlStatus}
-        />,
+        <Popup saveCurrentPage={vi.fn()} checkApiKey={checkApiKey} loadUrlStatus={loadUrlStatus} />,
       );
 
       // Initial mount call

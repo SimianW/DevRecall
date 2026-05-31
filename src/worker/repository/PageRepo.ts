@@ -9,10 +9,7 @@ export class PageRepo {
 
   async upsertCapturedPage(input: PageCaptureInput): Promise<PageRecord> {
     const normalized = await normalizeUrl(input.url);
-    const existing = await this.database.pages
-      .where("urlHash")
-      .equals(normalized.urlHash)
-      .first();
+    const existing = await this.database.pages.where("urlHash").equals(normalized.urlHash).first();
     const now = Date.now();
 
     const page: PageRecord = {
@@ -62,11 +59,7 @@ export class PageRepo {
   }
 
   async listPages({ limit }: { limit: number }): Promise<PageListItem[]> {
-    const pages = await this.database.pages
-      .orderBy("savedAt")
-      .reverse()
-      .limit(limit)
-      .toArray();
+    const pages = await this.database.pages.orderBy("savedAt").reverse().limit(limit).toArray();
 
     return pages.map(toPageListItem);
   }

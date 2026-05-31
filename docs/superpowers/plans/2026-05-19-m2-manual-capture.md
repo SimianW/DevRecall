@@ -45,6 +45,7 @@ Baseline in this worktree before plan creation:
 ## Task 1: Install Capture And Storage Dependencies
 
 **Files:**
+
 - Modify: `package.json`
 - Modify: `pnpm-lock.yaml`
 - Modify: `src/test/setup.ts`
@@ -89,6 +90,7 @@ git commit -m "chore: add m2 capture dependencies"
 ## Task 2: Define M2 Domain Types And URL Normalization
 
 **Files:**
+
 - Create: `src/shared/types.ts`
 - Modify: `src/shared/messages.ts`
 - Create: `src/lib/urlNormalize.test.ts`
@@ -151,12 +153,7 @@ export type SourceType =
   | "course_material"
   | "unknown";
 
-export type Intent =
-  | "learning"
-  | "debugging"
-  | "reference"
-  | "implementation"
-  | "comparison";
+export type Intent = "learning" | "debugging" | "reference" | "implementation" | "comparison";
 
 export type SaveMode = "manual" | "auto";
 
@@ -335,6 +332,7 @@ git commit -m "feat: add m2 page types and url normalization"
 ## Task 3: Add Dexie Page Repository
 
 **Files:**
+
 - Create: `src/worker/repository/db.ts`
 - Create: `src/worker/repository/PageRepo.test.ts`
 - Create: `src/worker/repository/PageRepo.ts`
@@ -378,8 +376,7 @@ describe("PageRepo", () => {
       topics: [],
       technologies: [],
       intent: "reference",
-      fullText:
-        "The HorizontalPodAutoscaler automatically updates workload resources.",
+      fullText: "The HorizontalPodAutoscaler automatically updates workload resources.",
       readingTimeMs: 42_000,
       saveMode: "manual",
       status: "ready",
@@ -496,10 +493,7 @@ export class PageRepo {
 
   async upsertCapturedPage(input: PageCaptureInput): Promise<PageRecord> {
     const normalized = await normalizeUrl(input.url);
-    const existing = await this.database.pages
-      .where("urlHash")
-      .equals(normalized.urlHash)
-      .first();
+    const existing = await this.database.pages.where("urlHash").equals(normalized.urlHash).first();
     const now = Date.now();
 
     const page: PageRecord = {
@@ -528,11 +522,7 @@ export class PageRepo {
   }
 
   async listPages({ limit }: { limit: number }): Promise<PageListItem[]> {
-    const pages = await this.database.pages
-      .orderBy("savedAt")
-      .reverse()
-      .limit(limit)
-      .toArray();
+    const pages = await this.database.pages.orderBy("savedAt").reverse().limit(limit).toArray();
 
     return pages.map(toPageListItem);
   }
@@ -575,6 +565,7 @@ git commit -m "feat: persist captured pages"
 ## Task 4: Add Content Extraction
 
 **Files:**
+
 - Create: `src/content/extract.test.ts`
 - Create: `src/content/extract.ts`
 - Modify: `manifest.config.ts`
@@ -619,9 +610,7 @@ describe("extractPage", () => {
   it("throws when no readable text exists", () => {
     document.body.innerHTML = "<main></main>";
 
-    expect(() => extractPage(document, () => 1)).toThrow(
-      "No readable page text found",
-    );
+    expect(() => extractPage(document, () => 1)).toThrow("No readable page text found");
   });
 });
 ```
@@ -643,10 +632,7 @@ Create `src/content/extract.ts`:
 ```ts
 import { Readability } from "@mozilla/readability";
 
-import type {
-  ContentExtractRequest,
-  ContentExtractResponse,
-} from "../shared/messages";
+import type { ContentExtractRequest, ContentExtractResponse } from "../shared/messages";
 import type { ExtractedPage } from "../shared/types";
 
 export function extractPage(
@@ -693,8 +679,7 @@ if (typeof chrome !== "undefined" && chrome.runtime?.onMessage) {
         sendResponse({
           type: "content.extractFailed",
           payload: {
-            message:
-              error instanceof Error ? error.message : "Unknown extraction error",
+            message: error instanceof Error ? error.message : "Unknown extraction error",
           },
         });
       }
@@ -763,6 +748,7 @@ git commit -m "feat: extract readable page content"
 ## Task 5: Add CaptureService And Worker Messages
 
 **Files:**
+
 - Create: `src/worker/services/CaptureService.test.ts`
 - Create: `src/worker/services/CaptureService.ts`
 - Modify: `src/worker/index.test.ts`
@@ -839,10 +825,7 @@ Expected: FAIL with `Failed to resolve import "./CaptureService"`.
 Create `src/worker/services/CaptureService.ts`:
 
 ```ts
-import type {
-  ContentExtractRequest,
-  ContentExtractResponse,
-} from "../../shared/messages";
+import type { ContentExtractRequest, ContentExtractResponse } from "../../shared/messages";
 import type { ExtractedPage, PageCaptureInput, PageRecord } from "../../shared/types";
 import { PageRepo } from "../repository/PageRepo";
 
@@ -861,10 +844,7 @@ export class ChromePageExtractor implements PageExtractor {
     }
 
     const request: ContentExtractRequest = { type: "content.extract" };
-    const response = (await chrome.tabs.sendMessage(
-      tabId,
-      request,
-    )) as ContentExtractResponse;
+    const response = (await chrome.tabs.sendMessage(tabId, request)) as ContentExtractResponse;
 
     if (response.type === "content.extractFailed") {
       throw new Error(response.payload.message);
@@ -947,9 +927,7 @@ describe("worker request handler", () => {
   });
 
   it("returns the initial settings status", async () => {
-    await expect(
-      handleRequest({ type: "settings.getStatus" }),
-    ).resolves.toEqual({
+    await expect(handleRequest({ type: "settings.getStatus" })).resolves.toEqual({
       type: "settings.status",
       payload: {
         hasApiKey: false,
@@ -967,10 +945,7 @@ describe("worker request handler", () => {
     };
 
     await expect(
-      handleRequest(
-        { type: "page.save", payload: { tabId: 7 } },
-        { captureService, pageRepo },
-      ),
+      handleRequest({ type: "page.save", payload: { tabId: 7 } }, { captureService, pageRepo }),
     ).resolves.toEqual({
       type: "page.saved",
       payload: { page: pageListItem },
@@ -987,10 +962,7 @@ describe("worker request handler", () => {
     };
 
     await expect(
-      handleRequest(
-        { type: "page.list", payload: { limit: 25 } },
-        { captureService, pageRepo },
-      ),
+      handleRequest({ type: "page.list", payload: { limit: 25 } }, { captureService, pageRepo }),
     ).resolves.toEqual({
       type: "page.listed",
       payload: { pages: [pageListItem] },
@@ -1110,11 +1082,7 @@ if (typeof chrome !== "undefined" && chrome.runtime?.onInstalled) {
 
 if (typeof chrome !== "undefined" && chrome.runtime?.onMessage) {
   chrome.runtime.onMessage.addListener(
-    (
-      request: DevRecallRequest,
-      _sender,
-      sendResponse: (response: DevRecallResponse) => void,
-    ) => {
+    (request: DevRecallRequest, _sender, sendResponse: (response: DevRecallResponse) => void) => {
       void handleRequest(request).then(sendResponse);
       return true;
     },
@@ -1143,6 +1111,7 @@ git commit -m "feat: add manual capture worker messages"
 ## Task 6: Wire Popup Save Behavior
 
 **Files:**
+
 - Modify: `src/popup/Popup.test.tsx`
 - Modify: `src/popup/Popup.tsx`
 
@@ -1161,12 +1130,8 @@ describe("Popup", () => {
   it("enables manual save without requiring an API key", () => {
     render(<Popup saveCurrentPage={vi.fn()} />);
 
-    expect(
-      screen.getByRole("heading", { name: "DevRecall" }),
-    ).toBeInTheDocument();
-    expect(
-      screen.getByRole("button", { name: "Save this page" }),
-    ).toBeEnabled();
+    expect(screen.getByRole("heading", { name: "DevRecall" })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Save this page" })).toBeEnabled();
     expect(screen.queryByText("Set API key in settings")).not.toBeInTheDocument();
   });
 
@@ -1242,11 +1207,7 @@ function defaultOpenSidePanel() {
 }
 
 async function defaultSaveCurrentPage() {
-  if (
-    typeof chrome === "undefined" ||
-    !chrome.tabs?.query ||
-    !chrome.runtime?.sendMessage
-  ) {
+  if (typeof chrome === "undefined" || !chrome.tabs?.query || !chrome.runtime?.sendMessage) {
     throw new Error("Chrome extension APIs are unavailable");
   }
 
@@ -1289,9 +1250,7 @@ export function Popup({
       <div className="flex min-h-[180px] flex-col gap-4">
         <div>
           <p className="text-sm font-medium text-slate-900">Current page</p>
-          <p className="mt-1 truncate text-sm text-slate-500">
-            Ready to save into your library
-          </p>
+          <p className="mt-1 truncate text-sm text-slate-500">Ready to save into your library</p>
         </div>
 
         <button
@@ -1349,6 +1308,7 @@ git commit -m "feat: save pages from popup"
 ## Task 7: Wire Side Panel Library Listing
 
 **Files:**
+
 - Create: `src/ui/components/PageCard.tsx`
 - Modify: `src/ui/components/index.ts`
 - Modify: `src/sidepanel/App.test.tsx`
@@ -1384,16 +1344,9 @@ describe("Side panel app", () => {
   it("renders the library search shell", async () => {
     render(<App listPages={vi.fn().mockResolvedValue([])} />);
 
-    expect(
-      screen.getByRole("heading", { name: "DevRecall" }),
-    ).toBeInTheDocument();
-    expect(
-      screen.getByRole("searchbox", { name: "Search saved pages" }),
-    ).toBeInTheDocument();
-    expect(screen.getByRole("button", { name: "All" })).toHaveAttribute(
-      "aria-pressed",
-      "true",
-    );
+    expect(screen.getByRole("heading", { name: "DevRecall" })).toBeInTheDocument();
+    expect(screen.getByRole("searchbox", { name: "Search saved pages" })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "All" })).toHaveAttribute("aria-pressed", "true");
     expect(await screen.findByText("No saved pages yet")).toBeInTheDocument();
   });
 
@@ -1439,9 +1392,7 @@ export function PageCard({ page }: PageCardProps) {
     <article className="rounded-md border border-slate-200 bg-white px-3 py-3">
       <h2 className="text-sm font-semibold text-slate-900">{page.title}</h2>
       <p className="mt-1 text-xs text-slate-500">{page.domain}</p>
-      <p className="mt-2 line-clamp-2 text-sm text-slate-600">
-        {page.summary || page.url}
-      </p>
+      <p className="mt-2 line-clamp-2 text-sm text-slate-600">{page.summary || page.url}</p>
     </article>
   );
 }
@@ -1480,9 +1431,7 @@ async function defaultListPages(): Promise<PageListItem[]> {
     type: "page.list",
     payload: { limit: 50 },
   };
-  const response = (await chrome.runtime.sendMessage(
-    request,
-  )) as DevRecallResponse;
+  const response = (await chrome.runtime.sendMessage(request)) as DevRecallResponse;
 
   if (response.type !== "page.listed") {
     return [];
@@ -1553,12 +1502,8 @@ export function App({ listPages = defaultListPages }: AppProps) {
           <p className="text-sm text-slate-500">Loading library...</p>
         ) : pages.length === 0 ? (
           <section className="rounded-md border border-dashed border-slate-300 bg-white px-4 py-8 text-center">
-            <h2 className="text-sm font-semibold text-slate-900">
-              No saved pages yet
-            </h2>
-            <p className="mt-2 text-sm text-slate-500">
-              Saved pages will appear here.
-            </p>
+            <h2 className="text-sm font-semibold text-slate-900">No saved pages yet</h2>
+            <p className="mt-2 text-sm text-slate-500">Saved pages will appear here.</p>
           </section>
         ) : (
           <div className="flex flex-col gap-3">
@@ -1594,6 +1539,7 @@ git commit -m "feat: list saved pages in side panel"
 ## Task 8: Final M2 Verification
 
 **Files:**
+
 - Review all files changed in Tasks 1-7.
 
 - [ ] **Step 1: Run the full automated suite**

@@ -1,9 +1,6 @@
 import { Readability } from "@mozilla/readability";
 
-import type {
-  ContentExtractRequest,
-  ContentExtractResponse,
-} from "../shared/messages";
+import type { ContentExtractRequest, ContentExtractResponse } from "../shared/messages";
 import type { ExtractedPage } from "../shared/types";
 
 export function extractPage(
@@ -14,9 +11,7 @@ export function extractPage(
   const fallbackText = doc.body?.innerText ?? doc.body?.textContent ?? "";
   const articleTitle = article?.title?.trim();
   const bodyText = article?.textContent ?? fallbackText;
-  const fullText = collapseWhitespace(
-    articleTitle ? `${articleTitle} ${bodyText}` : bodyText,
-  );
+  const fullText = collapseWhitespace(articleTitle ? `${articleTitle} ${bodyText}` : bodyText);
 
   if (fullText.length === 0) {
     throw new Error("No readable page text found");
@@ -54,8 +49,7 @@ if (typeof chrome !== "undefined" && chrome.runtime?.onMessage) {
         sendResponse({
           type: "content.extractFailed",
           payload: {
-            message:
-              error instanceof Error ? error.message : "Unknown extraction error",
+            message: error instanceof Error ? error.message : "Unknown extraction error",
           },
         });
       }

@@ -15,10 +15,7 @@ describe("ChunkRepo", () => {
   });
 
   it("stores chunks with sequential ordinals", async () => {
-    const chunks = await repo.replaceChunksForPage("page-1", [
-      "first chunk",
-      "second chunk",
-    ]);
+    const chunks = await repo.replaceChunksForPage("page-1", ["first chunk", "second chunk"]);
 
     expect(chunks.map((chunk) => chunk.ordinal)).toEqual([0, 1]);
     expect(chunks.every((chunk) => chunk.pageId === "page-1")).toBe(true);

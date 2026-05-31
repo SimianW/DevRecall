@@ -7,12 +7,7 @@ export type SourceType =
   | "course_material"
   | "unknown";
 
-export type Intent =
-  | "learning"
-  | "debugging"
-  | "reference"
-  | "implementation"
-  | "comparison";
+export type Intent = "learning" | "debugging" | "reference" | "implementation" | "comparison";
 
 export type SaveMode = "manual" | "auto";
 

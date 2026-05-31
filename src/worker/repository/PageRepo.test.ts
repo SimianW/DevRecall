@@ -32,8 +32,7 @@ describe("PageRepo", () => {
       topics: [],
       technologies: [],
       intent: "reference",
-      fullText:
-        "The HorizontalPodAutoscaler automatically updates workload resources.",
+      fullText: "The HorizontalPodAutoscaler automatically updates workload resources.",
       readingTimeMs: 42_000,
       saveMode: "manual",
       status: "pending",

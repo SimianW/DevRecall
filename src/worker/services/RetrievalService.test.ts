@@ -1,18 +1,9 @@
 import { describe, expect, it, vi } from "vitest";
 
 import type { ChunkRecord, PageRecord } from "../../shared/types";
-import {
-  RetrievalService,
-  type ChunkSource,
-  type PageSource,
-} from "./RetrievalService";
+import { RetrievalService, type ChunkSource, type PageSource } from "./RetrievalService";
 
-function chunk(
-  id: string,
-  pageId: string,
-  ordinal: number,
-  text: string,
-): ChunkRecord {
+function chunk(id: string, pageId: string, ordinal: number, text: string): ChunkRecord {
   return { id, pageId, ordinal, text, schemaVersion: 1 };
 }
 

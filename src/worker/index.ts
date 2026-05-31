@@ -6,9 +6,7 @@ import {
 } from "../shared/messages";
 import type { PageHit, PageListItem, PageRecord } from "../shared/types";
 import { normalizeUrl } from "../lib/urlNormalize";
-import {
-  testOpenAIConnection,
-} from "./llm/OpenAIProvider";
+import { testOpenAIConnection } from "./llm/OpenAIProvider";
 import { ChunkRepo } from "./repository/ChunkRepo";
 import { PageRepo, toPageListItem } from "./repository/PageRepo";
 import { CaptureService } from "./services/CaptureService";
@@ -34,9 +32,7 @@ type HandlerDeps = {
   captureService: CapturePort;
   pageRepo: PageListPort;
   apiKeyStore: ApiKeyStore;
-  testConnection: (
-    apiKey: string,
-  ) => Promise<{ success: boolean; message: string }>;
+  testConnection: (apiKey: string) => Promise<{ success: boolean; message: string }>;
   retrievalService: SearchPort;
 };
 
@@ -105,11 +101,9 @@ export async function handleRequest(
       const apiKey = await deps.apiKeyStore.getApiKey();
 
       if (apiKey) {
-        void deps.captureService
-          .processPage(page.id, apiKey)
-          .catch((error) => {
-            console.error("[DevRecall] LLM processing error:", error);
-          });
+        void deps.captureService.processPage(page.id, apiKey).catch((error) => {
+          console.error("[DevRecall] LLM processing error:", error);
+        });
       }
 
       return {
@@ -202,11 +196,7 @@ if (typeof chrome !== "undefined" && chrome.runtime?.onInstalled) {
 
 if (typeof chrome !== "undefined" && chrome.runtime?.onMessage) {
   chrome.runtime.onMessage.addListener(
-    (
-      request: DevRecallRequest,
-      _sender,
-      sendResponse: (response: DevRecallResponse) => void,
-    ) => {
+    (request: DevRecallRequest, _sender, sendResponse: (response: DevRecallResponse) => void) => {
       void handleMessage(request, sendResponse);
       return true;
     },

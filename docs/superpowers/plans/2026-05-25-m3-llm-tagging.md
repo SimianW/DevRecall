@@ -44,6 +44,7 @@ Baseline before plan creation:
 ## Task 1: Extend Shared Types And Message Contract
 
 **Files:**
+
 - Modify: `src/shared/types.ts`
 - Modify: `src/shared/messages.ts`
 
@@ -152,6 +153,7 @@ git commit -m "feat: add m3 tagging types and message contract"
 ## Task 2: Add API Key Storage
 
 **Files:**
+
 - Create: `src/worker/settings/ApiKeyStore.test.ts`
 - Create: `src/worker/settings/ApiKeyStore.ts`
 
@@ -271,6 +273,7 @@ git commit -m "feat: add chrome.storage.local api key store"
 ## Task 3: Add OpenAI Provider
 
 **Files:**
+
 - Create: `src/worker/llm/OpenAIProvider.test.ts`
 - Create: `src/worker/llm/OpenAIProvider.ts`
 
@@ -326,20 +329,16 @@ describe("OpenAIProvider", () => {
     const [url, options] = vi.mocked(fetch).mock.calls[0];
 
     expect(url).toBe("https://api.openai.com/v1/chat/completions");
-    expect((options?.headers as Record<string, string>).Authorization).toBe(
-      "Bearer sk-test123",
-    );
+    expect((options?.headers as Record<string, string>).Authorization).toBe("Bearer sk-test123");
   });
 
   it("throws on 401 without retrying", async () => {
-    globalThis.fetch = vi
-      .fn()
-      .mockResolvedValue({ ok: false, status: 401 });
+    globalThis.fetch = vi.fn().mockResolvedValue({ ok: false, status: 401 });
     const provider = new OpenAIProvider([]);
 
-    await expect(
-      provider.summarizeAndTag("text", "title", "url", "sk-bad"),
-    ).rejects.toThrow("Invalid API key");
+    await expect(provider.summarizeAndTag("text", "title", "url", "sk-bad")).rejects.toThrow(
+      "Invalid API key",
+    );
     expect(fetch).toHaveBeenCalledOnce();
   });
 
@@ -356,12 +355,7 @@ describe("OpenAIProvider", () => {
       });
     const provider = new OpenAIProvider([0]);
 
-    const result = await provider.summarizeAndTag(
-      "text",
-      "title",
-      "url",
-      "sk-test",
-    );
+    const result = await provider.summarizeAndTag("text", "title", "url", "sk-test");
 
     expect(result).toEqual(taggingResult);
     expect(fetch).toHaveBeenCalledTimes(2);
@@ -388,12 +382,7 @@ describe("OpenAIProvider", () => {
     });
     const provider = new OpenAIProvider([]);
 
-    const result = await provider.summarizeAndTag(
-      "text",
-      "title",
-      "url",
-      "sk-test",
-    );
+    const result = await provider.summarizeAndTag("text", "title", "url", "sk-test");
 
     expect(result).toEqual({
       summary: "A summary",
@@ -413,9 +402,7 @@ describe("testOpenAIConnection", () => {
   });
 
   it("returns success for a valid key", async () => {
-    globalThis.fetch = vi
-      .fn()
-      .mockResolvedValue({ ok: true, json: () => Promise.resolve({}) });
+    globalThis.fetch = vi.fn().mockResolvedValue({ ok: true, json: () => Promise.resolve({}) });
 
     const result = await testOpenAIConnection("sk-valid");
 
@@ -426,9 +413,7 @@ describe("testOpenAIConnection", () => {
   });
 
   it("returns failure for an invalid key", async () => {
-    globalThis.fetch = vi
-      .fn()
-      .mockResolvedValue({ ok: false, status: 401 });
+    globalThis.fetch = vi.fn().mockResolvedValue({ ok: false, status: 401 });
 
     const result = await testOpenAIConnection("sk-invalid");
 
@@ -439,9 +424,7 @@ describe("testOpenAIConnection", () => {
   });
 
   it("returns failure on network error", async () => {
-    globalThis.fetch = vi
-      .fn()
-      .mockRejectedValue(new Error("Network error"));
+    globalThis.fetch = vi.fn().mockRejectedValue(new Error("Network error"));
 
     const result = await testOpenAIConnection("sk-test");
 
@@ -536,10 +519,7 @@ export class OpenAIProvider implements PageTagger {
     return parseTaggingResponse(responseBody);
   }
 
-  private async fetchWithRetry(
-    apiKey: string,
-    body: string,
-  ): Promise<unknown> {
+  private async fetchWithRetry(apiKey: string, body: string): Promise<unknown> {
     const maxAttempts = this.retryDelays.length + 1;
 
     for (let attempt = 0; attempt < maxAttempts; attempt++) {
@@ -560,10 +540,7 @@ export class OpenAIProvider implements PageTagger {
         throw new Error("Invalid API key");
       }
 
-      if (
-        (response.status === 429 || response.status >= 500) &&
-        attempt < maxAttempts - 1
-      ) {
+      if ((response.status === 429 || response.status >= 500) && attempt < maxAttempts - 1) {
         await sleep(this.retryDelays[attempt]);
         continue;
       }
@@ -599,9 +576,7 @@ function parseTaggingResponse(body: unknown): TaggingResult {
     technologies: Array.isArray(parsed.technologies)
       ? parsed.technologies.filter((t): t is string => typeof t === "string")
       : [],
-    intent: VALID_INTENTS.has(parsed.intent as string)
-      ? (parsed.intent as Intent)
-      : "reference",
+    intent: VALID_INTENTS.has(parsed.intent as string) ? (parsed.intent as Intent) : "reference",
   };
 }
 
@@ -662,6 +637,7 @@ git commit -m "feat: add openai provider with retry and response parsing"
 ## Task 4: Extend Page Repository
 
 **Files:**
+
 - Modify: `src/worker/repository/PageRepo.ts`
 - Modify: `src/worker/repository/PageRepo.test.ts`
 
@@ -670,57 +646,57 @@ git commit -m "feat: add openai provider with retry and response parsing"
 Append these tests inside the existing `describe("PageRepo")` block in `src/worker/repository/PageRepo.test.ts`, after the last `it(...)`:
 
 ```ts
-  it("retrieves a page by id", async () => {
-    const page = await repo.upsertCapturedPage({
-      url: "https://react.dev/reference/react/useState",
-      title: "useState",
-      fullText: "Returns a stateful value.",
-      readingTimeMs: 5000,
-      saveMode: "manual",
-    });
-
-    const found = await repo.getById(page.id);
-
-    expect(found).toMatchObject({ id: page.id, title: "useState" });
+it("retrieves a page by id", async () => {
+  const page = await repo.upsertCapturedPage({
+    url: "https://react.dev/reference/react/useState",
+    title: "useState",
+    fullText: "Returns a stateful value.",
+    readingTimeMs: 5000,
+    saveMode: "manual",
   });
 
-  it("returns undefined for a missing id", async () => {
-    const found = await repo.getById("01NONEXISTENT0000000000000");
+  const found = await repo.getById(page.id);
 
-    expect(found).toBeUndefined();
+  expect(found).toMatchObject({ id: page.id, title: "useState" });
+});
+
+it("returns undefined for a missing id", async () => {
+  const found = await repo.getById("01NONEXISTENT0000000000000");
+
+  expect(found).toBeUndefined();
+});
+
+it("updates a page with partial data", async () => {
+  const page = await repo.upsertCapturedPage({
+    url: "https://react.dev/reference/react/useEffect",
+    title: "useEffect",
+    fullText: "Lets you synchronize a component.",
+    readingTimeMs: 6000,
+    saveMode: "manual",
   });
 
-  it("updates a page with partial data", async () => {
-    const page = await repo.upsertCapturedPage({
-      url: "https://react.dev/reference/react/useEffect",
-      title: "useEffect",
-      fullText: "Lets you synchronize a component.",
-      readingTimeMs: 6000,
-      saveMode: "manual",
-    });
-
-    await repo.updatePage(page.id, {
-      summary: "Synchronizes a component with an external system.",
-      sourceType: "official_docs",
-      topics: ["react", "hooks"],
-      technologies: ["React"],
-      intent: "reference",
-      status: "ready",
-    });
-
-    const updated = await repo.getById(page.id);
-
-    expect(updated).toMatchObject({
-      id: page.id,
-      title: "useEffect",
-      summary: "Synchronizes a component with an external system.",
-      sourceType: "official_docs",
-      topics: ["react", "hooks"],
-      technologies: ["React"],
-      intent: "reference",
-      status: "ready",
-    });
+  await repo.updatePage(page.id, {
+    summary: "Synchronizes a component with an external system.",
+    sourceType: "official_docs",
+    topics: ["react", "hooks"],
+    technologies: ["React"],
+    intent: "reference",
+    status: "ready",
   });
+
+  const updated = await repo.getById(page.id);
+
+  expect(updated).toMatchObject({
+    id: page.id,
+    title: "useEffect",
+    summary: "Synchronizes a component with an external system.",
+    sourceType: "official_docs",
+    topics: ["react", "hooks"],
+    technologies: ["React"],
+    intent: "reference",
+    status: "ready",
+  });
+});
 ```
 
 - [ ] **Step 2: Update existing test assertions for pending status**
@@ -759,10 +735,7 @@ export class PageRepo {
 
   async upsertCapturedPage(input: PageCaptureInput): Promise<PageRecord> {
     const normalized = await normalizeUrl(input.url);
-    const existing = await this.database.pages
-      .where("urlHash")
-      .equals(normalized.urlHash)
-      .first();
+    const existing = await this.database.pages.where("urlHash").equals(normalized.urlHash).first();
     const now = Date.now();
 
     const page: PageRecord = {
@@ -802,11 +775,7 @@ export class PageRepo {
   }
 
   async listPages({ limit }: { limit: number }): Promise<PageListItem[]> {
-    const pages = await this.database.pages
-      .orderBy("savedAt")
-      .reverse()
-      .limit(limit)
-      .toArray();
+    const pages = await this.database.pages.orderBy("savedAt").reverse().limit(limit).toArray();
 
     return pages.map(toPageListItem);
   }
@@ -849,6 +818,7 @@ git commit -m "feat: pending status default with getById and updatePage"
 ## Task 5: Add Two-Phase Capture Processing
 
 **Files:**
+
 - Modify: `src/worker/services/CaptureService.ts`
 - Modify: `src/worker/services/CaptureService.test.ts`
 
@@ -993,20 +963,14 @@ Expected: FAIL because `PageReader`, `PageTagger`, and `processPage` do not exis
 Replace `src/worker/services/CaptureService.ts` with:
 
 ```ts
-import type {
-  ContentExtractRequest,
-  ContentExtractResponse,
-} from "../../shared/messages";
+import type { ContentExtractRequest, ContentExtractResponse } from "../../shared/messages";
 import type {
   ExtractedPage,
   PageCaptureInput,
   PageRecord,
   TaggingResult,
 } from "../../shared/types";
-import {
-  OpenAIProvider,
-  type PageTagger as OpenAIPageTagger,
-} from "../llm/OpenAIProvider";
+import { OpenAIProvider, type PageTagger as OpenAIPageTagger } from "../llm/OpenAIProvider";
 import { PageRepo } from "../repository/PageRepo";
 
 export type PageExtractor = {
@@ -1019,10 +983,7 @@ export type PageWriter = {
 
 export type PageReader = {
   getById(id: string): Promise<PageRecord | undefined>;
-  updatePage(
-    id: string,
-    data: Partial<Omit<PageRecord, "id" | "schemaVersion">>,
-  ): Promise<void>;
+  updatePage(id: string, data: Partial<Omit<PageRecord, "id" | "schemaVersion">>): Promise<void>;
 };
 
 export type PageTagger = OpenAIPageTagger;
@@ -1034,10 +995,7 @@ export class ChromePageExtractor implements PageExtractor {
     }
 
     const request: ContentExtractRequest = { type: "content.extract" };
-    const response = (await chrome.tabs.sendMessage(
-      tabId,
-      request,
-    )) as ContentExtractResponse;
+    const response = (await chrome.tabs.sendMessage(tabId, request)) as ContentExtractResponse;
 
     if (response.type === "content.extractFailed") {
       throw new Error(response.payload.message);
@@ -1072,19 +1030,13 @@ export class CaptureService {
     }
 
     try {
-      const result = await this.tagger.summarizeAndTag(
-        page.fullText,
-        page.title,
-        page.url,
-        apiKey,
-      );
+      const result = await this.tagger.summarizeAndTag(page.fullText, page.title, page.url, apiKey);
 
       await this.reader.updatePage(pageId, { ...result, status: "ready" });
 
       return { ...page, ...result, status: "ready" };
     } catch (error) {
-      const errorReason =
-        error instanceof Error ? error.message : "Unknown error";
+      const errorReason = error instanceof Error ? error.message : "Unknown error";
 
       await this.reader.updatePage(pageId, {
         status: "failed",
@@ -1118,6 +1070,7 @@ git commit -m "feat: two-phase capture with async llm processing"
 ## Task 6: Wire Worker Dispatch
 
 **Files:**
+
 - Modify: `src/worker/index.ts`
 - Modify: `src/worker/index.test.ts`
 
@@ -1167,9 +1120,7 @@ const pendingListItem = {
 
 describe("worker request handler", () => {
   it("responds to a ping request", async () => {
-    await expect(
-      handleRequest({ type: "devrecall.ping" }, makeDeps()),
-    ).resolves.toEqual({
+    await expect(handleRequest({ type: "devrecall.ping" }, makeDeps())).resolves.toEqual({
       type: "devrecall.pong",
       payload: { appName: APP_NAME, version: APP_VERSION },
     });
@@ -1178,9 +1129,7 @@ describe("worker request handler", () => {
   it("returns settings status with hasApiKey from store", async () => {
     const deps = makeDeps({ apiKey: "sk-test" });
 
-    await expect(
-      handleRequest({ type: "settings.getStatus" }, deps),
-    ).resolves.toEqual({
+    await expect(handleRequest({ type: "settings.getStatus" }, deps)).resolves.toEqual({
       type: "settings.status",
       payload: { hasApiKey: true, persistentStorage: "unknown" },
     });
@@ -1189,9 +1138,7 @@ describe("worker request handler", () => {
   it("returns hasApiKey false when no key is stored", async () => {
     const deps = makeDeps({ apiKey: null });
 
-    await expect(
-      handleRequest({ type: "settings.getStatus" }, deps),
-    ).resolves.toEqual({
+    await expect(handleRequest({ type: "settings.getStatus" }, deps)).resolves.toEqual({
       type: "settings.status",
       payload: { hasApiKey: false, persistentStorage: "unknown" },
     });
@@ -1201,10 +1148,7 @@ describe("worker request handler", () => {
     const deps = makeDeps();
 
     await expect(
-      handleRequest(
-        { type: "settings.setApiKey", payload: { apiKey: "sk-new" } },
-        deps,
-      ),
+      handleRequest({ type: "settings.setApiKey", payload: { apiKey: "sk-new" } }, deps),
     ).resolves.toEqual({ type: "settings.apiKeySet" });
     expect(deps.apiKeyStore.setApiKey).toHaveBeenCalledWith("sk-new");
   });
@@ -1215,9 +1159,7 @@ describe("worker request handler", () => {
       connectionResult: { success: true, message: "Connection successful" },
     });
 
-    await expect(
-      handleRequest({ type: "settings.testConnection" }, deps),
-    ).resolves.toEqual({
+    await expect(handleRequest({ type: "settings.testConnection" }, deps)).resolves.toEqual({
       type: "settings.connectionTestResult",
       payload: { success: true, message: "Connection successful" },
     });
@@ -1228,10 +1170,7 @@ describe("worker request handler", () => {
     deps.captureService.save = vi.fn().mockResolvedValue(pendingPage);
 
     await expect(
-      handleRequest(
-        { type: "page.save", payload: { tabId: 7 } },
-        deps,
-      ),
+      handleRequest({ type: "page.save", payload: { tabId: 7 } }, deps),
     ).resolves.toEqual({
       type: "page.saved",
       payload: { page: pendingListItem },
@@ -1244,10 +1183,7 @@ describe("worker request handler", () => {
     deps.pageRepo.listPages = vi.fn().mockResolvedValue([pendingListItem]);
 
     await expect(
-      handleRequest(
-        { type: "page.list", payload: { limit: 25 } },
-        deps,
-      ),
+      handleRequest({ type: "page.list", payload: { limit: 25 } }, deps),
     ).resolves.toEqual({
       type: "page.listed",
       payload: { pages: [pendingListItem] },
@@ -1274,14 +1210,12 @@ function makeDeps(
       getApiKey: vi.fn().mockResolvedValue(overrides.apiKey ?? null),
       setApiKey: vi.fn().mockResolvedValue(undefined),
     },
-    testConnection: vi
-      .fn()
-      .mockResolvedValue(
-        overrides.connectionResult ?? {
-          success: true,
-          message: "Connection successful",
-        },
-      ),
+    testConnection: vi.fn().mockResolvedValue(
+      overrides.connectionResult ?? {
+        success: true,
+        message: "Connection successful",
+      },
+    ),
   };
 }
 ```
@@ -1308,9 +1242,7 @@ import {
   type DevRecallResponse,
 } from "../shared/messages";
 import type { PageListItem, PageRecord } from "../shared/types";
-import {
-  testOpenAIConnection,
-} from "./llm/OpenAIProvider";
+import { testOpenAIConnection } from "./llm/OpenAIProvider";
 import { PageRepo, toPageListItem } from "./repository/PageRepo";
 import { CaptureService } from "./services/CaptureService";
 import { ChromeApiKeyStore, type ApiKeyStore } from "./settings/ApiKeyStore";
@@ -1328,9 +1260,7 @@ type HandlerDeps = {
   captureService: CapturePort;
   pageRepo: PageListPort;
   apiKeyStore: ApiKeyStore;
-  testConnection: (
-    apiKey: string,
-  ) => Promise<{ success: boolean; message: string }>;
+  testConnection: (apiKey: string) => Promise<{ success: boolean; message: string }>;
 };
 
 const pageRepo = new PageRepo();
@@ -1396,11 +1326,9 @@ export async function handleRequest(
       const apiKey = await deps.apiKeyStore.getApiKey();
 
       if (apiKey) {
-        void deps.captureService
-          .processPage(page.id, apiKey)
-          .catch((error) => {
-            console.error("[DevRecall] LLM processing error:", error);
-          });
+        void deps.captureService.processPage(page.id, apiKey).catch((error) => {
+          console.error("[DevRecall] LLM processing error:", error);
+        });
       }
 
       return {
@@ -1431,14 +1359,12 @@ if (typeof chrome !== "undefined" && chrome.runtime?.onInstalled) {
 
 if (typeof chrome !== "undefined" && chrome.runtime?.onMessage) {
   chrome.runtime.onMessage.addListener(
-    (
-      request: DevRecallRequest,
-      _sender,
-      sendResponse: (response: DevRecallResponse) => void,
-    ) => {
-      void handleRequest(request).then(sendResponse).catch((error) => {
-        console.error("[DevRecall] handler error:", error);
-      });
+    (request: DevRecallRequest, _sender, sendResponse: (response: DevRecallResponse) => void) => {
+      void handleRequest(request)
+        .then(sendResponse)
+        .catch((error) => {
+          console.error("[DevRecall] handler error:", error);
+        });
       return true;
     },
   );
@@ -1466,6 +1392,7 @@ git commit -m "feat: wire api key and llm processing into worker dispatch"
 ## Task 7: Wire Options Page
 
 **Files:**
+
 - Modify: `src/options/Options.tsx`
 - Modify: `src/options/Options.test.tsx`
 
@@ -1488,18 +1415,14 @@ function renderOptions(
 ) {
   return render(
     <Options
-      loadStatus={vi
-        .fn()
-        .mockResolvedValue({ hasApiKey: overrides.hasApiKey ?? false })}
+      loadStatus={vi.fn().mockResolvedValue({ hasApiKey: overrides.hasApiKey ?? false })}
       saveApiKey={vi.fn().mockResolvedValue(undefined)}
-      testConnection={vi
-        .fn()
-        .mockResolvedValue(
-          overrides.connectionResult ?? {
-            success: true,
-            message: "Connection successful",
-          },
-        )}
+      testConnection={vi.fn().mockResolvedValue(
+        overrides.connectionResult ?? {
+          success: true,
+          message: "Connection successful",
+        },
+      )}
     />,
   );
 }
@@ -1508,13 +1431,9 @@ describe("Options", () => {
   it("renders the settings form", async () => {
     renderOptions();
 
-    expect(
-      screen.getByRole("heading", { name: "DevRecall Settings" }),
-    ).toBeInTheDocument();
+    expect(screen.getByRole("heading", { name: "DevRecall Settings" })).toBeInTheDocument();
     expect(screen.getByLabelText("OpenAI API key")).toBeInTheDocument();
-    expect(
-      screen.getByRole("button", { name: "Save key" }),
-    ).toBeDisabled();
+    expect(screen.getByRole("button", { name: "Save key" })).toBeDisabled();
   });
 
   it("enables save button when API key is entered", async () => {
@@ -1543,9 +1462,7 @@ describe("Options", () => {
     await user.click(screen.getByRole("button", { name: "Save key" }));
 
     expect(saveApiKey).toHaveBeenCalledWith("sk-new");
-    expect(
-      await screen.findByRole("button", { name: "Test connection" }),
-    ).toBeEnabled();
+    expect(await screen.findByRole("button", { name: "Test connection" })).toBeEnabled();
   });
 
   it("tests connection and shows success", async () => {
@@ -1562,13 +1479,9 @@ describe("Options", () => {
       />,
     );
 
-    await user.click(
-      await screen.findByRole("button", { name: "Test connection" }),
-    );
+    await user.click(await screen.findByRole("button", { name: "Test connection" }));
 
-    expect(
-      await screen.findByText("Connection successful"),
-    ).toBeInTheDocument();
+    expect(await screen.findByText("Connection successful")).toBeInTheDocument();
   });
 
   it("shows error when connection test fails", async () => {
@@ -1585,9 +1498,7 @@ describe("Options", () => {
       />,
     );
 
-    await user.click(
-      await screen.findByRole("button", { name: "Test connection" }),
-    );
+    await user.click(await screen.findByRole("button", { name: "Test connection" }));
 
     expect(await screen.findByText("Invalid API key")).toBeInTheDocument();
   });
@@ -1626,9 +1537,7 @@ async function defaultLoadStatus(): Promise<{ hasApiKey: boolean }> {
   }
 
   const request: DevRecallRequest = { type: "settings.getStatus" };
-  const response = (await chrome.runtime.sendMessage(
-    request,
-  )) as DevRecallResponse;
+  const response = (await chrome.runtime.sendMessage(request)) as DevRecallResponse;
 
   if (response.type !== "settings.status") {
     return { hasApiKey: false };
@@ -1659,9 +1568,7 @@ async function defaultTestConnection(): Promise<{
   }
 
   const request: DevRecallRequest = { type: "settings.testConnection" };
-  const response = (await chrome.runtime.sendMessage(
-    request,
-  )) as DevRecallResponse;
+  const response = (await chrome.runtime.sendMessage(request)) as DevRecallResponse;
 
   if (response.type !== "settings.connectionTestResult") {
     return { success: false, message: "Unexpected response" };
@@ -1742,9 +1649,7 @@ export function Options({
         </button>
 
         {testResult ? (
-          <p
-            className={`text-sm ${testResult.success ? "text-green-600" : "text-red-600"}`}
-          >
+          <p className={`text-sm ${testResult.success ? "text-green-600" : "text-red-600"}`}>
             {testResult.message}
           </p>
         ) : null}
@@ -1757,9 +1662,7 @@ export function Options({
 
         <section className="rounded-md border border-slate-200 bg-white p-4">
           <h2 className="text-sm font-semibold text-slate-900">Storage</h2>
-          <p className="mt-2 text-sm text-slate-500">
-            0 pages, 0 chunks, 0 MB
-          </p>
+          <p className="mt-2 text-sm text-slate-500">0 pages, 0 chunks, 0 MB</p>
         </section>
       </form>
     </SurfaceShell>
@@ -1788,6 +1691,7 @@ git commit -m "feat: wire options page api key input and test connection"
 ## Task 8: Update UI Status Display And Popup API Key Check
 
 **Files:**
+
 - Modify: `src/ui/components/PageCard.tsx`
 - Modify: `src/popup/Popup.tsx`
 - Modify: `src/popup/Popup.test.tsx`
@@ -1811,9 +1715,7 @@ export function PageCard({ page }: PageCardProps) {
         <StatusBadge status={page.status} />
       </div>
       <p className="mt-1 text-xs text-slate-500">{page.domain}</p>
-      <p className="mt-2 line-clamp-2 text-sm text-slate-600">
-        {page.summary || page.url}
-      </p>
+      <p className="mt-2 line-clamp-2 text-sm text-slate-600">{page.summary || page.url}</p>
       {page.topics.length > 0 ? (
         <div className="mt-2 flex flex-wrap gap-1">
           {page.topics.map((topic) => (
@@ -1863,35 +1765,17 @@ import { Popup } from "./Popup";
 
 describe("Popup", () => {
   it("disables save when no API key is set", async () => {
-    render(
-      <Popup
-        checkApiKey={vi.fn().mockResolvedValue(false)}
-        saveCurrentPage={vi.fn()}
-      />,
-    );
+    render(<Popup checkApiKey={vi.fn().mockResolvedValue(false)} saveCurrentPage={vi.fn()} />);
 
-    expect(
-      await screen.findByRole("button", { name: "Save this page" }),
-    ).toBeDisabled();
-    expect(
-      screen.getByText("Set API key in settings"),
-    ).toBeInTheDocument();
+    expect(await screen.findByRole("button", { name: "Save this page" })).toBeDisabled();
+    expect(screen.getByText("Set API key in settings")).toBeInTheDocument();
   });
 
   it("enables save when API key is set", async () => {
-    render(
-      <Popup
-        checkApiKey={vi.fn().mockResolvedValue(true)}
-        saveCurrentPage={vi.fn()}
-      />,
-    );
+    render(<Popup checkApiKey={vi.fn().mockResolvedValue(true)} saveCurrentPage={vi.fn()} />);
 
-    expect(
-      await screen.findByRole("button", { name: "Save this page" }),
-    ).toBeEnabled();
-    expect(
-      screen.queryByText("Set API key in settings"),
-    ).not.toBeInTheDocument();
+    expect(await screen.findByRole("button", { name: "Save this page" })).toBeEnabled();
+    expect(screen.queryByText("Set API key in settings")).not.toBeInTheDocument();
   });
 
   it("saves the current page and shows a saved state", async () => {
@@ -1899,20 +1783,13 @@ describe("Popup", () => {
     const saveCurrentPage = vi.fn().mockResolvedValue(undefined);
 
     render(
-      <Popup
-        checkApiKey={vi.fn().mockResolvedValue(true)}
-        saveCurrentPage={saveCurrentPage}
-      />,
+      <Popup checkApiKey={vi.fn().mockResolvedValue(true)} saveCurrentPage={saveCurrentPage} />,
     );
 
-    await user.click(
-      await screen.findByRole("button", { name: "Save this page" }),
-    );
+    await user.click(await screen.findByRole("button", { name: "Save this page" }));
 
     expect(saveCurrentPage).toHaveBeenCalledTimes(1);
-    expect(
-      await screen.findByRole("button", { name: "Saved" }),
-    ).toBeEnabled();
+    expect(await screen.findByRole("button", { name: "Saved" })).toBeEnabled();
   });
 
   it("shows an error state when save fails", async () => {
@@ -1920,19 +1797,12 @@ describe("Popup", () => {
     const saveCurrentPage = vi.fn().mockRejectedValue(new Error("no tab"));
 
     render(
-      <Popup
-        checkApiKey={vi.fn().mockResolvedValue(true)}
-        saveCurrentPage={saveCurrentPage}
-      />,
+      <Popup checkApiKey={vi.fn().mockResolvedValue(true)} saveCurrentPage={saveCurrentPage} />,
     );
 
-    await user.click(
-      await screen.findByRole("button", { name: "Save this page" }),
-    );
+    await user.click(await screen.findByRole("button", { name: "Save this page" }));
 
-    expect(
-      await screen.findByText("Failed to save page"),
-    ).toBeInTheDocument();
+    expect(await screen.findByText("Failed to save page")).toBeInTheDocument();
   });
 
   it("opens the side panel through the injected callback", async () => {
@@ -1947,9 +1817,7 @@ describe("Popup", () => {
       />,
     );
 
-    await user.click(
-      await screen.findByRole("button", { name: "Open library" }),
-    );
+    await user.click(await screen.findByRole("button", { name: "Open library" }));
 
     expect(openSidePanel).toHaveBeenCalledTimes(1);
   });
@@ -1993,11 +1861,7 @@ function defaultOpenSidePanel() {
 }
 
 async function defaultSaveCurrentPage() {
-  if (
-    typeof chrome === "undefined" ||
-    !chrome.tabs?.query ||
-    !chrome.runtime?.sendMessage
-  ) {
+  if (typeof chrome === "undefined" || !chrome.tabs?.query || !chrome.runtime?.sendMessage) {
     throw new Error("Chrome extension APIs are unavailable");
   }
 
@@ -2024,9 +1888,7 @@ async function defaultCheckApiKey(): Promise<boolean> {
   }
 
   const request: DevRecallRequest = { type: "settings.getStatus" };
-  const response = (await chrome.runtime.sendMessage(
-    request,
-  )) as DevRecallResponse;
+  const response = (await chrome.runtime.sendMessage(request)) as DevRecallResponse;
 
   if (response.type !== "settings.status") {
     return false;
@@ -2066,9 +1928,7 @@ export function Popup({
       <div className="flex min-h-[180px] flex-col gap-4">
         <div>
           <p className="text-sm font-medium text-slate-900">Current page</p>
-          <p className="mt-1 truncate text-sm text-slate-500">
-            Ready to save into your library
-          </p>
+          <p className="mt-1 truncate text-sm text-slate-500">Ready to save into your library</p>
         </div>
 
         <button
@@ -2085,9 +1945,7 @@ export function Popup({
         </button>
 
         {hasApiKey === false ? (
-          <p className="text-xs text-amber-600">
-            Set API key in settings
-          </p>
+          <p className="text-xs text-amber-600">Set API key in settings</p>
         ) : saveState === "failed" ? (
           <p className="text-xs text-red-600">Failed to save page</p>
         ) : (
@@ -2130,6 +1988,7 @@ git commit -m "feat: status badges in page card and api key gating in popup"
 ## Task 9: Final M3 Verification
 
 **Files:**
+
 - Review all files changed in Tasks 1–8.
 
 - [ ] **Step 1: Add coverage paths for new modules**

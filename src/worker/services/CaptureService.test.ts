@@ -70,10 +70,9 @@ describe("CaptureService", () => {
       ...extracted,
       saveMode: "manual",
     });
-    expect(chunkWriter.replaceChunksForPage).toHaveBeenCalledWith(
-      pendingPage.id,
-      [pendingPage.fullText],
-    );
+    expect(chunkWriter.replaceChunksForPage).toHaveBeenCalledWith(pendingPage.id, [
+      pendingPage.fullText,
+    ]);
     expect(result).toBe(pendingPage);
   });
 

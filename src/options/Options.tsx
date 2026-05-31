@@ -55,7 +55,9 @@ export function Options({
   }, [loadStatus]);
 
   useEffect(() => {
-    loadStorageStats().then(setStorageStats).catch(() => {});
+    loadStorageStats()
+      .then(setStorageStats)
+      .catch(() => {});
   }, [loadStorageStats]);
 
   const handleSave = async () => {
@@ -79,9 +81,12 @@ export function Options({
 
   return (
     <SurfaceShell title="DevRecall Settings">
-      <form 
+      <form
         className="mx-auto flex max-w-2xl flex-col gap-6"
-        onSubmit={(e) => { e.preventDefault(); handleSave(); }}
+        onSubmit={(e) => {
+          e.preventDefault();
+          handleSave();
+        }}
       >
         <label className="flex flex-col gap-2 text-sm font-medium text-slate-800">
           OpenAI API key

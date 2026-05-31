@@ -26,8 +26,7 @@ const hits = [
     bestChunk: {
       text: "The HorizontalPodAutoscaler automatically scales pods.",
       ordinal: 0,
-      highlightedHtml:
-        "The HorizontalPodAutoscaler automatically scales <mark>pods</mark>.",
+      highlightedHtml: "The HorizontalPodAutoscaler automatically scales <mark>pods</mark>.",
     },
     score: 2.1,
     matchReason: "keyword",
@@ -36,20 +35,11 @@ const hits = [
 
 describe("Side panel app", () => {
   it("renders the library search shell", async () => {
-    render(
-      <App listPages={vi.fn().mockResolvedValue([])} runSearch={vi.fn()} />,
-    );
+    render(<App listPages={vi.fn().mockResolvedValue([])} runSearch={vi.fn()} />);
 
-    expect(
-      screen.getByRole("heading", { name: "DevRecall" }),
-    ).toBeInTheDocument();
-    expect(
-      screen.getByRole("searchbox", { name: "Search saved pages" }),
-    ).toBeInTheDocument();
-    expect(screen.getByRole("button", { name: "All" })).toHaveAttribute(
-      "aria-pressed",
-      "true",
-    );
+    expect(screen.getByRole("heading", { name: "DevRecall" })).toBeInTheDocument();
+    expect(screen.getByRole("searchbox", { name: "Search saved pages" })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "All" })).toHaveAttribute("aria-pressed", "true");
     expect(await screen.findByText("No saved pages yet")).toBeInTheDocument();
   });
 
@@ -71,9 +61,7 @@ describe("Side panel app", () => {
     const user = userEvent.setup();
     const runSearch = vi.fn().mockResolvedValue(hits);
 
-    render(
-      <App listPages={vi.fn().mockResolvedValue([])} runSearch={runSearch} />,
-    );
+    render(<App listPages={vi.fn().mockResolvedValue([])} runSearch={runSearch} />);
 
     await user.type(
       screen.getByRole("searchbox", { name: "Search saved pages" }),
@@ -93,17 +81,10 @@ describe("Side panel app", () => {
     const user = userEvent.setup();
     const runSearch = vi.fn().mockResolvedValue([]);
 
-    render(
-      <App listPages={vi.fn().mockResolvedValue([])} runSearch={runSearch} />,
-    );
+    render(<App listPages={vi.fn().mockResolvedValue([])} runSearch={runSearch} />);
 
-    await user.type(
-      screen.getByRole("searchbox", { name: "Search saved pages" }),
-      "nomatch",
-    );
+    await user.type(screen.getByRole("searchbox", { name: "Search saved pages" }), "nomatch");
 
-    expect(
-      await screen.findByText("No matches for your search"),
-    ).toBeInTheDocument();
+    expect(await screen.findByText("No matches for your search")).toBeInTheDocument();
   });
 });
