@@ -200,6 +200,73 @@ describe("worker request handler", () => {
       payload: { page: pendingListItem },
     });
   });
+
+  it("broadcasts page.updated and invalidates on save, then again after processing", async () => {
+    const deps = makeDeps({ apiKey: "sk-test" });
+    deps.captureService.save = vi.fn().mockResolvedValue(pendingPage);
+    deps.captureService.processPage = vi
+      .fn()
+      .mockResolvedValue({ ...pendingPage, status: "ready" });
+
+    await handleRequest({ type: "page.save", payload: { tabId: 7 } }, deps);
+
+    expect(deps.broadcast).toHaveBeenCalledWith({
+      type: "page.updated",
+      payload: { page: pendingListItem },
+    });
+    expect(deps.retrievalService.invalidate).toHaveBeenCalled();
+
+    // The processPage continuation broadcasts a second page.updated.
+    await vi.waitFor(() => {
+      expect(deps.broadcast).toHaveBeenCalledWith({
+        type: "page.updated",
+        payload: { page: { ...pendingListItem, status: "ready" } },
+      });
+    });
+  });
+
+  it("deletes a page, invalidates, and broadcasts removal", async () => {
+    const deps = makeDeps();
+
+    await expect(
+      handleRequest({ type: "page.delete", payload: { id: "page-1" } }, deps),
+    ).resolves.toEqual({ type: "page.deleted", payload: { id: "page-1" } });
+
+    expect(deps.pageRepo.deleteWithChunks).toHaveBeenCalledWith("page-1");
+    expect(deps.retrievalService.invalidate).toHaveBeenCalled();
+    expect(deps.broadcast).toHaveBeenCalledWith({
+      type: "page.removed",
+      payload: { id: "page-1" },
+    });
+  });
+
+  it("starts a reindex and reports the total when a key is set", async () => {
+    const deps = makeDeps({ apiKey: "sk-test" });
+    deps.pageRepo.pageIdsMissingEmbeddings = vi.fn().mockResolvedValue(["a", "b"]);
+
+    await expect(handleRequest({ type: "library.reindex" }, deps)).resolves.toEqual({
+      type: "library.reindexStarted",
+      payload: { total: 2 },
+    });
+
+    await vi.waitFor(() => {
+      expect(deps.captureService.reindexPages).toHaveBeenCalledWith(
+        ["a", "b"],
+        "sk-test",
+        expect.any(Function),
+      );
+    });
+  });
+
+  it("refuses to reindex without an API key", async () => {
+    const deps = makeDeps({ apiKey: null });
+
+    await expect(handleRequest({ type: "library.reindex" }, deps)).resolves.toEqual({
+      type: "error",
+      payload: { message: "No API key set" },
+    });
+    expect(deps.captureService.reindexPages).not.toHaveBeenCalled();
+  });
 });
 
 function makeDeps(
@@ -212,11 +279,16 @@ function makeDeps(
     captureService: {
       save: vi.fn().mockResolvedValue(pendingPage),
       processPage: vi.fn().mockResolvedValue(pendingPage),
+      reindexPages: vi.fn().mockResolvedValue(undefined),
     },
     pageRepo: {
       listPages: vi.fn().mockResolvedValue([]),
-      getStats: vi.fn().mockResolvedValue({ pageCount: 0, totalTextBytes: 0 }),
+      getStats: vi
+        .fn()
+        .mockResolvedValue({ pageCount: 0, totalTextBytes: 0, pagesMissingEmbeddings: 0 }),
       getByUrlHash: vi.fn().mockResolvedValue(undefined),
+      deleteWithChunks: vi.fn().mockResolvedValue(undefined),
+      pageIdsMissingEmbeddings: vi.fn().mockResolvedValue([]),
     },
     apiKeyStore: {
       getApiKey: vi.fn().mockResolvedValue(overrides.apiKey ?? null),
@@ -230,6 +302,8 @@ function makeDeps(
     ),
     retrievalService: {
       search: vi.fn().mockResolvedValue([]),
+      invalidate: vi.fn(),
     },
+    broadcast: vi.fn(),
   };
 }

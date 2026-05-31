@@ -1,11 +1,18 @@
-import type { PageHit } from "../../shared/types";
+import type { PageHit, SearchMatchReason } from "../../shared/types";
 
 type SearchResultCardProps = {
   hit: PageHit;
 };
 
+const BADGE: Record<SearchMatchReason, { label: string; className: string }> = {
+  keyword: { label: "keyword", className: "bg-emerald-100 text-emerald-700" },
+  vector: { label: "matched by meaning", className: "bg-violet-100 text-violet-700" },
+  both: { label: "keyword + meaning", className: "bg-sky-100 text-sky-700" },
+};
+
 export function SearchResultCard({ hit }: SearchResultCardProps) {
   const { page, bestChunk, matchReason } = hit;
+  const badge = BADGE[matchReason];
 
   return (
     <article className="rounded-md border border-slate-200 bg-white px-3 py-3">
@@ -15,8 +22,10 @@ export function SearchResultCard({ hit }: SearchResultCardProps) {
             {page.title}
           </a>
         </h2>
-        <span className="inline-flex shrink-0 items-center rounded-full bg-emerald-100 px-2 py-0.5 text-xs font-medium text-emerald-700">
-          {matchReason}
+        <span
+          className={`inline-flex shrink-0 items-center rounded-full px-2 py-0.5 text-xs font-medium ${badge.className}`}
+        >
+          {badge.label}
         </span>
       </div>
 

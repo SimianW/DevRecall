@@ -22,6 +22,7 @@ export type SearchOptions = {
 
 const DEFAULT_TOP_K = 10;
 const VECTOR_TOP_K = 50;
+const MAX_QUERY_CACHE = 20;
 
 type FusedChunk = {
   chunk: ChunkRecord;
@@ -33,11 +34,20 @@ type FusedChunk = {
 };
 
 export class RetrievalService {
+  private chunkCache: ChunkRecord[] | null = null;
+  private readonly queryCache = new Map<string, PageHit[]>();
+
   constructor(
     private readonly chunks: ChunkSource = new ChunkRepo(),
     private readonly pages: PageSource = new PageRepo(),
     private readonly embedder: Embedder = new OpenAIProvider(),
   ) {}
+
+  /** Clears the in-memory chunk array and the query cache. Called on any page change. */
+  invalidate(): void {
+    this.chunkCache = null;
+    this.queryCache.clear();
+  }
 
   async search(query: string, options: SearchOptions = {}): Promise<PageHit[]> {
     const topK = options.topK ?? DEFAULT_TOP_K;
@@ -48,7 +58,41 @@ export class RetrievalService {
       return [];
     }
 
-    const allChunks = await this.chunks.allChunks();
+    const cacheKey = `${apiKey ? "k" : "n"}|${topK}|${trimmed.toLowerCase()}`;
+    const cached = this.queryCache.get(cacheKey);
+    if (cached) {
+      // LRU touch: re-insert to mark most-recently-used.
+      this.queryCache.delete(cacheKey);
+      this.queryCache.set(cacheKey, cached);
+      return cached;
+    }
+
+    const results = await this.computeSearch(trimmed, topK, apiKey);
+
+    this.queryCache.set(cacheKey, results);
+    if (this.queryCache.size > MAX_QUERY_CACHE) {
+      const oldest = this.queryCache.keys().next().value;
+      if (oldest !== undefined) {
+        this.queryCache.delete(oldest);
+      }
+    }
+
+    return results;
+  }
+
+  private async loadChunks(): Promise<ChunkRecord[]> {
+    if (this.chunkCache === null) {
+      this.chunkCache = await this.chunks.allChunks();
+    }
+    return this.chunkCache;
+  }
+
+  private async computeSearch(
+    trimmed: string,
+    topK: number,
+    apiKey: string | null,
+  ): Promise<PageHit[]> {
+    const allChunks = await this.loadChunks();
 
     if (allChunks.length === 0) {
       return [];
@@ -130,14 +174,9 @@ export class RetrievalService {
         bestChunk: {
           text: entry.chunk.text,
           ordinal: entry.chunk.ordinal,
-          // Vector-only hits carry no matched terms → no <mark>; the badge speaks.
           highlightedHtml: highlightTerms(entry.chunk.text, entry.matchedTerms),
         },
-        scores: {
-          keyword: entry.keyword,
-          vector: entry.vector,
-          fused: entry.fused,
-        },
+        scores: { keyword: entry.keyword, vector: entry.vector, fused: entry.fused },
         matchReason: entry.matchReason,
       });
     }

@@ -209,6 +209,43 @@ describe("CaptureService", () => {
     expect(result.status).toBe("failed");
   });
 
+  it("reindexes pages sequentially and reports progress", async () => {
+    const processed: string[] = [];
+    const reader: PageReader = {
+      getById: vi.fn().mockResolvedValue(pendingPage),
+      updatePage: vi.fn().mockResolvedValue(undefined),
+    };
+    const tagger: PageTagger = { summarizeAndTag: vi.fn().mockResolvedValue(taggingResult) };
+    const chunkWriter = mockChunkWriter();
+    const embedder = mockEmbedder();
+    const service = new CaptureService(
+      { upsertCapturedPage: vi.fn() },
+      { extract: vi.fn() },
+      reader,
+      tagger,
+      chunkWriter,
+      embedder,
+    );
+    // Spy processPage to record order without re-tagging twice per id.
+    const original = service.processPage.bind(service);
+    vi.spyOn(service, "processPage").mockImplementation(async (id, key) => {
+      processed.push(id);
+      return original(id, key);
+    });
+
+    const progress: Array<[number, number]> = [];
+    await service.reindexPages(["a", "b", "c"], "sk-test", (done, total) =>
+      progress.push([done, total]),
+    );
+
+    expect(processed).toEqual(["a", "b", "c"]);
+    expect(progress).toEqual([
+      [1, 3],
+      [2, 3],
+      [3, 3],
+    ]);
+  });
+
   it("embeds chunks and marks the page ready end-to-end (integration)", async () => {
     const database = new DevRecallDatabase(`devrecall-test-${crypto.randomUUID()}`);
     await database.delete();

@@ -82,6 +82,50 @@ function makeService(
   return new RetrievalService(chunkSource, pageSource, embedder);
 }
 
+describe("RetrievalService caching", () => {
+  function countingService() {
+    const allChunks = vi.fn().mockResolvedValue(keywordChunks);
+    const chunkSource: ChunkSource = { allChunks };
+    const pageSource: PageSource = {
+      getById: vi.fn().mockImplementation((id: string) => pages.get(id)),
+    };
+    return { service: new RetrievalService(chunkSource, pageSource, fakeEmbedder({})), allChunks };
+  }
+
+  it("loads chunks once across distinct queries, reloads after invalidate", async () => {
+    const { service, allChunks } = countingService();
+
+    await service.search("autoscaler");
+    await service.search("hydration");
+    expect(allChunks).toHaveBeenCalledTimes(1);
+
+    service.invalidate();
+    await service.search("autoscaler");
+    expect(allChunks).toHaveBeenCalledTimes(2);
+  });
+
+  it("returns the cached result object for a repeated query", async () => {
+    const { service, allChunks } = countingService();
+
+    const first = await service.search("autoscaler pods");
+    const second = await service.search("autoscaler pods");
+
+    expect(second).toBe(first); // same reference from the query cache
+    expect(allChunks).toHaveBeenCalledTimes(1);
+  });
+
+  it("drops cached query results on invalidate", async () => {
+    const { service, allChunks } = countingService();
+
+    const first = await service.search("autoscaler pods");
+    service.invalidate();
+    const second = await service.search("autoscaler pods");
+
+    expect(second).not.toBe(first);
+    expect(allChunks).toHaveBeenCalledTimes(2);
+  });
+});
+
 describe("RetrievalService", () => {
   it("returns an empty array for a blank query", async () => {
     await expect(makeService().search("   ")).resolves.toEqual([]);
