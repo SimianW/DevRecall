@@ -23,9 +23,10 @@ export type SearchOptions = {
 const DEFAULT_TOP_K = 10;
 const VECTOR_TOP_K = 50;
 const MAX_QUERY_CACHE = 20;
-// Minimum cosine similarity to include a vector hit; prevents gibberish queries
-// from surfacing weakly-related results via the vector arm alone.
-const MIN_VECTOR_SCORE = 0.5;
+// Minimum cosine similarity to include a vector hit. 0.4 blocks true gibberish
+// (orthogonal vectors → similarity 0) while allowing morphological variants
+// like "reporting" → "report" that BM25 misses without stemming.
+const MIN_VECTOR_SCORE = 0.4;
 
 type FusedChunk = {
   chunk: ChunkRecord;
