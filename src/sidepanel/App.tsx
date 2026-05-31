@@ -1,13 +1,14 @@
 import { useEffect, useState } from "react";
 
 import type { DevRecallRequest, DevRecallResponse } from "../shared/messages";
-import type { PageListItem } from "../shared/types";
-import { PageCard, SurfaceShell } from "../ui/components";
+import type { PageHit, PageListItem } from "../shared/types";
+import { PageCard, SearchResultCard, SurfaceShell } from "../ui/components";
 
 const filters = ["All", "Docs", "SO", "GH"] as const;
 
 type AppProps = {
   listPages?: () => Promise<PageListItem[]>;
+  runSearch?: (query: string) => Promise<PageHit[]>;
 };
 
 async function defaultListPages(): Promise<PageListItem[]> {
@@ -32,9 +33,38 @@ async function defaultListPages(): Promise<PageListItem[]> {
   }
 }
 
-export function App({ listPages = defaultListPages }: AppProps) {
+async function defaultRunSearch(query: string): Promise<PageHit[]> {
+  if (typeof chrome === "undefined" || !chrome.runtime?.sendMessage) {
+    return [];
+  }
+
+  try {
+    const request: DevRecallRequest = {
+      type: "search.run",
+      payload: { query },
+    };
+    const response = (await chrome.runtime.sendMessage(request)) as DevRecallResponse;
+
+    if (response.type !== "search.results") {
+      return [];
+    }
+
+    return response.payload.hits ?? [];
+  } catch {
+    return [];
+  }
+}
+
+export function App({
+  listPages = defaultListPages,
+  runSearch = defaultRunSearch,
+}: AppProps) {
   const [pages, setPages] = useState<PageListItem[]>([]);
   const [loading, setLoading] = useState(true);
+  const [query, setQuery] = useState("");
+  const [submittedQuery, setSubmittedQuery] = useState("");
+  const [hits, setHits] = useState<PageHit[]>([]);
+  const [searching, setSearching] = useState(false);
 
   useEffect(() => {
     let cancelled = false;
@@ -63,6 +93,36 @@ export function App({ listPages = defaultListPages }: AppProps) {
     };
   }, [listPages]);
 
+  useEffect(() => {
+    const handle = setTimeout(() => setSubmittedQuery(query.trim()), 200);
+
+    return () => clearTimeout(handle);
+  }, [query]);
+
+  useEffect(() => {
+    if (submittedQuery.length === 0) {
+      setHits([]);
+      setSearching(false);
+      return;
+    }
+
+    let cancelled = false;
+    setSearching(true);
+
+    void runSearch(submittedQuery).then((nextHits) => {
+      if (!cancelled) {
+        setHits(nextHits);
+        setSearching(false);
+      }
+    });
+
+    return () => {
+      cancelled = true;
+    };
+  }, [submittedQuery, runSearch]);
+
+  const isSearching = submittedQuery.length > 0;
+
   return (
     <SurfaceShell
       title="DevRecall"
@@ -82,6 +142,8 @@ export function App({ listPages = defaultListPages }: AppProps) {
           type="search"
           aria-label="Search saved pages"
           placeholder="Search saved pages"
+          value={query}
+          onChange={(event) => setQuery(event.target.value)}
           className="w-full rounded-md border border-slate-300 bg-white px-3 py-2 text-sm outline-none focus:border-accent"
         />
 
@@ -98,7 +160,26 @@ export function App({ listPages = defaultListPages }: AppProps) {
           ))}
         </div>
 
-        {loading ? (
+        {isSearching ? (
+          searching ? (
+            <p className="text-sm text-slate-500">Searching...</p>
+          ) : hits.length === 0 ? (
+            <section className="rounded-md border border-dashed border-slate-300 bg-white px-4 py-8 text-center">
+              <h2 className="text-sm font-semibold text-slate-900">
+                No matches for your search
+              </h2>
+              <p className="mt-2 text-sm text-slate-500">
+                Try different keywords.
+              </p>
+            </section>
+          ) : (
+            <div className="flex flex-col gap-3">
+              {hits.map((hit) => (
+                <SearchResultCard key={hit.page.id} hit={hit} />
+              ))}
+            </div>
+          )
+        ) : loading ? (
           <p className="text-sm text-slate-500">Loading library...</p>
         ) : pages.length === 0 ? (
           <section className="rounded-md border border-dashed border-slate-300 bg-white px-4 py-8 text-center">
