@@ -71,3 +71,24 @@ export type TaggingResult = {
   technologies: string[];
   intent: Intent;
 };
+
+export type ChunkRecord = {
+  id: string; // ULID
+  pageId: string; // FK → PageRecord.id
+  ordinal: number; // 0-based position within the page
+  text: string; // simple word-window chunk; re-chunked in M5
+  schemaVersion: 1;
+};
+
+export type SearchMatchReason = "keyword"; // M5 adds "vector" | "both"
+
+export type PageHit = {
+  page: PageListItem;
+  bestChunk: {
+    text: string;
+    ordinal: number;
+    highlightedHtml: string; // matched terms wrapped in <mark>, HTML-escaped
+  };
+  score: number;
+  matchReason: SearchMatchReason;
+};
