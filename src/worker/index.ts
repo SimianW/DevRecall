@@ -4,13 +4,15 @@ import {
   type DevRecallRequest,
   type DevRecallResponse,
 } from "../shared/messages";
-import type { PageListItem, PageRecord } from "../shared/types";
+import type { PageHit, PageListItem, PageRecord } from "../shared/types";
 import { normalizeUrl } from "../lib/urlNormalize";
 import {
   testOpenAIConnection,
 } from "./llm/OpenAIProvider";
+import { ChunkRepo } from "./repository/ChunkRepo";
 import { PageRepo, toPageListItem } from "./repository/PageRepo";
 import { CaptureService } from "./services/CaptureService";
+import { RetrievalService } from "./services/RetrievalService";
 import { ChromeApiKeyStore, type ApiKeyStore } from "./settings/ApiKeyStore";
 
 type CapturePort = {
@@ -24,6 +26,10 @@ type PageListPort = {
   getByUrlHash(urlHash: string): Promise<PageRecord | undefined>;
 };
 
+type SearchPort = {
+  search(query: string, options?: { topK?: number }): Promise<PageHit[]>;
+};
+
 type HandlerDeps = {
   captureService: CapturePort;
   pageRepo: PageListPort;
@@ -31,14 +37,17 @@ type HandlerDeps = {
   testConnection: (
     apiKey: string,
   ) => Promise<{ success: boolean; message: string }>;
+  retrievalService: SearchPort;
 };
 
 const pageRepo = new PageRepo();
+const chunkRepo = new ChunkRepo();
 const defaultDeps: HandlerDeps = {
-  captureService: new CaptureService(pageRepo, undefined, pageRepo),
+  captureService: new CaptureService(pageRepo, undefined, pageRepo, undefined, chunkRepo),
   pageRepo,
   apiKeyStore: new ChromeApiKeyStore(),
   testConnection: testOpenAIConnection,
+  retrievalService: new RetrievalService(chunkRepo, pageRepo),
 };
 
 export async function handleRequest(
@@ -147,6 +156,16 @@ export async function handleRequest(
         },
       };
     }
+
+    case "search.run":
+      return {
+        type: "search.results",
+        payload: {
+          hits: await deps.retrievalService.search(request.payload.query, {
+            topK: request.payload.topK,
+          }),
+        },
+      };
 
     default:
       throw new Error(`Unhandled request type: ${(request as { type: string }).type}`);

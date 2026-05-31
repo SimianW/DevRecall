@@ -2,7 +2,7 @@ import { describe, expect, it, vi } from "vitest";
 
 import { normalizeUrl } from "../lib/urlNormalize";
 import { APP_NAME, APP_VERSION } from "../shared/messages";
-import type { PageListItem, PageRecord } from "../shared/types";
+import type { PageHit, PageListItem, PageRecord } from "../shared/types";
 import { handleMessage, handleRequest } from "./index";
 
 const pendingPage = {
@@ -37,6 +37,17 @@ const pendingListItem = {
   savedAt: pendingPage.savedAt,
   status: pendingPage.status,
 } satisfies PageListItem;
+
+const searchHit = {
+  page: pendingListItem,
+  bestChunk: {
+    text: "IndexedDB stores structured data.",
+    ordinal: 0,
+    highlightedHtml: "IndexedDB stores <mark>structured</mark> data.",
+  },
+  score: 1.5,
+  matchReason: "keyword",
+} satisfies PageHit;
 
 describe("worker request handler", () => {
   it("responds to a ping request", async () => {
@@ -126,6 +137,24 @@ describe("worker request handler", () => {
       payload: { pages: [pendingListItem] },
     });
     expect(deps.pageRepo.listPages).toHaveBeenCalledWith({ limit: 25 });
+  });
+
+  it("runs a keyword search through RetrievalService", async () => {
+    const deps = makeDeps();
+    deps.retrievalService.search = vi.fn().mockResolvedValue([searchHit]);
+
+    await expect(
+      handleRequest(
+        { type: "search.run", payload: { query: "structured data" } },
+        deps,
+      ),
+    ).resolves.toEqual({
+      type: "search.results",
+      payload: { hits: [searchHit] },
+    });
+    expect(deps.retrievalService.search).toHaveBeenCalledWith("structured data", {
+      topK: undefined,
+    });
   });
 
   it("returns saved:false when the URL is unknown", async () => {
@@ -234,5 +263,8 @@ function makeDeps(
           message: "Connection successful",
         },
       ),
+    retrievalService: {
+      search: vi.fn().mockResolvedValue([]),
+    },
   };
 }
