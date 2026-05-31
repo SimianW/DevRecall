@@ -6,7 +6,7 @@ import {
 } from "../shared/messages";
 import type { PageHit, PageListItem, PageRecord } from "../shared/types";
 import { normalizeUrl } from "../lib/urlNormalize";
-import { testOpenAIConnection } from "./llm/OpenAIProvider";
+import { OpenAIProvider, testOpenAIConnection } from "./llm/OpenAIProvider";
 import { ChunkRepo } from "./repository/ChunkRepo";
 import { PageRepo, toPageListItem } from "./repository/PageRepo";
 import { CaptureService } from "./services/CaptureService";
@@ -38,8 +38,9 @@ type HandlerDeps = {
 
 const pageRepo = new PageRepo();
 const chunkRepo = new ChunkRepo();
+const openai = new OpenAIProvider();
 const defaultDeps: HandlerDeps = {
-  captureService: new CaptureService(pageRepo, undefined, pageRepo, undefined, chunkRepo),
+  captureService: new CaptureService(pageRepo, undefined, pageRepo, openai, chunkRepo, openai),
   pageRepo,
   apiKeyStore: new ChromeApiKeyStore(),
   testConnection: testOpenAIConnection,
