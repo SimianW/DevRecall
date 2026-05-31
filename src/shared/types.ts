@@ -71,7 +71,10 @@ export type ChunkRecord = {
   id: string; // ULID
   pageId: string; // FK → PageRecord.id
   ordinal: number; // 0-based position within the page
-  text: string; // simple word-window chunk; re-chunked in M5
+  text: string; // word-window until processPage re-chunks it to token-based
+  embedding?: Float32Array; // 1536 dims, L2-normalized at insert; absent until embedded
+  embeddingModel?: string; // e.g. "openai:text-embedding-3-small"; absent until embedded
+  tokenCount?: number; // tiktoken count; metadata only, not used by retrieval scoring
   schemaVersion: 1;
 };
 
