@@ -38,6 +38,7 @@ export type VectorHit = {
   score: number;
 };
 
+// Assumes query and all embeddings are pre-normalized; cosine similarity == dot product.
 export function cosineTopK<T extends EmbeddedItem>(
   query: Float32Array,
   items: readonly T[],
