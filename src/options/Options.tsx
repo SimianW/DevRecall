@@ -13,6 +13,8 @@ type OptionsProps = {
   loadStorageStats?: () => Promise<StorageStats>;
   startReindex?: () => Promise<{ total: number }>;
   subscribe?: (handler: (message: WorkerBroadcast) => void) => () => void;
+  exportData?: () => Promise<string>;
+  deleteAll?: () => Promise<void>;
 };
 
 const defaultLoadStatus = async (): Promise<StatusResult> => {
@@ -52,6 +54,17 @@ const defaultSubscribe = (handler: (message: WorkerBroadcast) => void): (() => v
   return () => chrome.runtime.onMessage.removeListener(listener);
 };
 
+const defaultExportData = async (): Promise<string> => {
+  const request: DevRecallRequest = { type: "data.export" };
+  const response = (await chrome.runtime.sendMessage(request)) as DevRecallResponse;
+  return response.type === "data.exported" ? response.payload.json : "{}";
+};
+
+const defaultDeleteAll = async (): Promise<void> => {
+  const request: DevRecallRequest = { type: "data.deleteAll" };
+  await chrome.runtime.sendMessage(request);
+};
+
 export function Options({
   loadStatus = defaultLoadStatus,
   saveApiKey = defaultSaveApiKey,
@@ -59,6 +72,8 @@ export function Options({
   loadStorageStats = defaultLoadStorageStats,
   startReindex = defaultStartReindex,
   subscribe = defaultSubscribe,
+  exportData = defaultExportData,
+  deleteAll = defaultDeleteAll,
 }: OptionsProps) {
   const [apiKey, setApiKey] = useState("");
   const [keySaved, setKeySaved] = useState(false);
@@ -67,6 +82,9 @@ export function Options({
   const [storageStats, setStorageStats] = useState<StorageStats | null>(null);
   const [reindexing, setReindexing] = useState(false);
   const [progress, setProgress] = useState<{ done: number; total: number } | null>(null);
+  const [showDeleteConfirm, setShowDeleteConfirm] = useState(false);
+  const [exportError, setExportError] = useState<string | null>(null);
+  const [deleteError, setDeleteError] = useState<string | null>(null);
 
   useEffect(() => {
     loadStatus().then((status) => {
@@ -128,6 +146,34 @@ export function Options({
     }
   };
 
+  const handleExportData = async () => {
+    setExportError(null);
+    try {
+      const json = await exportData();
+      const blob = new Blob([json], { type: "application/json" });
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement("a");
+      a.href = url;
+      a.download = "devrecall-export.json";
+      a.click();
+      URL.revokeObjectURL(url);
+    } catch (err) {
+      setExportError(err instanceof Error ? err.message : "Export failed");
+    }
+  };
+
+  const handleDeleteAll = async () => {
+    setDeleteError(null);
+    try {
+      await deleteAll();
+      setShowDeleteConfirm(false);
+      setStorageStats(null);
+      loadStorageStats().then(setStorageStats).catch(() => {});
+    } catch (err) {
+      setDeleteError(err instanceof Error ? err.message : "Delete failed");
+    }
+  };
+
   return (
     <SurfaceShell title="DevRecall Settings">
       <form
@@ -137,7 +183,7 @@ export function Options({
           handleSave();
         }}
       >
-        <label className="flex flex-col gap-2 text-sm font-medium text-slate-800">
+        <label className="flex flex-col gap-2 text-sm font-medium text-foreground">
           OpenAI API key
           <div className="flex gap-2">
             <input
@@ -146,13 +192,13 @@ export function Options({
               value={apiKey}
               onChange={(e) => setApiKey(e.target.value)}
               placeholder={keySaved ? "API key is set" : "sk-..."}
-              className="flex-1 rounded-md border border-slate-300 bg-white px-3 py-2 text-sm outline-none focus:border-accent"
+              className="flex-1 rounded-md border border-default bg-surface-raised px-3 py-2 text-sm text-foreground outline-none placeholder:text-foreground/45 focus:border-accent focus:ring-2 focus:ring-accent/20"
             />
             <button
               type="button"
               onClick={handleSave}
               disabled={!apiKey.trim()}
-              className="rounded-md bg-accent px-4 py-2 text-sm font-medium text-white disabled:bg-slate-300 disabled:text-slate-500"
+              className="rounded-md bg-accent px-4 py-2 text-sm font-medium text-white transition-colors hover:bg-accent/90 disabled:bg-foreground/15 disabled:text-foreground/50 disabled:hover:bg-foreground/15"
             >
               Save
             </button>
@@ -164,45 +210,47 @@ export function Options({
             type="button"
             disabled={!keySaved || testing}
             onClick={handleTestConnection}
-            className="w-fit rounded-md bg-slate-200 px-3 py-2 text-sm font-medium text-slate-700 disabled:bg-slate-100 disabled:text-slate-400"
+            className="w-fit rounded-md bg-foreground/5 px-3 py-2 text-sm font-medium text-foreground/80 transition-colors hover:bg-foreground/10 disabled:bg-foreground/5 disabled:text-foreground/40 disabled:hover:bg-foreground/5"
           >
             {testing ? "Testing..." : "Test connection"}
           </button>
           {testResult && (
-            <p className={`text-sm ${testResult.success ? "text-green-600" : "text-red-600"}`}>
+            <p
+              className={`text-sm ${testResult.success ? "text-emerald-700 dark:text-emerald-300" : "text-red-700 dark:text-red-300"}`}
+            >
               {testResult.message}
             </p>
           )}
         </div>
 
-        <label className="flex items-center gap-3 text-sm font-medium text-slate-800">
+        <label className="flex items-center gap-3 text-sm font-medium text-foreground">
           <input type="checkbox" disabled className="h-4 w-4 accent-accent" />
           Enable auto-save
         </label>
 
-        <section className="rounded-md border border-slate-200 bg-white p-4">
-          <h2 className="text-sm font-semibold text-slate-900">Keyboard shortcut</h2>
-          <p className="mt-2 text-sm text-slate-500">
-            <kbd className="rounded border border-slate-200 bg-slate-100 px-1 py-0.5 font-mono text-xs">
+        <section className="rounded-md border border-default bg-surface-raised p-4">
+          <h2 className="text-sm font-semibold text-foreground">Keyboard shortcut</h2>
+          <p className="mt-2 text-sm text-foreground/65">
+            <kbd className="rounded border border-default bg-foreground/5 px-1 py-0.5 font-mono text-xs text-foreground/80">
               ⌘ Shift K
             </kbd>{" "}
             /{" "}
-            <kbd className="rounded border border-slate-200 bg-slate-100 px-1 py-0.5 font-mono text-xs">
+            <kbd className="rounded border border-default bg-foreground/5 px-1 py-0.5 font-mono text-xs text-foreground/80">
               Ctrl Shift K
             </kbd>{" "}
             opens the side panel. To customize, open{" "}
-            <span className="font-medium text-slate-700">chrome://extensions/shortcuts</span>{" "}
+            <span className="font-medium text-foreground/80">chrome://extensions/shortcuts</span>{" "}
             in Chrome and find DevRecall.
           </p>
-          <p className="mt-1 text-xs text-slate-400">
+          <p className="mt-1 text-xs text-foreground/50">
             Note: the shortcut opens the panel but cannot toggle it closed — this is a Chrome
             limitation.
           </p>
         </section>
 
-        <section className="rounded-md border border-slate-200 bg-white p-4">
-          <h2 className="text-sm font-semibold text-slate-900">Storage</h2>
-          <p className="mt-2 text-sm text-slate-500">
+        <section className="rounded-md border border-default bg-surface-raised p-4">
+          <h2 className="text-sm font-semibold text-foreground">Storage</h2>
+          <p className="mt-2 text-sm text-foreground/65">
             {storageStats == null
               ? "Loading..."
               : `${storageStats.pageCount} ${storageStats.pageCount === 1 ? "page" : "pages"}, ${(storageStats.totalTextBytes / 1_048_576).toFixed(2)} MB`}
@@ -214,7 +262,7 @@ export function Options({
             disabled={
               !keySaved || reindexing || (storageStats?.pagesMissingEmbeddings ?? 0) === 0
             }
-            className="mt-3 rounded-md bg-slate-200 px-3 py-2 text-sm font-medium text-slate-700 disabled:bg-slate-100 disabled:text-slate-400"
+            className="mt-3 rounded-md bg-foreground/5 px-3 py-2 text-sm font-medium text-foreground/80 transition-colors hover:bg-foreground/10 disabled:bg-foreground/5 disabled:text-foreground/40 disabled:hover:bg-foreground/5"
           >
             {reindexing && progress
               ? `Re-indexing ${progress.done} / ${progress.total}...`
@@ -225,7 +273,59 @@ export function Options({
                 }`}
           </button>
           {!keySaved && (
-            <p className="mt-1 text-xs text-amber-600">Set an API key to re-index.</p>
+            <p className="mt-1 text-xs text-amber-700 dark:text-amber-300">
+              Set an API key to re-index.
+            </p>
+          )}
+        </section>
+
+        <section className="rounded-md border border-default bg-surface-raised p-4">
+          <h2 className="text-sm font-semibold text-foreground">Data Management</h2>
+          <div className="mt-3 flex flex-wrap gap-3">
+            <button
+              type="button"
+              onClick={handleExportData}
+              className="rounded-md bg-foreground/5 px-3 py-2 text-sm font-medium text-foreground/80 transition-colors hover:bg-foreground/10"
+            >
+              Export Data
+            </button>
+            <button
+              type="button"
+              onClick={() => setShowDeleteConfirm(true)}
+              className="rounded-md bg-red-500/10 px-3 py-2 text-sm font-medium text-red-700 transition-colors hover:bg-red-500/15 dark:text-red-300"
+            >
+              Delete All Data
+            </button>
+          </div>
+          {exportError && (
+            <p className="mt-2 text-sm text-red-700 dark:text-red-300">{exportError}</p>
+          )}
+
+          {showDeleteConfirm && (
+            <div className="mt-4 rounded-md border border-red-500/25 bg-red-500/10 p-4">
+              <p className="text-sm text-red-800 dark:text-red-200">
+                Are you sure you want to delete all saved pages? This cannot be undone.
+              </p>
+              <div className="mt-3 flex gap-3">
+                <button
+                  type="button"
+                  onClick={handleDeleteAll}
+                  className="rounded-md bg-red-600 px-3 py-2 text-sm font-medium text-white transition-colors hover:bg-red-700"
+                >
+                  Confirm
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setShowDeleteConfirm(false)}
+                  className="rounded-md bg-foreground/5 px-3 py-2 text-sm font-medium text-foreground/80 transition-colors hover:bg-foreground/10"
+                >
+                  Cancel
+                </button>
+              </div>
+              {deleteError && (
+                <p className="mt-2 text-sm text-red-700 dark:text-red-300">{deleteError}</p>
+              )}
+            </div>
           )}
         </section>
       </form>

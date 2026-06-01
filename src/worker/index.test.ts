@@ -240,6 +240,97 @@ describe("worker request handler", () => {
     });
   });
 
+  it("retries a failed page by id, rebroadcasting pending then processed state", async () => {
+    const deps = makeDeps({ apiKey: "sk-test" });
+    let resolveProcessed: ((page: PageRecord) => void) | undefined;
+    const processedPromise = new Promise<PageRecord>((resolve) => {
+      resolveProcessed = resolve;
+    });
+    deps.pageRepo.getById = vi
+      .fn()
+      .mockResolvedValue({ ...pendingPage, status: "failed", errorReason: "boom" });
+    deps.pageRepo.updatePage = vi.fn().mockResolvedValue(undefined);
+    deps.captureService.processPage = vi.fn().mockReturnValue(processedPromise);
+
+    await expect(
+      handleRequest({ type: "page.retry", payload: { id: pendingPage.id } }, deps),
+    ).resolves.toEqual({
+      type: "page.retryStarted",
+      payload: { page: { ...pendingListItem, status: "pending" } },
+    });
+
+    expect(deps.pageRepo.updatePage).toHaveBeenCalledWith(pendingPage.id, {
+      status: "pending",
+      errorReason: undefined,
+    });
+    expect(deps.retrievalService.invalidate).toHaveBeenCalledTimes(1);
+    expect(deps.broadcast).toHaveBeenCalledWith({
+      type: "page.updated",
+      payload: { page: { ...pendingListItem, status: "pending" } },
+    });
+
+    resolveProcessed?.({ ...pendingPage, status: "ready" });
+
+    await vi.waitFor(() => {
+      expect(deps.captureService.processPage).toHaveBeenCalledWith(pendingPage.id, "sk-test");
+      expect(deps.retrievalService.invalidate).toHaveBeenCalledTimes(2);
+      expect(deps.broadcast).toHaveBeenCalledWith({
+        type: "page.updated",
+        payload: { page: { ...pendingListItem, status: "ready" } },
+      });
+    });
+  });
+
+  it("rejects retry when the page is not failed", async () => {
+    const deps = makeDeps({ apiKey: "sk-test" });
+    deps.pageRepo.getById = vi.fn().mockResolvedValue({ ...pendingPage, status: "ready" });
+
+    await expect(
+      handleRequest({ type: "page.retry", payload: { id: pendingPage.id } }, deps),
+    ).resolves.toEqual({
+      type: "error",
+      payload: { message: `Page ${pendingPage.id} is not failed` },
+    });
+
+    expect(deps.pageRepo.updatePage).not.toHaveBeenCalled();
+    expect(deps.captureService.processPage).not.toHaveBeenCalled();
+    expect(deps.retrievalService.invalidate).not.toHaveBeenCalled();
+    expect(deps.broadcast).not.toHaveBeenCalled();
+  });
+
+  it("returns typed error response when retrying a page id that does not exist", async () => {
+    const deps = makeDeps({ apiKey: "sk-test" });
+    // getById is already mocked to return undefined in makeDeps; make that explicit
+    deps.pageRepo.getById = vi.fn().mockResolvedValue(undefined);
+
+    await expect(
+      handleRequest({ type: "page.retry", payload: { id: "nonexistent-id" } }, deps),
+    ).resolves.toEqual({
+      type: "error",
+      payload: { message: "Page nonexistent-id not found" },
+    });
+
+    expect(deps.pageRepo.updatePage).not.toHaveBeenCalled();
+    expect(deps.captureService.processPage).not.toHaveBeenCalled();
+  });
+
+  it("returns typed error response when retrying with no API key configured", async () => {
+    const deps = makeDeps({ apiKey: null });
+    deps.pageRepo.getById = vi
+      .fn()
+      .mockResolvedValue({ ...pendingPage, status: "failed", errorReason: "timeout" });
+
+    await expect(
+      handleRequest({ type: "page.retry", payload: { id: pendingPage.id } }, deps),
+    ).resolves.toEqual({
+      type: "error",
+      payload: { message: "No API key set" },
+    });
+
+    expect(deps.pageRepo.updatePage).not.toHaveBeenCalled();
+    expect(deps.captureService.processPage).not.toHaveBeenCalled();
+  });
+
   it("starts a reindex and reports the total when a key is set", async () => {
     const deps = makeDeps({ apiKey: "sk-test" });
     deps.pageRepo.pageIdsMissingEmbeddings = vi.fn().mockResolvedValue(["a", "b"]);
@@ -267,6 +358,34 @@ describe("worker request handler", () => {
     });
     expect(deps.captureService.reindexPages).not.toHaveBeenCalled();
   });
+
+  it("exports all pages as JSON with schemaVersion at the top level", async () => {
+    const deps = makeDeps();
+    deps.pageRepo.exportAll = vi.fn().mockResolvedValue([pendingPage]);
+
+    const result = await handleRequest({ type: "data.export" }, deps);
+
+    expect(result.type).toBe("data.exported");
+    if (result.type === "data.exported") {
+      const parsed = JSON.parse(result.payload.json) as { schemaVersion: number; pages: unknown[] };
+      expect(parsed.schemaVersion).toBe(1);
+      expect(parsed.pages).toHaveLength(1);
+    }
+    expect(deps.pageRepo.exportAll).toHaveBeenCalledOnce();
+  });
+
+  it("deletes all pages and chunks transactionally", async () => {
+    const deps = makeDeps();
+    deps.pageRepo.deleteAll = vi.fn().mockResolvedValue(undefined);
+
+    await expect(handleRequest({ type: "data.deleteAll" }, deps)).resolves.toEqual({
+      type: "data.deletedAll",
+    });
+
+    expect(deps.pageRepo.deleteAll).toHaveBeenCalledOnce();
+    expect(deps.retrievalService.invalidate).toHaveBeenCalled();
+    expect(deps.broadcast).toHaveBeenCalledWith({ type: "library.cleared" });
+  });
 });
 
 function makeDeps(
@@ -286,9 +405,13 @@ function makeDeps(
       getStats: vi
         .fn()
         .mockResolvedValue({ pageCount: 0, totalTextBytes: 0, pagesMissingEmbeddings: 0 }),
+      getById: vi.fn().mockResolvedValue(undefined),
       getByUrlHash: vi.fn().mockResolvedValue(undefined),
+      updatePage: vi.fn().mockResolvedValue(undefined),
       deleteWithChunks: vi.fn().mockResolvedValue(undefined),
       pageIdsMissingEmbeddings: vi.fn().mockResolvedValue([]),
+      exportAll: vi.fn().mockResolvedValue([]),
+      deleteAll: vi.fn().mockResolvedValue(undefined),
     },
     apiKeyStore: {
       getApiKey: vi.fn().mockResolvedValue(overrides.apiKey ?? null),

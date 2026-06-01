@@ -37,9 +37,13 @@ type PageListPort = {
     totalTextBytes: number;
     pagesMissingEmbeddings: number;
   }>;
+  getById(id: string): Promise<PageRecord | undefined>;
   getByUrlHash(urlHash: string): Promise<PageRecord | undefined>;
+  updatePage(id: string, data: Partial<Omit<PageRecord, "id" | "schemaVersion">>): Promise<void>;
   deleteWithChunks(id: string): Promise<void>;
   pageIdsMissingEmbeddings(): Promise<string[]>;
+  exportAll(): Promise<PageRecord[]>;
+  deleteAll(): Promise<void>;
 };
 
 type SearchPort = {
@@ -248,6 +252,59 @@ export async function handleRequest(
       deps.broadcast({ type: "page.removed", payload: { id: request.payload.id } });
 
       return { type: "page.deleted", payload: { id: request.payload.id } };
+    }
+
+    case "page.retry": {
+      const page = await deps.pageRepo.getById(request.payload.id);
+      if (!page) {
+        return { type: "error", payload: { message: `Page ${request.payload.id} not found` } };
+      }
+      if (page.status !== "failed") {
+        return { type: "error", payload: { message: `Page ${request.payload.id} is not failed` } };
+      }
+
+      const apiKey = await deps.apiKeyStore.getApiKey();
+      if (!apiKey) {
+        return { type: "error", payload: { message: "No API key set" } };
+      }
+
+      await deps.pageRepo.updatePage(page.id, {
+        status: "pending",
+        errorReason: undefined,
+      });
+
+      const pendingPage: PageRecord = { ...page, status: "pending", errorReason: undefined };
+      const listItem = toPageListItem(pendingPage);
+      deps.retrievalService.invalidate();
+      deps.broadcast({ type: "page.updated", payload: { page: listItem } });
+
+      void deps.captureService
+        .processPage(page.id, apiKey)
+        .then((processed) => {
+          deps.retrievalService.invalidate();
+          deps.broadcast({
+            type: "page.updated",
+            payload: { page: toPageListItem(processed) },
+          });
+        })
+        .catch((error) => {
+          console.error("[DevRecall] retry processing error:", error);
+        });
+
+      return { type: "page.retryStarted", payload: { page: listItem } };
+    }
+
+    case "data.export": {
+      const pages = await deps.pageRepo.exportAll();
+      const json = JSON.stringify({ schemaVersion: 1, pages }, null, 2);
+      return { type: "data.exported", payload: { json } };
+    }
+
+    case "data.deleteAll": {
+      await deps.pageRepo.deleteAll();
+      deps.retrievalService.invalidate();
+      deps.broadcast({ type: "library.cleared" });
+      return { type: "data.deletedAll" };
     }
 
     case "library.reindex": {

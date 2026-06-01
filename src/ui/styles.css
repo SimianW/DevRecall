@@ -3,7 +3,11 @@
 @tailwind utilities;
 
 :root {
-  color-scheme: light;
+  color-scheme: light dark;
+  --color-foreground: 29 35 47;
+  --color-surface: 247 248 251;
+  --color-surface-raised: 255 255 255;
+  --color-border-default: 226 232 240;
   font-family:
     Inter,
     ui-sans-serif,
@@ -14,10 +18,21 @@
     sans-serif;
 }
 
+@media (prefers-color-scheme: dark) {
+  :root {
+    --color-foreground: 226 232 240;
+    --color-surface: 15 23 42;
+    --color-surface-raised: 30 41 59;
+    --color-border-default: 51 65 85;
+  }
+}
+
+html,
 body {
   margin: 0;
   min-width: 320px;
-  background: #f7f8fb;
+  background: rgb(var(--color-surface));
+  color: rgb(var(--color-foreground));
 }
 
 button,

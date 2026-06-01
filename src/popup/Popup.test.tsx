@@ -5,6 +5,12 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import type { UrlStatus } from "./Popup";
 import { defaultSaveCurrentPage, Popup } from "./Popup";
 
+// NOTE: dark mode is media-based (tailwind darkMode: "media"). jsdom cannot
+// compute colors or toggle a root `.dark` class, so visual contrast cannot be
+// asserted in tests. The assertions below check that `dark:text-*` variant
+// classes ARE PRESENT in the DOM — dropping one is a real regression that will
+// fail a test. Visual contrast is verified by manual QA in both themes.
+
 // Helper to make a resolved loadUrlStatus mock
 const makeUrlStatus = (status: UrlStatus) => vi.fn().mockResolvedValue(status);
 
@@ -15,6 +21,11 @@ describe("Popup", () => {
 
     expect(await screen.findByText("Set API key in settings")).toBeInTheDocument();
     expect(screen.getByRole("button", { name: "Save this page" })).toBeDisabled();
+    expect(screen.getByRole("button", { name: "Open library" })).toHaveClass(
+      "border-default",
+      "bg-surface-raised",
+      "text-foreground/80",
+    );
   });
 
   it("enables save when API key is set", async () => {
@@ -254,6 +265,118 @@ describe("Popup", () => {
     } finally {
       vi.useRealTimers();
     }
+  });
+});
+
+// ── Retry CTA and status-text dark: variant assertions ───────────────────────
+
+describe("Popup retry CTA visibility", () => {
+  it("retry CTA ('Save failed — try again') absent when status is idle", async () => {
+    render(
+      <Popup
+        saveCurrentPage={vi.fn()}
+        checkApiKey={vi.fn().mockResolvedValue(true)}
+        loadUrlStatus={vi.fn().mockResolvedValue({ saved: false })}
+      />,
+    );
+
+    await waitFor(() =>
+      expect(screen.getByRole("button", { name: "Save this page" })).toBeEnabled(),
+    );
+    expect(screen.queryByRole("button", { name: "Save failed — try again" })).not.toBeInTheDocument();
+  });
+
+  it("retry CTA absent when status is saving (in-flight)", async () => {
+    const user = userEvent.setup();
+    render(
+      <Popup
+        saveCurrentPage={vi.fn().mockReturnValue(new Promise(() => {}))}
+        checkApiKey={vi.fn().mockResolvedValue(true)}
+        loadUrlStatus={vi.fn().mockResolvedValue({ saved: false })}
+      />,
+    );
+
+    await waitFor(() =>
+      expect(screen.getByRole("button", { name: "Save this page" })).toBeEnabled(),
+    );
+    await user.click(screen.getByRole("button", { name: "Save this page" }));
+
+    expect(screen.queryByRole("button", { name: "Save failed — try again" })).not.toBeInTheDocument();
+  });
+
+  it("retry CTA absent when status is pending (worker processing)", async () => {
+    render(
+      <Popup
+        saveCurrentPage={vi.fn()}
+        checkApiKey={vi.fn().mockResolvedValue(true)}
+        loadUrlStatus={vi.fn().mockResolvedValue({ saved: true, status: "pending", savedAt: Date.now() })}
+      />,
+    );
+
+    expect(await screen.findByRole("button", { name: "Processing..." })).toBeDisabled();
+    expect(screen.queryByRole("button", { name: "Save failed — try again" })).not.toBeInTheDocument();
+  });
+
+  it("retry CTA absent when status is saved (ready)", async () => {
+    render(
+      <Popup
+        saveCurrentPage={vi.fn()}
+        checkApiKey={vi.fn().mockResolvedValue(true)}
+        loadUrlStatus={vi.fn().mockResolvedValue({ saved: true, status: "ready", savedAt: Date.now() - 5000 })}
+      />,
+    );
+
+    await waitFor(() =>
+      expect(screen.queryByRole("button", { name: /Saved ✓/ })).toBeInTheDocument(),
+    );
+    expect(screen.queryByRole("button", { name: "Save failed — try again" })).not.toBeInTheDocument();
+  });
+
+  it("retry CTA visible when loadUrlStatus returns failed", async () => {
+    render(
+      <Popup
+        saveCurrentPage={vi.fn()}
+        checkApiKey={vi.fn().mockResolvedValue(true)}
+        loadUrlStatus={vi.fn().mockResolvedValue({ saved: true, status: "failed", savedAt: Date.now() })}
+      />,
+    );
+
+    expect(
+      await screen.findByRole("button", { name: "Save failed — try again" }),
+    ).toBeEnabled();
+  });
+});
+
+describe("Popup status-text dark: variants", () => {
+  it("'Set API key in settings' text carries dark:text-amber-300", async () => {
+    render(
+      <Popup
+        saveCurrentPage={vi.fn()}
+        checkApiKey={vi.fn().mockResolvedValue(false)}
+      />,
+    );
+
+    const warning = await screen.findByText("Set API key in settings");
+    expect(warning).toHaveClass("dark:text-amber-300");
+  });
+
+  it("save-error text carries dark:text-red-300", async () => {
+    const user = userEvent.setup();
+    render(
+      <Popup
+        saveCurrentPage={vi.fn().mockRejectedValue(new Error("extraction failed"))}
+        checkApiKey={vi.fn().mockResolvedValue(true)}
+        loadUrlStatus={vi.fn().mockResolvedValue({ saved: false })}
+      />,
+    );
+
+    await waitFor(() =>
+      expect(screen.getByRole("button", { name: "Save this page" })).toBeEnabled(),
+    );
+    await user.click(screen.getByRole("button", { name: "Save this page" }));
+
+    const errorText = await screen.findByText("Couldn't read this page — reload it and try again.");
+    expect(errorText).toHaveClass("dark:text-red-300");
   });
 });
 

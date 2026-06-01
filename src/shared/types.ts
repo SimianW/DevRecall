@@ -46,6 +46,7 @@ export type PageListItem = Pick<
   | "technologies"
   | "savedAt"
   | "status"
+  | "errorReason"
 >;
 
 export type ExtractedPage = {

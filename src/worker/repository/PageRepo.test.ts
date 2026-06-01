@@ -186,6 +186,72 @@ describe("PageRepo", () => {
     expect(await chunkRepo.allChunks()).toHaveLength(0);
   });
 
+  it("deleteAll clears all pages and chunks atomically", async () => {
+    const chunkRepo = new ChunkRepo(database);
+
+    const p1 = await repo.upsertCapturedPage({
+      url: "https://example.test/page-one",
+      title: "Page One",
+      fullText: "body one",
+      readingTimeMs: 0,
+      saveMode: "manual",
+    });
+    const p2 = await repo.upsertCapturedPage({
+      url: "https://example.test/page-two",
+      title: "Page Two",
+      fullText: "body two",
+      readingTimeMs: 0,
+      saveMode: "manual",
+    });
+    await chunkRepo.replaceChunksForPage(p1.id, ["chunk a", "chunk b"]);
+    await chunkRepo.replaceChunksForPage(p2.id, ["chunk c"]);
+
+    expect(await database.pages.count()).toBe(2);
+    expect(await database.chunks.count()).toBe(3);
+
+    await repo.deleteAll();
+
+    expect(await database.pages.count()).toBe(0);
+    expect(await database.chunks.count()).toBe(0);
+  });
+
+  it("exportAll returns all pages ordered by savedAt ascending", async () => {
+    // Insert pages with explicit savedAt ordering by controlling time
+    const p1 = await repo.upsertCapturedPage({
+      url: "https://example.test/alpha",
+      title: "Alpha",
+      fullText: "first",
+      readingTimeMs: 0,
+      saveMode: "manual",
+    });
+    // Force distinct savedAt values by updating manually
+    await repo.updatePage(p1.id, { savedAt: 1000 });
+
+    const p2 = await repo.upsertCapturedPage({
+      url: "https://example.test/beta",
+      title: "Beta",
+      fullText: "second",
+      readingTimeMs: 0,
+      saveMode: "manual",
+    });
+    await repo.updatePage(p2.id, { savedAt: 3000 });
+
+    const p3 = await repo.upsertCapturedPage({
+      url: "https://example.test/gamma",
+      title: "Gamma",
+      fullText: "third",
+      readingTimeMs: 0,
+      saveMode: "manual",
+    });
+    await repo.updatePage(p3.id, { savedAt: 2000 });
+
+    const exported = await repo.exportAll();
+
+    expect(exported).toHaveLength(3);
+    // exportAll uses orderBy("savedAt") — ascending order
+    expect(exported.map((p) => p.title)).toEqual(["Alpha", "Gamma", "Beta"]);
+  });
+
   it("lists ready pages missing embeddings and counts them in stats", async () => {
     const chunkRepo = new ChunkRepo(database);
 
