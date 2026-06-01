@@ -107,6 +107,15 @@ export class AutoSaveService {
    * tabId of the tab whose dwell is currently in progress, or null.
    * This in-memory field is only used to cancel a previous dwell when switching
    * tabs — the actual dwell state is persisted in session storage.
+   *
+   * Residual scenario after worker restart: this field is reset to null whenever
+   * the worker is killed and restarted by Chrome. If the user switches tabs
+   * during that restart window, the cancel for the old tab is skipped (we have
+   * no memory of it). The alarm for the old tab may still fire, but
+   * `onAlarmFired` re-verifies the current tab URL and performs a dedup check,
+   * so double-capture or stale-URL capture cannot occur — the worst outcome is
+   * a missed cancel that leaves a harmless orphan alarm entry which fires and
+   * is then discarded.
    */
   private currentDwellTabId: number | null = null;
 
@@ -229,9 +238,12 @@ export class AutoSaveService {
     }
 
     // All checks passed — run the capture pipeline.
-    await this.capture.saveAuto(tabId);
-
-    await this.session.remove(alarmName(tabId));
+    // try/finally guarantees session cleanup even if saveAuto throws.
+    try {
+      await this.capture.saveAuto(tabId);
+    } finally {
+      await this.session.remove(alarmName(tabId));
+    }
   }
 }
 

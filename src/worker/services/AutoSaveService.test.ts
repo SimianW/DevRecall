@@ -442,3 +442,24 @@ describe("AutoSaveService.onTabUpdated", () => {
     expect(alarm.clear).toHaveBeenCalledWith(`autosave:${TAB_ID}`);
   });
 });
+
+// ---------------------------------------------------------------------------
+// onTabRemoved
+// ---------------------------------------------------------------------------
+
+describe("AutoSaveService.onTabRemoved", () => {
+  it("cancels dwell when tab is removed", async () => {
+    const { service, alarm, session } = buildService();
+
+    // Start a dwell for the tab first
+    await service.startDwell(TAB_ID, ALLOWLISTED_URL);
+    vi.clearAllMocks();
+
+    // Tab is removed
+    await service.onTabRemoved(TAB_ID);
+
+    // Both alarm and session entry must be cleaned up
+    expect(alarm.clear).toHaveBeenCalledWith(`autosave:${TAB_ID}`);
+    expect(session.remove).toHaveBeenCalledWith(`autosave:${TAB_ID}`);
+  });
+});
