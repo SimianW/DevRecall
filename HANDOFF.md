@@ -3,7 +3,7 @@
 **Date:** 2026-06-01
 **Worktree:** `.claude/worktrees/M6-polish-auto-save-ship`
 **Branch:** `worktree-M6-polish-auto-save-ship`
-**Version:** `0.5.4.8`
+**Version:** `0.5.4.9`
 
 ---
 
@@ -26,7 +26,7 @@ is now complete — see section below. Remaining: Task 6 (release v1.0).
 | 3 | Export / delete-all / filter / retry | ✅ committed | Combined M6 commit — see below |
 | 4 | Dark mode & detail polish | ✅ committed | Combined M6 commit — see below |
 | 5 | Vector threshold re-check | ✅ done | Re-measured post-stemming; kept 0.4 |
-| 6 | Release v1.0 | 🔲 pending | Gates on coverage + auto-save E2E + README/GIF |
+| 6 | Release v1.0 | 🔶 in progress | Coverage ✓ + README ✓; remaining: GIF, E2E #2, version→1.0.0.0, tag |
 
 ---
 
@@ -112,15 +112,20 @@ skips unless `OPENAI_API_KEY` is set (CI-safe). To re-run:
 OPENAI_API_KEY=sk-... pnpm test src/lib/vectorThreshold.measure.test.ts
 ```
 
-### Task 6: Release v1.0
+### Task 6: Release v1.0 — IN PROGRESS
 
-- Final version bump to `1.0.0.0` (`package.json` + `APP_VERSION` in
-  `src/shared/messages.ts`).
-- README install/run section + 60-second demo GIF path.
-- Verify v1.0 success criteria before tagging (parent spec §3): **#7 ≥80% unit-test
-  coverage on `src/lib/**` and `src/worker/services/**`** (`pnpm test --coverage`),
-  #2 auto-save works end-to-end, #6 README + demo GIF present.
-- Create `git tag v1.0` once the branch is green and criteria hold. **(Outward-facing —
+Done:
+- ✅ **#7 coverage gate**: `src/worker/services/**` raised 78.4% → 93.42% stmts
+  (93.23% lines), `src/lib/**` 94.4% — both clear ≥80%. (commit `580fa7d`)
+- ✅ **#6 README**: install/run + usage written, with a `docs/demo.gif` placeholder.
+  (commit `bbae416`)
+
+Remaining (need the human — outward-facing / manual):
+- 🔲 Record the 60-second demo GIF and save it to `docs/demo.gif`.
+- 🔲 **#2 auto-save E2E**: load the unpacked `/dist` in Chrome and confirm allowlist
+  auto-save works end-to-end (manual QA; also verify dark mode in both OS themes).
+- 🔲 Final version bump `0.5.4.9` → `1.0.0.0` (`package.json` + `APP_VERSION`).
+- 🔲 `git tag v1.0` once the branch is green and #2/#6 hold. **(Outward-facing —
   confirm with the human before tagging.)**
 
 ---
