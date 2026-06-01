@@ -4,9 +4,19 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## Project Overview
 
-DevRecall is a local-first Chrome extension that captures technical browsing sessions, summarizes and tags saved pages, and lets developers retrieve past documentation through natural-language search. Currently at M1 (Skeleton) milestone with capture, tagging, and listing infrastructure in place.
+DevRecall is a local-first Chrome extension that captures technical browsing sessions, summarizes and tags saved pages, and lets developers retrieve past documentation through natural-language search. **M1–M5 complete:** capture, LLM tagging, and hybrid keyword+vector retrieval (RRF fusion) are implemented. **M6** (polish + auto-save + ship v1.0) is the next milestone — see `docs/superpowers/plans/2026-05-31-m6-polish-auto-save-ship.md`.
 
 **Key Technologies:** React 18, TypeScript 6, Vite, Vitest, Dexie (IndexedDB), Chrome MV3, Tailwind CSS
+
+## Project Conventions & Gotchas
+
+- **This project is built with the Superpowers workflow — use its skills for every process.** Specs and plans live in `docs/superpowers/`. Invoke the matching skill *before* each phase, not just when stuck: `brainstorming` (any new feature/design), `writing-plans` (multi-step work), `test-driven-development` (all code — tests first), `systematic-debugging` (any bug/failure), `executing-plans` / `subagent-driven-development` (running a written plan), `verification-before-completion` (before claiming done), `requesting-code-review` (before merge). When in doubt, check for a relevant skill and use it.
+- **Version bump on every code change** — bump `version` in `package.json` AND `APP_VERSION` in `src/shared/messages.ts` (4-part `X.Y.Z.N`), then commit.
+- **MV3 service worker is killed after ~30s idle; in-memory globals are lost.** Never use `setTimeout`/`setInterval` for delayed work in the worker — use `chrome.alarms` + `chrome.storage.session` (register `onAlarm` at top level).
+- **Retrieval is hybrid** — BM25 keyword + vector cosine + RRF fusion in `RetrievalService`; `MIN_VECTOR_SCORE` gates vector hits. Vector arm is for conceptual queries; single/peripheral words score low cosine and are correctly keyword-only.
+- **Re-index rule** — changing embeddings/chunking requires re-indexing existing pages (Options → Re-index). BM25 `tokenize()` (`src/lib/bm25.ts`, shared by query + docs) runs at query time, so tokenizer changes (e.g. stemming) need NO re-index.
+- **Capture reads all frames** — content script injects `all_frames`; `ChromePageExtractor` keeps the richest frame's body but anchors url/title to the top frame. Readability intentionally drops trailing reference/citation lists.
+- **Integration/measurement tests that call OpenAI are skipped unless `OPENAI_API_KEY` is set** (CI-safe).
 
 ## Development Setup
 
@@ -87,7 +97,7 @@ Content Script → Service Worker ← Popup
 
 #### 4. **Side Panel** (`src/sidepanel/App.tsx`)
 
-- Main discovery UI (search placeholder; future: hybrid retrieval)
+- Main discovery UI — live hybrid search (BM25 + vector + RRF) with "matched by meaning" badges
 - Lists saved pages with filters (All/Docs/SO/GH)
 - Shows loading and empty states
 - All data flows through worker via typed messages
