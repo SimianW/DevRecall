@@ -1,3 +1,5 @@
+import { stem } from "./stem";
+
 const STOPWORDS: ReadonlySet<string> = new Set([
   "a",
   "an",
@@ -66,7 +68,7 @@ export function tokenize(text: string): string[] {
       }
       for (const token of lower.slice(i, j).split(/[^a-z0-9]+/)) {
         if (token.length > 0 && !STOPWORDS.has(token)) {
-          tokens.push(token);
+          tokens.push(stem(token));
         }
       }
       i = j;
