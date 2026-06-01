@@ -33,6 +33,6 @@ export default defineManifest({
       description: "Open the DevRecall side panel",
     },
   },
-  permissions: ["activeTab", "sidePanel", "scripting", "storage", "tabs"],
+  permissions: ["activeTab", "alarms", "sidePanel", "scripting", "storage", "tabs"],
   host_permissions: ["http://*/*", "https://*/*"],
 });

@@ -135,12 +135,12 @@ export class CaptureService {
     private readonly embedder: Embedder = new OpenAIProvider(),
   ) {}
 
-  async save(tabId: number): Promise<PageRecord> {
+  async save(tabId: number, saveMode: "manual" | "auto" = "manual"): Promise<PageRecord> {
     const extracted = await this.extractor.extract(tabId);
 
     const page = await this.writer.upsertCapturedPage({
       ...extracted,
-      saveMode: "manual",
+      saveMode,
     });
 
     await this.chunkWriter.replaceChunksForPage(page.id, chunkText(page.fullText));

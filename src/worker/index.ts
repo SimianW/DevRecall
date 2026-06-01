@@ -11,11 +11,17 @@ import { OpenAIProvider, testOpenAIConnection } from "./llm/OpenAIProvider";
 import { ChunkRepo } from "./repository/ChunkRepo";
 import { PageRepo, toPageListItem } from "./repository/PageRepo";
 import { CaptureService } from "./services/CaptureService";
+import {
+  AutoSaveService,
+  chromeAlarmPort,
+  chromeSessionPort,
+  chromeTabPort,
+} from "./services/AutoSaveService";
 import { RetrievalService } from "./services/RetrievalService";
 import { ChromeApiKeyStore, type ApiKeyStore } from "./settings/ApiKeyStore";
 
 type CapturePort = {
-  save(tabId: number): Promise<PageRecord>;
+  save(tabId: number, saveMode?: "manual" | "auto"): Promise<PageRecord>;
   processPage(pageId: string, apiKey: string): Promise<PageRecord>;
   reindexPages(
     pageIds: string[],
@@ -65,14 +71,49 @@ function broadcast(message: WorkerBroadcast): void {
 const pageRepo = new PageRepo();
 const chunkRepo = new ChunkRepo();
 const openai = new OpenAIProvider();
+const captureService = new CaptureService(pageRepo, undefined, pageRepo, openai, chunkRepo, openai);
 const defaultDeps: HandlerDeps = {
-  captureService: new CaptureService(pageRepo, undefined, pageRepo, openai, chunkRepo, openai),
+  captureService,
   pageRepo,
   apiKeyStore: new ChromeApiKeyStore(),
   testConnection: testOpenAIConnection,
   retrievalService: new RetrievalService(chunkRepo, pageRepo, openai),
   broadcast,
 };
+
+// ---------------------------------------------------------------------------
+// Auto-save: alarm-driven dwell timer for allowlisted domains.
+// MV3 note: the service worker is killed after ~30 s of inactivity.
+// Listeners MUST be registered at the top level so they fire on every worker wake.
+// ---------------------------------------------------------------------------
+const autoSaveService = new AutoSaveService(
+  chromeAlarmPort,
+  chromeSessionPort,
+  chromeTabPort,
+  {
+    saveAuto: async (tabId: number) => {
+      const page = await captureService.save(tabId, "auto");
+      const apiKey = await defaultDeps.apiKeyStore.getApiKey();
+      defaultDeps.retrievalService.invalidate();
+      broadcast({ type: "page.updated", payload: { page: toPageListItem(page) } });
+      if (apiKey) {
+        void captureService
+          .processPage(page.id, apiKey)
+          .then((processed) => {
+            defaultDeps.retrievalService.invalidate();
+            broadcast({ type: "page.updated", payload: { page: toPageListItem(processed) } });
+          })
+          .catch((err) => {
+            console.error("[DevRecall] auto-save LLM processing error:", err);
+          });
+      }
+      return page;
+    },
+  },
+  {
+    getByUrlHash: (urlHash: string) => pageRepo.getByUrlHash(urlHash),
+  },
+);
 
 export async function handleRequest(
   request: DevRecallRequest,
@@ -278,5 +319,37 @@ if (typeof chrome !== "undefined" && chrome.commands?.onCommand) {
       // Synchronous within the command gesture — no await before open().
       void chrome.sidePanel.open({ windowId: chrome.windows.WINDOW_ID_CURRENT });
     }
+  });
+}
+
+// ---------------------------------------------------------------------------
+// Auto-save listeners — registered at the TOP LEVEL so they survive worker
+// restarts (MV3: the worker re-runs top-level code on every wake event).
+// ---------------------------------------------------------------------------
+
+if (typeof chrome !== "undefined" && chrome.alarms?.onAlarm) {
+  // chrome.alarms minimum granularity is 30 s on Chrome 120+.
+  chrome.alarms.onAlarm.addListener((alarm) => {
+    void autoSaveService.onAlarmFired(alarm.name);
+  });
+}
+
+if (typeof chrome !== "undefined" && chrome.tabs?.onActivated) {
+  chrome.tabs.onActivated.addListener((activeInfo) => {
+    void autoSaveService.onTabActivated(activeInfo.tabId);
+  });
+}
+
+if (typeof chrome !== "undefined" && chrome.tabs?.onUpdated) {
+  chrome.tabs.onUpdated.addListener((tabId, changeInfo, tab) => {
+    if (changeInfo.status && tab.url) {
+      void autoSaveService.onTabUpdated(tabId, changeInfo.status, tab.url);
+    }
+  });
+}
+
+if (typeof chrome !== "undefined" && chrome.tabs?.onRemoved) {
+  chrome.tabs.onRemoved.addListener((tabId) => {
+    void autoSaveService.onTabRemoved(tabId);
   });
 }
