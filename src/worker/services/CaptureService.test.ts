@@ -1,4 +1,4 @@
-import { describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import type { ExtractedPage, PageRecord, TaggingResult } from "../../shared/types";
 import { ChunkRepo } from "../repository/ChunkRepo";
@@ -8,6 +8,7 @@ import { MockLLMProvider } from "../llm/MockLLMProvider";
 import type { Embedder } from "../llm/OpenAIProvider";
 import {
   CaptureService,
+  ChromePageExtractor,
   mergeFrameExtractions,
   type ChunkWriter,
   type FrameExtraction,
@@ -248,6 +249,40 @@ describe("CaptureService", () => {
     ]);
   });
 
+  it("passes saveMode:'auto' through to the page writer", async () => {
+    const extractor: PageExtractor = { extract: vi.fn().mockResolvedValue(extracted) };
+    const writer: PageWriter = {
+      upsertCapturedPage: vi.fn().mockResolvedValue({ ...pendingPage, saveMode: "auto" }),
+    };
+    const chunkWriter = mockChunkWriter();
+
+    const result = await new CaptureService(
+      writer,
+      extractor,
+      undefined,
+      undefined,
+      chunkWriter,
+    ).save(123, "auto");
+
+    expect(writer.upsertCapturedPage).toHaveBeenCalledWith({ ...extracted, saveMode: "auto" });
+    expect(result.saveMode).toBe("auto");
+  });
+
+  it("throws when processPage is called for a non-existent page id", async () => {
+    const reader: PageReader = {
+      getById: vi.fn().mockResolvedValue(undefined),
+      updatePage: vi.fn(),
+    };
+
+    await expect(
+      new CaptureService(
+        { upsertCapturedPage: vi.fn() },
+        { extract: vi.fn() },
+        reader,
+      ).processPage("no-such-id", "sk-test"),
+    ).rejects.toThrow("no-such-id");
+  });
+
   it("embeds chunks and marks the page ready end-to-end (integration)", async () => {
     const database = new DevRecallDatabase(`devrecall-test-${crypto.randomUUID()}`);
     await database.delete();
@@ -352,5 +387,162 @@ describe("mergeFrameExtractions", () => {
 
   it("throws when there are no frame extractions", () => {
     expect(() => mergeFrameExtractions([])).toThrow();
+  });
+});
+
+// ---------------------------------------------------------------------------
+// ChromePageExtractor
+// ---------------------------------------------------------------------------
+
+describe("ChromePageExtractor", () => {
+  const tabId = 7;
+  const fakeExtracted: ExtractedPage = {
+    url: "https://docs.example.com/guide",
+    title: "Guide",
+    fullText: "Guide content here.",
+    readingTimeMs: 5_000,
+  };
+
+  beforeEach(() => {
+    // Provide a minimal chrome stub visible to the extractor.
+    // Each test overrides individual sub-properties as needed.
+    (globalThis as Record<string, unknown>)["chrome"] = {
+      tabs: {
+        sendMessage: vi.fn(),
+      },
+      scripting: {
+        executeScript: vi.fn(),
+      },
+    };
+  });
+
+  afterEach(() => {
+    delete (globalThis as Record<string, unknown>)["chrome"];
+  });
+
+  it("throws when chrome.tabs.sendMessage is unavailable", async () => {
+    (globalThis as Record<string, unknown>)["chrome"] = undefined;
+
+    await expect(new ChromePageExtractor().extract(tabId)).rejects.toThrow(
+      "Chrome tabs messaging is unavailable",
+    );
+  });
+
+  it("extracts from a single top frame and returns the merged page", async () => {
+    const chrome = (globalThis as Record<string, unknown>)["chrome"] as {
+      tabs: { sendMessage: ReturnType<typeof vi.fn> };
+      scripting: { executeScript: ReturnType<typeof vi.fn> };
+    };
+
+    chrome.scripting.executeScript.mockResolvedValue([{ frameId: 0 }]);
+    chrome.tabs.sendMessage.mockResolvedValue({
+      type: "content.extracted",
+      payload: fakeExtracted,
+    });
+
+    const result = await new ChromePageExtractor().extract(tabId);
+
+    expect(result.url).toBe(fakeExtracted.url);
+    expect(result.fullText).toBe(fakeExtracted.fullText);
+  });
+
+  it("skips frames where sendMessage throws (no content script) and still succeeds", async () => {
+    const chrome = (globalThis as Record<string, unknown>)["chrome"] as {
+      tabs: { sendMessage: ReturnType<typeof vi.fn> };
+      scripting: { executeScript: ReturnType<typeof vi.fn> };
+    };
+
+    // Two frames — frame 0 fails, frame 1 succeeds
+    chrome.scripting.executeScript.mockResolvedValue([{ frameId: 0 }, { frameId: 1 }]);
+    chrome.tabs.sendMessage
+      .mockRejectedValueOnce(new Error("no content script on frame 0"))
+      .mockResolvedValueOnce({ type: "content.extracted", payload: fakeExtracted });
+
+    const result = await new ChromePageExtractor().extract(tabId);
+
+    expect(result.fullText).toBe(fakeExtracted.fullText);
+  });
+
+  it("throws when all frames fail to respond", async () => {
+    const chrome = (globalThis as Record<string, unknown>)["chrome"] as {
+      tabs: { sendMessage: ReturnType<typeof vi.fn> };
+      scripting: { executeScript: ReturnType<typeof vi.fn> };
+    };
+
+    chrome.scripting.executeScript.mockResolvedValue([{ frameId: 0 }]);
+    chrome.tabs.sendMessage.mockRejectedValue(new Error("no content script"));
+
+    await expect(new ChromePageExtractor().extract(tabId)).rejects.toThrow(
+      "No readable page text found",
+    );
+  });
+
+  it("ignores frames that return a non-extracted response type", async () => {
+    const chrome = (globalThis as Record<string, unknown>)["chrome"] as {
+      tabs: { sendMessage: ReturnType<typeof vi.fn> };
+      scripting: { executeScript: ReturnType<typeof vi.fn> };
+    };
+
+    // Frame 0 returns a failure response; frame 1 returns success
+    chrome.scripting.executeScript.mockResolvedValue([{ frameId: 0 }, { frameId: 1 }]);
+    chrome.tabs.sendMessage
+      .mockResolvedValueOnce({ type: "content.extractFailed", payload: { message: "no text" } })
+      .mockResolvedValueOnce({ type: "content.extracted", payload: fakeExtracted });
+
+    const result = await new ChromePageExtractor().extract(tabId);
+
+    expect(result.fullText).toBe(fakeExtracted.fullText);
+  });
+
+  it("falls back to frame 0 when scripting.executeScript is unavailable", async () => {
+    const chrome = (globalThis as Record<string, unknown>)["chrome"] as {
+      tabs: { sendMessage: ReturnType<typeof vi.fn> };
+      scripting: { executeScript: ReturnType<typeof vi.fn> } | undefined;
+    };
+
+    // Simulate chrome.scripting not available
+    chrome.scripting = undefined;
+    chrome.tabs.sendMessage.mockResolvedValue({
+      type: "content.extracted",
+      payload: fakeExtracted,
+    });
+
+    const result = await new ChromePageExtractor().extract(tabId);
+
+    expect(result.fullText).toBe(fakeExtracted.fullText);
+  });
+
+  it("falls back to frame 0 when scripting.executeScript throws", async () => {
+    const chrome = (globalThis as Record<string, unknown>)["chrome"] as {
+      tabs: { sendMessage: ReturnType<typeof vi.fn> };
+      scripting: { executeScript: ReturnType<typeof vi.fn> };
+    };
+
+    chrome.scripting.executeScript.mockRejectedValue(new Error("scripting error"));
+    chrome.tabs.sendMessage.mockResolvedValue({
+      type: "content.extracted",
+      payload: fakeExtracted,
+    });
+
+    const result = await new ChromePageExtractor().extract(tabId);
+
+    expect(result.fullText).toBe(fakeExtracted.fullText);
+  });
+
+  it("falls back to frame 0 when scripting.executeScript returns empty array", async () => {
+    const chrome = (globalThis as Record<string, unknown>)["chrome"] as {
+      tabs: { sendMessage: ReturnType<typeof vi.fn> };
+      scripting: { executeScript: ReturnType<typeof vi.fn> };
+    };
+
+    chrome.scripting.executeScript.mockResolvedValue([]);
+    chrome.tabs.sendMessage.mockResolvedValue({
+      type: "content.extracted",
+      payload: fakeExtracted,
+    });
+
+    const result = await new ChromePageExtractor().extract(tabId);
+
+    expect(result.fullText).toBe(fakeExtracted.fullText);
   });
 });

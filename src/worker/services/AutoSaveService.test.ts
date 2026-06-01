@@ -5,12 +5,14 @@
  * fakes so these tests run in jsdom without real Chrome APIs and without
  * waiting a real 30 s.
  */
-import { describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import type { PageRecord } from "../../shared/types";
 import {
   AutoSaveService,
   ALLOWLIST_PATTERNS,
+  chromeSessionPort,
+  chromeTabPort,
   type AlarmPort,
   type SessionStoragePort,
   type TabQueryPort,
@@ -461,5 +463,127 @@ describe("AutoSaveService.onTabRemoved", () => {
     // Both alarm and session entry must be cleaned up
     expect(alarm.clear).toHaveBeenCalledWith(`autosave:${TAB_ID}`);
     expect(session.remove).toHaveBeenCalledWith(`autosave:${TAB_ID}`);
+  });
+
+  it("clears the currentDwellTabId so switching tabs after removal does not double-cancel", async () => {
+    const alarm = makeAlarmPort();
+    const session = makeSessionPort();
+    const { service } = buildService({
+      alarm,
+      session,
+      tab: makeTabPort(ALLOWLISTED_URL),
+    });
+
+    // Start a dwell on TAB_ID to set currentDwellTabId
+    await service.startDwell(TAB_ID, ALLOWLISTED_URL);
+    vi.clearAllMocks();
+
+    // Remove that tab — this must null out currentDwellTabId
+    await service.onTabRemoved(TAB_ID);
+    vi.clearAllMocks();
+
+    // Activating a different tab: since currentDwellTabId is now null, the service
+    // should NOT call cancelDwell for the already-removed TAB_ID.
+    // The only alarm.clear allowed is the one inside startDwell for the NEW tab (99).
+    await service.onTabActivated(99);
+
+    const clearCalls = (alarm.clear as ReturnType<typeof vi.fn>).mock.calls.map(
+      (call) => call[0] as string,
+    );
+    expect(clearCalls.every((name) => name !== `autosave:${TAB_ID}`)).toBe(true);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// chromeSessionPort — production port backed by chrome.storage.session
+// ---------------------------------------------------------------------------
+
+describe("chromeSessionPort", () => {
+  const KEY = "autosave:123";
+  const VALUE = { url: "https://github.com/test", startedAt: 1000 };
+
+  beforeEach(() => {
+    const store: Record<string, unknown> = {};
+    (globalThis as Record<string, unknown>)["chrome"] = {
+      storage: {
+        session: {
+          get: vi.fn().mockImplementation(async (key: string) => ({ [key]: store[key] })),
+          set: vi.fn().mockImplementation(async (obj: Record<string, unknown>) => {
+            Object.assign(store, obj);
+          }),
+          remove: vi.fn().mockImplementation(async (key: string) => {
+            delete store[key];
+          }),
+        },
+      },
+    };
+  });
+
+  afterEach(() => {
+    delete (globalThis as Record<string, unknown>)["chrome"];
+  });
+
+  it("set stores a value and get retrieves it", async () => {
+    await chromeSessionPort.set(KEY, VALUE);
+    const result = await chromeSessionPort.get(KEY);
+    expect(result).toEqual(VALUE);
+  });
+
+  it("remove deletes the stored value", async () => {
+    await chromeSessionPort.set(KEY, VALUE);
+    await chromeSessionPort.remove(KEY);
+    const result = await chromeSessionPort.get(KEY);
+    expect(result).toBeUndefined();
+  });
+});
+
+// ---------------------------------------------------------------------------
+// chromeTabPort — production port backed by chrome.tabs
+// ---------------------------------------------------------------------------
+
+describe("chromeTabPort", () => {
+  beforeEach(() => {
+    (globalThis as Record<string, unknown>)["chrome"] = {
+      tabs: {
+        get: vi.fn(),
+      },
+    };
+  });
+
+  afterEach(() => {
+    delete (globalThis as Record<string, unknown>)["chrome"];
+  });
+
+  it("returns the tab URL when the tab exists", async () => {
+    const chromeMock = (globalThis as Record<string, unknown>)["chrome"] as {
+      tabs: { get: ReturnType<typeof vi.fn> };
+    };
+    chromeMock.tabs.get.mockResolvedValue({ url: ALLOWLISTED_URL });
+
+    const result = await chromeTabPort.getActiveTabUrl(TAB_ID);
+
+    expect(result).toBe(ALLOWLISTED_URL);
+  });
+
+  it("returns null when chrome.tabs.get throws (tab no longer exists)", async () => {
+    const chromeMock = (globalThis as Record<string, unknown>)["chrome"] as {
+      tabs: { get: ReturnType<typeof vi.fn> };
+    };
+    chromeMock.tabs.get.mockRejectedValue(new Error("No tab with id 42"));
+
+    const result = await chromeTabPort.getActiveTabUrl(TAB_ID);
+
+    expect(result).toBeNull();
+  });
+
+  it("returns null when the tab has no url property", async () => {
+    const chromeMock = (globalThis as Record<string, unknown>)["chrome"] as {
+      tabs: { get: ReturnType<typeof vi.fn> };
+    };
+    chromeMock.tabs.get.mockResolvedValue({ url: undefined });
+
+    const result = await chromeTabPort.getActiveTabUrl(TAB_ID);
+
+    expect(result).toBeNull();
   });
 });
