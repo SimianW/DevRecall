@@ -3,7 +3,7 @@ import { describe, expect, it, vi } from "vitest";
 import { normalizeUrl } from "../lib/urlNormalize";
 import { APP_NAME, APP_VERSION } from "../shared/messages";
 import type { PageHit, PageListItem, PageRecord } from "../shared/types";
-import { handleMessage, handleRequest } from "./index";
+import { handleMessage, handleRequest } from "./handlers";
 
 const pendingPage = {
   id: "01HZ0000000000000000000000",
