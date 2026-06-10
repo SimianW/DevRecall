@@ -1,8 +1,9 @@
 import { useCallback, useEffect, useState } from "react";
 
-import type { DevRecallRequest, DevRecallResponse, WorkerBroadcast } from "../shared/messages";
+import type { WorkerBroadcast } from "../shared/messages";
 import type { PageHit, PageListItem, SourceType } from "../shared/types";
 import { PageCard, SearchResultCard, SurfaceShell } from "../ui/components";
+import { sendRequest, subscribeToBroadcasts } from "../ui/rpc";
 
 const filters = ["All", "Docs", "SO", "GH"] as const;
 type Filter = (typeof filters)[number];
@@ -22,72 +23,30 @@ type AppProps = {
 };
 
 async function defaultListPages(): Promise<PageListItem[]> {
-  if (typeof chrome === "undefined" || !chrome.runtime?.sendMessage) {
-    return [];
-  }
-
-  try {
-    const request: DevRecallRequest = { type: "page.list", payload: { limit: 50 } };
-    const response = (await chrome.runtime.sendMessage(request)) as DevRecallResponse;
-
-    if (response.type !== "page.listed") {
-      return [];
-    }
-
-    return response.payload.pages ?? [];
-  } catch {
-    return [];
-  }
+  const response = await sendRequest(
+    { type: "page.list", payload: { limit: 50 } },
+    "page.listed",
+  );
+  return response?.payload.pages ?? [];
 }
 
 async function defaultRunSearch(query: string): Promise<PageHit[]> {
-  if (typeof chrome === "undefined" || !chrome.runtime?.sendMessage) {
-    return [];
-  }
-
-  try {
-    const request: DevRecallRequest = { type: "search.run", payload: { query } };
-    const response = (await chrome.runtime.sendMessage(request)) as DevRecallResponse;
-
-    if (response.type !== "search.results") {
-      return [];
-    }
-
-    return response.payload.hits ?? [];
-  } catch {
-    return [];
-  }
+  const response = await sendRequest(
+    { type: "search.run", payload: { query } },
+    "search.results",
+  );
+  return response?.payload.hits ?? [];
 }
 
 async function defaultDeletePage(id: string): Promise<void> {
-  if (typeof chrome === "undefined" || !chrome.runtime?.sendMessage) {
-    return;
-  }
-
-  const request: DevRecallRequest = { type: "page.delete", payload: { id } };
-  await chrome.runtime.sendMessage(request);
+  await sendRequest({ type: "page.delete", payload: { id } }, "page.deleted");
 }
 
 async function defaultRetryPage(id: string): Promise<void> {
-  if (typeof chrome === "undefined" || !chrome.runtime?.sendMessage) {
-    return;
-  }
-
-  const request: DevRecallRequest = { type: "page.retry", payload: { id } };
-  await chrome.runtime.sendMessage(request);
+  await sendRequest({ type: "page.retry", payload: { id } }, "page.retryStarted");
 }
 
-function defaultSubscribe(handler: (message: WorkerBroadcast) => void): () => void {
-  if (typeof chrome === "undefined" || !chrome.runtime?.onMessage) {
-    return () => {};
-  }
-
-  const listener = (message: unknown) => {
-    handler(message as WorkerBroadcast);
-  };
-  chrome.runtime.onMessage.addListener(listener);
-  return () => chrome.runtime.onMessage.removeListener(listener);
-}
+const defaultSubscribe = subscribeToBroadcasts;
 
 export function App({
   listPages = defaultListPages,

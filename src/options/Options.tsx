@@ -1,6 +1,7 @@
 import { useEffect, useState } from "react";
 import { SurfaceShell } from "../ui/components";
-import type { DevRecallRequest, DevRecallResponse, WorkerBroadcast } from "../shared/messages";
+import type { WorkerBroadcast } from "../shared/messages";
+import { sendRequest, subscribeToBroadcasts } from "../ui/rpc";
 
 type StatusResult = { hasApiKey: boolean };
 type TestResult = { success: boolean; message: string };
@@ -18,51 +19,47 @@ type OptionsProps = {
 };
 
 const defaultLoadStatus = async (): Promise<StatusResult> => {
-  const response = await chrome.runtime.sendMessage({ type: "settings.getStatus" });
-  return response.payload;
+  const response = await sendRequest({ type: "settings.getStatus" }, "settings.status");
+  return response?.payload ?? { hasApiKey: false };
 };
 
 const defaultSaveApiKey = async (apiKey: string): Promise<void> => {
-  await chrome.runtime.sendMessage({
-    type: "settings.setApiKey",
-    payload: { apiKey },
-  });
+  await sendRequest(
+    { type: "settings.setApiKey", payload: { apiKey } },
+    "settings.apiKeySet",
+  );
 };
 
 const defaultTestConnection = async (): Promise<TestResult> => {
-  const response = await chrome.runtime.sendMessage({ type: "settings.testConnection" });
-  return response.payload;
+  const response = await sendRequest(
+    { type: "settings.testConnection" },
+    "settings.connectionTestResult",
+  );
+  return response?.payload ?? { success: false, message: "Connection test unavailable" };
 };
 
 const defaultLoadStorageStats = async (): Promise<StorageStats> => {
-  const response = await chrome.runtime.sendMessage({ type: "storage.getStats" });
+  const response = await sendRequest({ type: "storage.getStats" }, "storage.stats");
+  if (!response) {
+    throw new Error("Storage stats unavailable");
+  }
   return response.payload;
 };
 
 const defaultStartReindex = async (): Promise<{ total: number }> => {
-  const request: DevRecallRequest = { type: "library.reindex" };
-  const response = (await chrome.runtime.sendMessage(request)) as DevRecallResponse;
-  return response.type === "library.reindexStarted" ? response.payload : { total: 0 };
+  const response = await sendRequest({ type: "library.reindex" }, "library.reindexStarted");
+  return response?.payload ?? { total: 0 };
 };
 
-const defaultSubscribe = (handler: (message: WorkerBroadcast) => void): (() => void) => {
-  if (typeof chrome === "undefined" || !chrome.runtime?.onMessage) {
-    return () => {};
-  }
-  const listener = (message: unknown) => handler(message as WorkerBroadcast);
-  chrome.runtime.onMessage.addListener(listener);
-  return () => chrome.runtime.onMessage.removeListener(listener);
-};
+const defaultSubscribe = subscribeToBroadcasts;
 
 const defaultExportData = async (): Promise<string> => {
-  const request: DevRecallRequest = { type: "data.export" };
-  const response = (await chrome.runtime.sendMessage(request)) as DevRecallResponse;
-  return response.type === "data.exported" ? response.payload.json : "{}";
+  const response = await sendRequest({ type: "data.export" }, "data.exported");
+  return response?.payload.json ?? "{}";
 };
 
 const defaultDeleteAll = async (): Promise<void> => {
-  const request: DevRecallRequest = { type: "data.deleteAll" };
-  await chrome.runtime.sendMessage(request);
+  await sendRequest({ type: "data.deleteAll" }, "data.deletedAll");
 };
 
 export function Options({
