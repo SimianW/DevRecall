@@ -1,7 +1,7 @@
 import type { ExtractedPage, PageHit, PageListItem, PageStatus } from "./types";
 
 export const APP_NAME = "DevRecall";
-export const APP_VERSION = "0.5.7.1";
+export const APP_VERSION = "0.5.7.2";
 
 export type PersistentStorageState = "unknown" | "granted" | "denied";
 
@@ -19,7 +19,9 @@ export type DevRecallRequest =
   | { type: "page.retry"; payload: { id: string } }
   | { type: "library.reindex" }
   | { type: "data.export" }
-  | { type: "data.deleteAll" };
+  | { type: "data.deleteAll" }
+  | { type: "settings.getAutoSave" }
+  | { type: "settings.setAutoSave"; payload: { enabled: boolean } };
 
 export type DevRecallResponse =
   | {
@@ -86,6 +88,8 @@ export type DevRecallResponse =
   | { type: "library.reindexStarted"; payload: { total: number } }
   | { type: "data.exported"; payload: { json: string } }
   | { type: "data.deletedAll" }
+  | { type: "settings.autoSave"; payload: { enabled: boolean } }
+  | { type: "settings.autoSaveSet"; payload: { enabled: boolean } }
   | {
       type: "error";
       payload: {

@@ -25,29 +25,10 @@
  */
 
 import { normalizeUrl } from "../../lib/urlNormalize";
+import { isAllowlisted } from "../../shared/allowlist";
 
-// ---------------------------------------------------------------------------
-// Allowlist
-// ---------------------------------------------------------------------------
-
-/**
- * Hard-coded v1.0 allowlist of technical/documentation domains.
- * A URL must match at least one pattern before a dwell timer is started.
- */
-export const ALLOWLIST_PATTERNS: RegExp[] = [
-  /^https?:\/\/(www\.)?github\.com/,
-  /^https?:\/\/(www\.)?stackoverflow\.com/,
-  /^https?:\/\/(www\.)?developer\.mozilla\.org/,
-  /^https?:\/\/docs\./,
-  /^https?:\/\/.*\.readthedocs\.io/,
-  /^https?:\/\/(www\.)?npmjs\.com/,
-  /^https?:\/\/(www\.)?rust-lang\.org/,
-  /^https?:\/\/(www\.)?python\.org/,
-];
-
-export function isAllowlisted(url: string): boolean {
-  return ALLOWLIST_PATTERNS.some((pattern) => pattern.test(url));
-}
+// Re-export so existing test imports continue to work.
+export { ALLOWLIST_PATTERNS, isAllowlisted } from "../../shared/allowlist";
 
 // ---------------------------------------------------------------------------
 // Injectable ports (thin wrappers around Chrome APIs in production)
@@ -79,6 +60,10 @@ export type AutoSaveCapturePort = {
 export type AutoSaveDedupePort = {
   /** Look up an existing page by URL hash. Resolves to undefined if not found. */
   getByUrlHash(urlHash: string): Promise<{ status: string } | undefined>;
+};
+
+export type AutoSaveEnabledPort = {
+  isEnabled(): Promise<boolean>;
 };
 
 // ---------------------------------------------------------------------------
@@ -125,6 +110,7 @@ export class AutoSaveService {
     private readonly tab: TabQueryPort,
     private readonly capture: AutoSaveCapturePort,
     private readonly dedupe: AutoSaveDedupePort,
+    private readonly enabled: AutoSaveEnabledPort,
     /** Dwell duration in ms. Production: 30 000 (Chrome 120+ minimum). */
     private readonly dwellMs: number = 30_000,
   ) {}
@@ -171,8 +157,11 @@ export class AutoSaveService {
   // Dwell management
   // -------------------------------------------------------------------------
 
-  /** Start a dwell timer for a tab. No-op if the URL is not allowlisted. */
+  /** Start a dwell timer for a tab. No-op if auto-save is disabled or the URL is not allowlisted. */
   async startDwell(tabId: number, url: string): Promise<void> {
+    if (!(await this.enabled.isEnabled())) {
+      return; // Auto-save is opt-in; off by default.
+    }
     if (!isAllowlisted(url)) {
       return;
     }

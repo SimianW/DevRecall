@@ -386,6 +386,28 @@ describe("worker request handler", () => {
     expect(deps.retrievalService.invalidate).toHaveBeenCalled();
     expect(deps.broadcast).toHaveBeenCalledWith({ type: "library.cleared" });
   });
+
+  it("settings.getAutoSave returns the stored flag", async () => {
+    const deps = makeDeps();
+    deps.autoSaveSettings.isEnabled = vi.fn().mockResolvedValue(true);
+
+    await expect(handleRequest({ type: "settings.getAutoSave" }, deps)).resolves.toEqual({
+      type: "settings.autoSave",
+      payload: { enabled: true },
+    });
+  });
+
+  it("settings.setAutoSave persists and echoes the flag", async () => {
+    const deps = makeDeps();
+
+    await expect(
+      handleRequest({ type: "settings.setAutoSave", payload: { enabled: true } }, deps),
+    ).resolves.toEqual({
+      type: "settings.autoSaveSet",
+      payload: { enabled: true },
+    });
+    expect(deps.autoSaveSettings.setEnabled).toHaveBeenCalledWith(true);
+  });
 });
 
 function makeDeps(
@@ -428,5 +450,9 @@ function makeDeps(
       invalidate: vi.fn(),
     },
     broadcast: vi.fn(),
+    autoSaveSettings: {
+      isEnabled: vi.fn().mockResolvedValue(false),
+      setEnabled: vi.fn().mockResolvedValue(undefined),
+    },
   };
 }

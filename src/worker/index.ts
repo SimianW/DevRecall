@@ -11,6 +11,7 @@ import {
 } from "./services/AutoSaveService";
 import { RetrievalService } from "./services/RetrievalService";
 import { ChromeApiKeyStore } from "./settings/ApiKeyStore";
+import { ChromeAutoSaveSettingStore } from "./settings/AutoSaveSettingStore";
 import { handleMessage, processPageInBackground, type HandlerDeps } from "./handlers";
 
 function broadcast(message: WorkerBroadcast): void {
@@ -26,6 +27,7 @@ const pageRepo = new PageRepo();
 const chunkRepo = new ChunkRepo();
 const openai = new OpenAIProvider();
 const captureService = new CaptureService(pageRepo, undefined, pageRepo, openai, chunkRepo, openai);
+const autoSaveSettings = new ChromeAutoSaveSettingStore();
 const defaultDeps: HandlerDeps = {
   captureService,
   pageRepo,
@@ -33,6 +35,7 @@ const defaultDeps: HandlerDeps = {
   testConnection: testOpenAIConnection,
   retrievalService: new RetrievalService(chunkRepo, pageRepo, openai),
   broadcast,
+  autoSaveSettings,
 };
 
 // ---------------------------------------------------------------------------
@@ -56,6 +59,7 @@ const autoSaveService = new AutoSaveService(
   {
     getByUrlHash: (urlHash: string) => pageRepo.getByUrlHash(urlHash),
   },
+  { isEnabled: () => autoSaveSettings.isEnabled() },
 );
 
 if (typeof chrome !== "undefined" && chrome.runtime?.onInstalled) {

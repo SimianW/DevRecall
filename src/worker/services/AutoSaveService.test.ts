@@ -80,7 +80,7 @@ function makeTabPort(url: string = ALLOWLISTED_URL): TabQueryPort {
   };
 }
 
-import type { AutoSaveCapturePort, AutoSaveDedupePort } from "./AutoSaveService";
+import type { AutoSaveCapturePort, AutoSaveDedupePort, AutoSaveEnabledPort } from "./AutoSaveService";
 
 type CapturePortMini = AutoSaveCapturePort & {
   saveAuto: ReturnType<typeof vi.fn> & AutoSaveCapturePort["saveAuto"];
@@ -104,12 +104,17 @@ function makeDedupePort(existing: PageRecord | undefined = undefined): DedupePor
 // Helper to build a service with convenient defaults
 // ---------------------------------------------------------------------------
 
+function makeEnabledPort(enabled = true): AutoSaveEnabledPort {
+  return { isEnabled: vi.fn().mockResolvedValue(enabled) };
+}
+
 function buildService({
   alarm = makeAlarmPort(),
   session = makeSessionPort(),
   tab = makeTabPort(),
   capture = makeCapturePort(),
   dedupe = makeDedupePort(),
+  enabled = makeEnabledPort(true),
   dwellMs = 30_000,
 }: {
   alarm?: AlarmPort;
@@ -117,6 +122,7 @@ function buildService({
   tab?: TabQueryPort;
   capture?: CapturePortMini;
   dedupe?: DedupePortMini;
+  enabled?: AutoSaveEnabledPort;
   dwellMs?: number;
 } = {}) {
   const service = new AutoSaveService(
@@ -125,6 +131,7 @@ function buildService({
     tab,
     { saveAuto: capture.saveAuto },
     { getByUrlHash: dedupe.getByUrlHash },
+    enabled,
     dwellMs,
   );
   return { service, alarm, session, tab, capture, dedupe };
@@ -491,6 +498,39 @@ describe("AutoSaveService.onTabRemoved", () => {
       (call) => call[0] as string,
     );
     expect(clearCalls.every((name) => name !== `autosave:${TAB_ID}`)).toBe(true);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Auto-save enabled gate
+// ---------------------------------------------------------------------------
+
+describe("AutoSaveService.startDwell — enabled gate", () => {
+  it("does not start a dwell timer when auto-save is disabled", async () => {
+    const alarm = makeAlarmPort();
+    const session = makeSessionPort();
+    const { service } = buildService({
+      alarm,
+      session,
+      enabled: makeEnabledPort(false),
+    });
+
+    await service.startDwell(TAB_ID, ALLOWLISTED_URL);
+
+    expect(alarm.create).not.toHaveBeenCalled();
+    expect(session.set).not.toHaveBeenCalled();
+  });
+
+  it("starts a dwell timer when auto-save is enabled", async () => {
+    const alarm = makeAlarmPort();
+    const { service } = buildService({
+      alarm,
+      enabled: makeEnabledPort(true),
+    });
+
+    await service.startDwell(TAB_ID, ALLOWLISTED_URL);
+
+    expect(alarm.create).toHaveBeenCalledTimes(1);
   });
 });
 

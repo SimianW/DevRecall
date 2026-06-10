@@ -9,6 +9,7 @@ import type { PageHit, PageListItem, PageRecord } from "../shared/types";
 import { normalizeUrl } from "../lib/urlNormalize";
 import { toPageListItem } from "./repository/PageRepo";
 import type { ApiKeyStore } from "./settings/ApiKeyStore";
+import type { AutoSaveSettingStore } from "./settings/AutoSaveSettingStore";
 
 export type CapturePort = {
   save(tabId: number, saveMode?: "manual" | "auto"): Promise<PageRecord>;
@@ -51,6 +52,7 @@ export type HandlerDeps = {
   testConnection: (apiKey: string) => Promise<{ success: boolean; message: string }>;
   retrievalService: SearchPort;
   broadcast: (message: WorkerBroadcast) => void;
+  autoSaveSettings: AutoSaveSettingStore;
 };
 
 /**
@@ -254,6 +256,20 @@ export async function handleRequest(
         });
 
       return { type: "library.reindexStarted", payload: { total: pageIds.length } };
+    }
+
+    case "settings.getAutoSave":
+      return {
+        type: "settings.autoSave",
+        payload: { enabled: await deps.autoSaveSettings.isEnabled() },
+      };
+
+    case "settings.setAutoSave": {
+      await deps.autoSaveSettings.setEnabled(request.payload.enabled);
+      return {
+        type: "settings.autoSaveSet",
+        payload: { enabled: request.payload.enabled },
+      };
     }
 
     default:
