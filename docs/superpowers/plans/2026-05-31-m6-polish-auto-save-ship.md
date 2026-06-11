@@ -308,7 +308,7 @@ Document setup, usage, and the 60-second demo GIF path.
 - [ ] **Step 3: Verify v1.0 success criteria before tagging**
 
 Gate the release on the parent spec's §3 criteria — in particular **#7: ≥80%
-unit-test coverage on `src/lib/**` and `src/worker/services/**`** (run the
+unit-test coverage on `src/lib/**`and`src/worker/services/**`** (run the
 coverage report and confirm), plus #2 (auto-save works end-to-end) and #6
 (README + demo GIF present). Do not tag until these pass.
 
