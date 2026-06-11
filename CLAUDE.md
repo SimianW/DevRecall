@@ -214,7 +214,7 @@ This ensures the same technical content viewed multiple times is stored once.
 
 ## Build & Config
 
-- **Vite** (`vite.config.ts`): Entry points are the five HTML/TS files; CRX plugin handles manifest generation and MV3 bundling
+- **Vite** (`vite.config.ts`): Entry points are the four HTML/TS files; CRX plugin handles manifest generation and MV3 bundling
 - **Manifest** (`manifest.config.ts`): Defined as TypeScript, compiled to `/dist/manifest.json` by CRX plugin
 - **TypeScript** (`tsconfig.json`): Strict mode, ES2022 target, ESNext modules
 - **Linting** (`eslint.config.js`): ESLint + TypeScript rules; globals for Chrome APIs and test functions defined
@@ -227,7 +227,7 @@ This ensures the same technical content viewed multiple times is stored once.
 3. **Typed RPC over string messages**: Compile-time safety; no stringly-typed event soup.
 4. **`status` field on pages**: Async capture requires pending/ready/failed states visible to UI.
 5. **`fullText` stored in DB**: Re-chunking strategy may change; kept for future flexibility.
-6. **Float32Array for embeddings**: 4× smaller than number[], 4× faster cosine similarity (prepared for v1.1 vector search).
+6. **Float32Array for embeddings**: 4× smaller than number[], 4× faster cosine similarity (powers the hybrid vector arm in `RetrievalService`).
 7. **`urlHash` for dedup**: O(1) lookup; `url` not separately indexed.
 8. **Compound index `[sourceType+savedAt]`**: Filtered library views avoid full O(n) scan.
 
