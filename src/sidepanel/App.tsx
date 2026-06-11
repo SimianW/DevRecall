@@ -202,7 +202,7 @@ export function App({
               type="button"
               aria-pressed={filter === activeFilter}
               onClick={() => setActiveFilter(filter)}
-              className="rounded-md border border-default bg-surface-raised px-3 py-1 text-sm text-foreground/75 transition-colors hover:bg-foreground/5 aria-pressed:border-accent/40 aria-pressed:bg-accent/10 aria-pressed:text-accent"
+              className="rounded-full border border-default bg-surface-raised px-3 py-1 text-sm text-foreground/75 transition-colors hover:bg-foreground/5 aria-pressed:border-accent aria-pressed:bg-accent aria-pressed:text-white"
             >
               {filter}
             </button>

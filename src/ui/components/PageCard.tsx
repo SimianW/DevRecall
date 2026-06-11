@@ -76,7 +76,7 @@ export function PageCard({ page, onDelete, onRetry }: PageCardProps) {
         onClick={() => setExpanded((v) => !v)}
         aria-expanded={expanded}
       >
-        <h2 className="text-sm font-semibold text-foreground">{page.title}</h2>
+        <h2 className="font-serif text-sm font-semibold text-foreground">{page.title}</h2>
         <div className="flex shrink-0 items-center gap-1">
           <StatusBadge status={page.status} />
           <span className="text-xs text-foreground/40">{expanded ? "▲" : "▼"}</span>

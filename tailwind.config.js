@@ -9,9 +9,10 @@ export default {
         surface: "rgb(var(--color-surface) / <alpha-value>)",
         "surface-raised": "rgb(var(--color-surface-raised) / <alpha-value>)",
         default: "rgb(var(--color-border-default) / <alpha-value>)",
-        ink: "#1d232f",
-        panel: "#f7f8fb",
-        accent: "#2563eb",
+        accent: "rgb(var(--color-accent) / <alpha-value>)",
+      },
+      fontFamily: {
+        serif: ["Georgia", "ui-serif", "Cambria", "Times New Roman", "serif"],
       },
     },
   },
