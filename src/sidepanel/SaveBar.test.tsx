@@ -99,4 +99,35 @@ describe("SaveBar", () => {
 
     await waitFor(() => expect(getActiveTab).toHaveBeenCalledTimes(2));
   });
+
+  it("ignores a stale refresh that resolves after a newer one", async () => {
+    const oldTab = { tabId: 1, title: "Old page", url: "https://github.com/old" };
+    let resolveFirst!: (value: typeof tab | null) => void;
+    const getActiveTab = vi
+      .fn()
+      // First call (mount): hangs until we resolve it manually — with the OLD tab.
+      .mockImplementationOnce(
+        () => new Promise<typeof tab | null>((r) => (resolveFirst = r)),
+      )
+      // Second call (tab change): resolves immediately with the NEW tab.
+      .mockResolvedValue(tab);
+
+    let fireTabChange!: () => void;
+    const onTabChange = vi.fn().mockImplementation((handler: () => void) => {
+      fireTabChange = handler;
+      return () => {};
+    });
+
+    render(<SaveBar {...makeProps({ getActiveTab, onTabChange })} />);
+
+    // Trigger the newer refresh and let it complete.
+    fireTabChange();
+    expect(await screen.findByText("Using chrome.alarms")).toBeInTheDocument();
+
+    // Now the stale first call resolves — it must NOT clobber the newer state.
+    resolveFirst(oldTab);
+    await waitFor(() => expect(getActiveTab).toHaveBeenCalledTimes(2));
+    expect(screen.getByText("Using chrome.alarms")).toBeInTheDocument();
+    expect(screen.queryByText("Old page")).not.toBeInTheDocument();
+  });
 });

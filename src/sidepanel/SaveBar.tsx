@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 
 import type { DevRecallResponse, WorkerBroadcast } from "../shared/messages";
 import { sendRequest, subscribeToBroadcasts } from "../ui/rpc";
@@ -92,10 +92,21 @@ export function SaveBar({
   const [saving, setSaving] = useState(false);
   const [saveFailed, setSaveFailed] = useState(false);
 
+  // Guards overlapping refreshes: only the most recent call may commit state,
+  // so out-of-order resolutions can't clobber newer tab/status pairs.
+  const refreshSeq = useRef(0);
+
   const refresh = useCallback(async () => {
+    const seq = ++refreshSeq.current;
     const nextTab = await getActiveTab();
+    const nextStatus: UrlStatus = nextTab
+      ? await loadUrlStatus(nextTab.url)
+      : { saved: false };
+    if (seq !== refreshSeq.current) {
+      return; // a newer refresh superseded us
+    }
     setTab(nextTab);
-    setUrlStatus(nextTab ? await loadUrlStatus(nextTab.url) : { saved: false });
+    setUrlStatus(nextStatus);
   }, [getActiveTab, loadUrlStatus]);
 
   useEffect(() => {
