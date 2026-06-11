@@ -80,9 +80,7 @@ export class ChromePageExtractor implements PageExtractor {
           const response = (await chrome.tabs.sendMessage(tabId, request, {
             frameId,
           })) as ContentExtractResponse;
-          return response.type === "content.extracted"
-            ? { frameId, page: response.payload }
-            : null;
+          return response.type === "content.extracted" ? { frameId, page: response.payload } : null;
         } catch {
           // Frame has no content script (about:blank/srcdoc, injection blocked) — skip it.
           return null;
@@ -135,12 +133,12 @@ export class CaptureService {
     private readonly embedder: Embedder = new OpenAIProvider(),
   ) {}
 
-  async save(tabId: number): Promise<PageRecord> {
+  async save(tabId: number, saveMode: "manual" | "auto" = "manual"): Promise<PageRecord> {
     const extracted = await this.extractor.extract(tabId);
 
     const page = await this.writer.upsertCapturedPage({
       ...extracted,
-      saveMode: "manual",
+      saveMode,
     });
 
     await this.chunkWriter.replaceChunksForPage(page.id, chunkText(page.fullText));

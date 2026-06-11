@@ -4,19 +4,9 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## Project Overview
 
-DevRecall is a local-first Chrome extension that captures technical browsing sessions, summarizes and tags saved pages, and lets developers retrieve past documentation through natural-language search. **M1–M5 complete:** capture, LLM tagging, and hybrid keyword+vector retrieval (RRF fusion) are implemented. **M6** (polish + auto-save + ship v1.0) is the next milestone — see `docs/superpowers/plans/2026-05-31-m6-polish-auto-save-ship.md`.
+DevRecall is a local-first Chrome extension that captures technical browsing sessions, summarizes and tags saved pages, and lets developers retrieve past documentation through natural-language search. Currently at M1 (Skeleton) milestone with capture, tagging, and listing infrastructure in place.
 
 **Key Technologies:** React 18, TypeScript 6, Vite, Vitest, Dexie (IndexedDB), Chrome MV3, Tailwind CSS
-
-## Project Conventions & Gotchas
-
-- **This project is built with the Superpowers workflow — use its skills for every process.** Specs and plans live in `docs/superpowers/`. Invoke the matching skill *before* each phase, not just when stuck: `brainstorming` (any new feature/design), `writing-plans` (multi-step work), `test-driven-development` (all code — tests first), `systematic-debugging` (any bug/failure), `executing-plans` / `subagent-driven-development` (running a written plan), `verification-before-completion` (before claiming done), `requesting-code-review` (before merge). When in doubt, check for a relevant skill and use it.
-- **Version bump on every code change** — bump `version` in `package.json` AND `APP_VERSION` in `src/shared/messages.ts` (4-part `X.Y.Z.N`), then commit.
-- **MV3 service worker is killed after ~30s idle; in-memory globals are lost.** Never use `setTimeout`/`setInterval` for delayed work in the worker — use `chrome.alarms` + `chrome.storage.session` (register `onAlarm` at top level).
-- **Retrieval is hybrid** — BM25 keyword + vector cosine + RRF fusion in `RetrievalService`; `MIN_VECTOR_SCORE` gates vector hits. Vector arm is for conceptual queries; single/peripheral words score low cosine and are correctly keyword-only.
-- **Re-index rule** — changing embeddings/chunking requires re-indexing existing pages (Options → Re-index). BM25 `tokenize()` (`src/lib/bm25.ts`, shared by query + docs) runs at query time, so tokenizer changes (e.g. stemming) need NO re-index.
-- **Capture reads all frames** — content script injects `all_frames`; `ChromePageExtractor` keeps the richest frame's body but anchors url/title to the top frame. Readability intentionally drops trailing reference/citation lists.
-- **Integration/measurement tests that call OpenAI are skipped unless `OPENAI_API_KEY` is set** (CI-safe).
 
 ## Development Setup
 
@@ -53,21 +43,19 @@ pnpm test src/lib/urlNormalize.test.ts  # Single test file
 3. Enable Developer mode (top right)
 4. Click "Load unpacked"
 5. Select the `/dist` directory
-6. Pin the extension; open popup, side panel, and options page to verify
+6. Pin the extension; open the side panel and options page to verify
 
 ## Architecture
 
-### Five-Component Design
+### Four-Component Design
 
-The extension is structured as five loosely coupled components communicating via **typed RPC** (chrome.runtime.sendMessage with discriminated-union request/response types):
+The extension is structured as four loosely coupled components communicating via **typed RPC** (chrome.runtime.sendMessage with discriminated-union request/response types):
 
 ```
-Content Script → Service Worker ← Popup
+Content Script → Service Worker ← Side Panel / Options
                       ↓
                  Database (Dexie)
                  LLM Provider (OpenAI)
-                      ↑
-                 Side Panel
 ```
 
 #### 1. **Service Worker** (`src/worker/index.ts`)
@@ -78,7 +66,7 @@ Content Script → Service Worker ← Popup
 - Only writer to IndexedDB (no write/write races)
 - May be killed mid-operation by Chrome's MV3 lifecycle; all state is rebuildable from the database
 
-**Key file:** `/src/worker/index.ts` — read this first to understand request/response flow.
+**Key file:** `/src/worker/handlers.ts` — read this first to understand request/response flow; `/src/worker/index.ts` is the thin MV3 entry (composition + listeners).
 
 #### 2. **Content Script** (`src/content/extract.ts`)
 
@@ -87,27 +75,20 @@ Content Script → Service Worker ← Popup
 - Returns `{ url, title, fullText, readingTimeMs }`
 - Discards tracking parameters (utm\_\*, gclid, fbclid) and URL fragments during extraction
 
-#### 3. **Popup** (`src/popup/Popup.tsx`)
-
-- Toolbar entry point ("Save this page" button)
-- No direct database access
-- Shows page save status (idle/saving/saved/failed/pending with retry)
-- Polls worker for url status while processing is pending
-- Opens the side panel
-
-#### 4. **Side Panel** (`src/sidepanel/App.tsx`)
+#### 3. **Side Panel** (`src/sidepanel/App.tsx`)
 
 - Main discovery UI — live hybrid search (BM25 + vector + RRF) with "matched by meaning" badges
-- Lists saved pages with filters (All/Docs/SO/GH)
+- Hosts the "Save to library" bar (active tab title/domain + live save status via worker broadcasts)
+- Lists saved pages with filters (All / Docs / Stack Overflow / GitHub)
 - Shows loading and empty states
 - All data flows through worker via typed messages
 
-#### 5. **Options Page** (`src/options/Options.tsx`)
+#### 4. **Options Page** (`src/options/Options.tsx`)
 
 - API key management (stored in `chrome.storage.local`, not IndexedDB)
 - Connection testing (minimal OpenAI call to validate key)
 - Storage stats display (page count, total text bytes)
-- Auto-save toggle (UI placeholder; logic not yet implemented)
+- Auto-save toggle (opt-in, off by default; allowlisted domains shown) — flag in chrome.storage.local
 
 ### Data Model
 
@@ -140,11 +121,11 @@ pages: '&id, urlHash, savedAt, domain, sourceType, status, [sourceType+savedAt]'
 
 ### Capture Pipeline
 
-1. **User clicks "Save this page"** → Popup sends `page.save` message to worker
+1. **User clicks "Save to library" in the side panel** (or the toolbar icon opens the panel) → panel sends `page.save` to worker
 2. **CaptureService.save(tabId)**
    - Calls `ChromePageExtractor.extract(tabId)` → content script extracts text
    - Calls `PageRepo.upsertCapturedPage(extracted)` → writes to DB with `status: "pending"`
-   - Returns `PageListItem` to popup immediately
+   - Returns `PageListItem` to side panel immediately
 3. **Background LLM Processing** (async, non-blocking)
    - If API key is configured, worker calls `OpenAIProvider.summarizeAndTag()`
    - OpenAI response is parsed and validated; invalid fields default to safe values
@@ -194,7 +175,7 @@ This ensures the same technical content viewed multiple times is stored once.
 **Coverage targets** (configured in `vitest.config.ts`):
 
 - `src/lib/**/*.ts` (utilities: URL normalization, etc.)
-- `src/worker/index.ts` (message dispatcher: handleMessage, handleRequest)
+- `src/worker/handlers.ts` (message dispatcher: handleMessage, handleRequest)
 - `src/worker/services/**/*.ts` (CaptureService, etc.)
 - `src/worker/llm/**/*.ts` (OpenAI provider)
 - `src/worker/settings/**/*.ts` (API key store)
@@ -217,21 +198,23 @@ This ensures the same technical content viewed multiple times is stored once.
 
 - `/src/shared/` — types and message contracts (read by all layers)
 - `/src/worker/` — service worker entry point and business logic
-  - `index.ts` — message handler dispatcher
+  - `handlers.ts` — typed RPC dispatcher (pure; unit-tested)
+  - `index.ts` — thin MV3 entry (composition + top-level listeners)
   - `services/` — domain logic (CaptureService, etc.)
   - `llm/` — LLM provider interface and OpenAI implementation
   - `settings/` — API key store (Chrome storage wrapper)
   - `repository/db.ts` — Dexie schema definition and version (bump here for migrations)
   - `repository/` — PageRepo queries
-- `/src/popup/`, `/src/sidepanel/`, `/src/options/` — UI entry points (React)
+- `/src/sidepanel/`, `/src/options/` — UI entry points (React)
 - `/src/ui/components/` — shared UI components (SurfaceShell, PageCard, etc.)
+- `/src/ui/rpc.ts` — shared typed RPC client for UI surfaces
 - `/src/content/` — content script entry point
 - `/src/lib/` — utilities (URL normalization, etc.)
 - `/docs/superpowers/specs/` — design documents
 
 ## Build & Config
 
-- **Vite** (`vite.config.ts`): Entry points are the five HTML/TS files; CRX plugin handles manifest generation and MV3 bundling
+- **Vite** (`vite.config.ts`): Entry points are the four HTML/TS files; CRX plugin handles manifest generation and MV3 bundling
 - **Manifest** (`manifest.config.ts`): Defined as TypeScript, compiled to `/dist/manifest.json` by CRX plugin
 - **TypeScript** (`tsconfig.json`): Strict mode, ES2022 target, ESNext modules
 - **Linting** (`eslint.config.js`): ESLint + TypeScript rules; globals for Chrome APIs and test functions defined
@@ -244,7 +227,7 @@ This ensures the same technical content viewed multiple times is stored once.
 3. **Typed RPC over string messages**: Compile-time safety; no stringly-typed event soup.
 4. **`status` field on pages**: Async capture requires pending/ready/failed states visible to UI.
 5. **`fullText` stored in DB**: Re-chunking strategy may change; kept for future flexibility.
-6. **Float32Array for embeddings**: 4× smaller than number[], 4× faster cosine similarity (prepared for v1.1 vector search).
+6. **Float32Array for embeddings**: 4× smaller than number[], 4× faster cosine similarity (powers the hybrid vector arm in `RetrievalService`).
 7. **`urlHash` for dedup**: O(1) lookup; `url` not separately indexed.
 8. **Compound index `[sourceType+savedAt]`**: Filtered library views avoid full O(n) scan.
 

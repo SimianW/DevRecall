@@ -23,6 +23,13 @@ export type SearchOptions = {
 const DEFAULT_TOP_K = 10;
 const VECTOR_TOP_K = 50;
 const MAX_QUERY_CACHE = 20;
+// M6 Task 5: re-measured post-stemming (text-embedding-3-small, 2026-06).
+// The [0.30, 0.40) band only contains "hyperlinks" (0.384) — a peripheral
+// keyword already recalled by the BM25 arm, so admitting it via vector is
+// neutral. Genuine paraphrases ("tiny fraction of users" 0.267, "reporting"
+// 0.275) fall below 0.3; "reporting" is now covered by Task 1 stemming anyway.
+// Lowering to 0.3 adds false-positive risk with no real recall gain.
+// Decision: keep 0.4 as the high-confidence conceptual gate.
 // Minimum cosine similarity to include a vector hit. 0.4 blocks true gibberish
 // (orthogonal vectors → similarity 0) while allowing morphological variants
 // like "reporting" → "report" that BM25 misses without stemming.

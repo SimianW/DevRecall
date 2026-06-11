@@ -182,26 +182,27 @@ describe("RetrievalService", () => {
   });
 
   it("surfaces a vector-only hit that keyword search misses (matched by meaning)", async () => {
-    const embedder = fakeEmbedder({ "elastic scaling of containers": [1, 0] });
+    // "distributed memory cache" has no stemmed token overlap with any chunk
+    // (distribut/memori/cach do not appear in chunks), so the keyword arm misses.
+    const embedder = fakeEmbedder({ "distributed memory cache": [1, 0] });
 
-    // Keyword-only (no key) finds nothing — none of these terms appear in any chunk.
+    // Keyword-only (no key) finds nothing — none of these stems appear in any chunk.
     const keywordOnly = await makeService(vectorChunks, embedder).search(
-      "elastic scaling of containers",
+      "distributed memory cache",
     );
     expect(keywordOnly).toEqual([]);
 
     // Hybrid (with key) surfaces p1 by meaning, with no literal term overlap.
-    const hybrid = await makeService(vectorChunks, embedder).search(
-      "elastic scaling of containers",
-      { apiKey: "sk-test" },
-    );
+    const hybrid = await makeService(vectorChunks, embedder).search("distributed memory cache", {
+      apiKey: "sk-test",
+    });
 
     expect(hybrid[0].page.id).toBe("p1");
     expect(hybrid[0].matchReason).toBe("vector");
     expect(hybrid[0].scores.keyword).toBeNull();
     expect(hybrid[0].scores.vector).toBeGreaterThan(0.9);
     expect(hybrid[0].bestChunk.highlightedHtml).not.toContain("<mark>");
-    expect(embedder.embed).toHaveBeenCalledWith("elastic scaling of containers", "sk-test");
+    expect(embedder.embed).toHaveBeenCalledWith("distributed memory cache", "sk-test");
   });
 
   it("fuses keyword and vector arms into a 'both' match", async () => {

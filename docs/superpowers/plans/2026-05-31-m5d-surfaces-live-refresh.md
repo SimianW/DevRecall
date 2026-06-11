@@ -437,9 +437,11 @@ function makeDeps(
       getApiKey: vi.fn().mockResolvedValue(overrides.apiKey ?? null),
       setApiKey: vi.fn().mockResolvedValue(undefined),
     },
-    testConnection: vi.fn().mockResolvedValue(
-      overrides.connectionResult ?? { success: true, message: "Connection successful" },
-    ),
+    testConnection: vi
+      .fn()
+      .mockResolvedValue(
+        overrides.connectionResult ?? { success: true, message: "Connection successful" },
+      ),
     retrievalService: {
       search: vi.fn().mockResolvedValue([]),
       invalidate: vi.fn(),
@@ -452,29 +454,27 @@ function makeDeps(
 Add new tests inside `describe("worker request handler", ...)`:
 
 ```ts
-  it("broadcasts page.updated and invalidates on save, then again after processing", async () => {
-    const deps = makeDeps({ apiKey: "sk-test" });
-    deps.captureService.save = vi.fn().mockResolvedValue(pendingPage);
-    deps.captureService.processPage = vi
-      .fn()
-      .mockResolvedValue({ ...pendingPage, status: "ready" });
+it("broadcasts page.updated and invalidates on save, then again after processing", async () => {
+  const deps = makeDeps({ apiKey: "sk-test" });
+  deps.captureService.save = vi.fn().mockResolvedValue(pendingPage);
+  deps.captureService.processPage = vi.fn().mockResolvedValue({ ...pendingPage, status: "ready" });
 
-    await handleRequest({ type: "page.save", payload: { tabId: 7 } }, deps);
+  await handleRequest({ type: "page.save", payload: { tabId: 7 } }, deps);
 
+  expect(deps.broadcast).toHaveBeenCalledWith({
+    type: "page.updated",
+    payload: { page: pendingListItem },
+  });
+  expect(deps.retrievalService.invalidate).toHaveBeenCalled();
+
+  // The processPage continuation broadcasts a second page.updated.
+  await vi.waitFor(() => {
     expect(deps.broadcast).toHaveBeenCalledWith({
       type: "page.updated",
-      payload: { page: pendingListItem },
-    });
-    expect(deps.retrievalService.invalidate).toHaveBeenCalled();
-
-    // The processPage continuation broadcasts a second page.updated.
-    await vi.waitFor(() => {
-      expect(deps.broadcast).toHaveBeenCalledWith({
-        type: "page.updated",
-        payload: { page: { ...pendingListItem, status: "ready" } },
-      });
+      payload: { page: { ...pendingListItem, status: "ready" } },
     });
   });
+});
 ```
 
 - [ ] **Step 2: Run the test to verify it fails**
@@ -527,10 +527,7 @@ type PageListPort = {
 };
 
 type SearchPort = {
-  search(
-    query: string,
-    options?: { topK?: number; apiKey?: string | null },
-  ): Promise<PageHit[]>;
+  search(query: string, options?: { topK?: number; apiKey?: string | null }): Promise<PageHit[]>;
   invalidate(): void;
 };
 
@@ -683,20 +680,20 @@ Expected: PASS.
 In `src/worker/index.test.ts`, add inside `describe("worker request handler", ...)`:
 
 ```ts
-  it("deletes a page, invalidates, and broadcasts removal", async () => {
-    const deps = makeDeps();
+it("deletes a page, invalidates, and broadcasts removal", async () => {
+  const deps = makeDeps();
 
-    await expect(
-      handleRequest({ type: "page.delete", payload: { id: "page-1" } }, deps),
-    ).resolves.toEqual({ type: "page.deleted", payload: { id: "page-1" } });
+  await expect(
+    handleRequest({ type: "page.delete", payload: { id: "page-1" } }, deps),
+  ).resolves.toEqual({ type: "page.deleted", payload: { id: "page-1" } });
 
-    expect(deps.pageRepo.deleteWithChunks).toHaveBeenCalledWith("page-1");
-    expect(deps.retrievalService.invalidate).toHaveBeenCalled();
-    expect(deps.broadcast).toHaveBeenCalledWith({
-      type: "page.removed",
-      payload: { id: "page-1" },
-    });
+  expect(deps.pageRepo.deleteWithChunks).toHaveBeenCalledWith("page-1");
+  expect(deps.retrievalService.invalidate).toHaveBeenCalled();
+  expect(deps.broadcast).toHaveBeenCalledWith({
+    type: "page.removed",
+    payload: { id: "page-1" },
   });
+});
 ```
 
 - [ ] **Step 6: Add the `page.delete` handler**
@@ -836,42 +833,42 @@ Expected: PASS.
 Append to `src/worker/services/CaptureService.test.ts` (inside the `describe("CaptureService", ...)` block):
 
 ```ts
-  it("reindexes pages sequentially and reports progress", async () => {
-    const processed: string[] = [];
-    const reader: PageReader = {
-      getById: vi.fn().mockResolvedValue(pendingPage),
-      updatePage: vi.fn().mockResolvedValue(undefined),
-    };
-    const tagger: PageTagger = { summarizeAndTag: vi.fn().mockResolvedValue(taggingResult) };
-    const chunkWriter = mockChunkWriter();
-    const embedder = mockEmbedder();
-    const service = new CaptureService(
-      { upsertCapturedPage: vi.fn() },
-      { extract: vi.fn() },
-      reader,
-      tagger,
-      chunkWriter,
-      embedder,
-    );
-    // Spy processPage to record order without re-tagging twice per id.
-    const original = service.processPage.bind(service);
-    vi.spyOn(service, "processPage").mockImplementation(async (id, key) => {
-      processed.push(id);
-      return original(id, key);
-    });
-
-    const progress: Array<[number, number]> = [];
-    await service.reindexPages(["a", "b", "c"], "sk-test", (done, total) =>
-      progress.push([done, total]),
-    );
-
-    expect(processed).toEqual(["a", "b", "c"]);
-    expect(progress).toEqual([
-      [1, 3],
-      [2, 3],
-      [3, 3],
-    ]);
+it("reindexes pages sequentially and reports progress", async () => {
+  const processed: string[] = [];
+  const reader: PageReader = {
+    getById: vi.fn().mockResolvedValue(pendingPage),
+    updatePage: vi.fn().mockResolvedValue(undefined),
+  };
+  const tagger: PageTagger = { summarizeAndTag: vi.fn().mockResolvedValue(taggingResult) };
+  const chunkWriter = mockChunkWriter();
+  const embedder = mockEmbedder();
+  const service = new CaptureService(
+    { upsertCapturedPage: vi.fn() },
+    { extract: vi.fn() },
+    reader,
+    tagger,
+    chunkWriter,
+    embedder,
+  );
+  // Spy processPage to record order without re-tagging twice per id.
+  const original = service.processPage.bind(service);
+  vi.spyOn(service, "processPage").mockImplementation(async (id, key) => {
+    processed.push(id);
+    return original(id, key);
   });
+
+  const progress: Array<[number, number]> = [];
+  await service.reindexPages(["a", "b", "c"], "sk-test", (done, total) =>
+    progress.push([done, total]),
+  );
+
+  expect(processed).toEqual(["a", "b", "c"]);
+  expect(progress).toEqual([
+    [1, 3],
+    [2, 3],
+    [3, 3],
+  ]);
+});
 ```
 
 - [ ] **Step 6: Run to verify it fails**
@@ -914,33 +911,33 @@ Expected: PASS.
 In `src/worker/index.test.ts`, add:
 
 ```ts
-  it("starts a reindex and reports the total when a key is set", async () => {
-    const deps = makeDeps({ apiKey: "sk-test" });
-    deps.pageRepo.pageIdsMissingEmbeddings = vi.fn().mockResolvedValue(["a", "b"]);
+it("starts a reindex and reports the total when a key is set", async () => {
+  const deps = makeDeps({ apiKey: "sk-test" });
+  deps.pageRepo.pageIdsMissingEmbeddings = vi.fn().mockResolvedValue(["a", "b"]);
 
-    await expect(handleRequest({ type: "library.reindex" }, deps)).resolves.toEqual({
-      type: "library.reindexStarted",
-      payload: { total: 2 },
-    });
-
-    await vi.waitFor(() => {
-      expect(deps.captureService.reindexPages).toHaveBeenCalledWith(
-        ["a", "b"],
-        "sk-test",
-        expect.any(Function),
-      );
-    });
+  await expect(handleRequest({ type: "library.reindex" }, deps)).resolves.toEqual({
+    type: "library.reindexStarted",
+    payload: { total: 2 },
   });
 
-  it("refuses to reindex without an API key", async () => {
-    const deps = makeDeps({ apiKey: null });
-
-    await expect(handleRequest({ type: "library.reindex" }, deps)).resolves.toEqual({
-      type: "error",
-      payload: { message: "No API key set" },
-    });
-    expect(deps.captureService.reindexPages).not.toHaveBeenCalled();
+  await vi.waitFor(() => {
+    expect(deps.captureService.reindexPages).toHaveBeenCalledWith(
+      ["a", "b"],
+      "sk-test",
+      expect.any(Function),
+    );
   });
+});
+
+it("refuses to reindex without an API key", async () => {
+  const deps = makeDeps({ apiKey: null });
+
+  await expect(handleRequest({ type: "library.reindex" }, deps)).resolves.toEqual({
+    type: "error",
+    payload: { message: "No API key set" },
+  });
+  expect(deps.captureService.reindexPages).not.toHaveBeenCalled();
+});
 ```
 
 - [ ] **Step 10: Add the `library.reindex` handler**
@@ -1069,34 +1066,34 @@ export function PageCard({ page, onDelete }: PageCardProps) {
 Replace the expanded footer `<div className="flex items-center justify-between">…</div>` (the row containing the `Open →` link) with:
 
 ```tsx
-          <div className="flex items-center justify-between">
-            <span className="text-xs text-slate-400">
-              {page.sourceType.replace(/_/g, " ")} · {savedDate}
-            </span>
-            <div className="flex items-center gap-3">
-              {onDelete && (
-                <button
-                  type="button"
-                  onClick={(e) => {
-                    e.stopPropagation();
-                    onDelete(page.id);
-                  }}
-                  className="text-xs font-medium text-red-600 hover:underline"
-                >
-                  Delete
-                </button>
-              )}
-              <a
-                href={page.url}
-                target="_blank"
-                rel="noopener noreferrer"
-                className="text-xs font-medium text-accent hover:underline"
-                onClick={(e) => e.stopPropagation()}
-              >
-                Open →
-              </a>
-            </div>
-          </div>
+<div className="flex items-center justify-between">
+  <span className="text-xs text-slate-400">
+    {page.sourceType.replace(/_/g, " ")} · {savedDate}
+  </span>
+  <div className="flex items-center gap-3">
+    {onDelete && (
+      <button
+        type="button"
+        onClick={(e) => {
+          e.stopPropagation();
+          onDelete(page.id);
+        }}
+        className="text-xs font-medium text-red-600 hover:underline"
+      >
+        Delete
+      </button>
+    )}
+    <a
+      href={page.url}
+      target="_blank"
+      rel="noopener noreferrer"
+      className="text-xs font-medium text-accent hover:underline"
+      onClick={(e) => e.stopPropagation()}
+    >
+      Open →
+    </a>
+  </div>
+</div>
 ```
 
 - [ ] **Step 2: Write the failing side-panel tests**
@@ -1719,69 +1716,67 @@ export function Options({
 After the existing effects, add a broadcast subscription that tracks progress:
 
 ```ts
-  useEffect(() => {
-    const unsubscribe = subscribe((message) => {
-      if (message.type === "library.reindexProgress") {
-        setProgress(message.payload);
-        if (message.payload.done >= message.payload.total) {
-          setReindexing(false);
-          loadStorageStats().then(setStorageStats).catch(() => {});
-        }
+useEffect(() => {
+  const unsubscribe = subscribe((message) => {
+    if (message.type === "library.reindexProgress") {
+      setProgress(message.payload);
+      if (message.payload.done >= message.payload.total) {
+        setReindexing(false);
+        loadStorageStats()
+          .then(setStorageStats)
+          .catch(() => {});
       }
-    });
-    return unsubscribe;
-  }, [subscribe, loadStorageStats]);
+    }
+  });
+  return unsubscribe;
+}, [subscribe, loadStorageStats]);
 ```
 
 Add the handler:
 
 ```ts
-  const handleReindex = async () => {
-    setReindexing(true);
-    setProgress({ done: 0, total: 0 });
-    try {
-      const { total } = await startReindex();
-      setProgress({ done: 0, total });
-      if (total === 0) {
-        setReindexing(false);
-      }
-    } catch {
+const handleReindex = async () => {
+  setReindexing(true);
+  setProgress({ done: 0, total: 0 });
+  try {
+    const { total } = await startReindex();
+    setProgress({ done: 0, total });
+    if (total === 0) {
       setReindexing(false);
     }
-  };
+  } catch {
+    setReindexing(false);
+  }
+};
 ```
 
 (d) Render the control inside the `Storage` section (after the existing storage `<p>`):
 
 ```tsx
-        <section className="rounded-md border border-slate-200 bg-white p-4">
-          <h2 className="text-sm font-semibold text-slate-900">Storage</h2>
-          <p className="mt-2 text-sm text-slate-500">
-            {storageStats == null
-              ? "Loading..."
-              : `${storageStats.pageCount} ${storageStats.pageCount === 1 ? "page" : "pages"}, ${(storageStats.totalTextBytes / 1_048_576).toFixed(2)} MB`}
-          </p>
+<section className="rounded-md border border-slate-200 bg-white p-4">
+  <h2 className="text-sm font-semibold text-slate-900">Storage</h2>
+  <p className="mt-2 text-sm text-slate-500">
+    {storageStats == null
+      ? "Loading..."
+      : `${storageStats.pageCount} ${storageStats.pageCount === 1 ? "page" : "pages"}, ${(storageStats.totalTextBytes / 1_048_576).toFixed(2)} MB`}
+  </p>
 
-          <button
-            type="button"
-            onClick={handleReindex}
-            disabled={
-              !keySaved || reindexing || (storageStats?.pagesMissingEmbeddings ?? 0) === 0
-            }
-            className="mt-3 rounded-md bg-slate-200 px-3 py-2 text-sm font-medium text-slate-700 disabled:bg-slate-100 disabled:text-slate-400"
-          >
-            {reindexing && progress
-              ? `Re-indexing ${progress.done} / ${progress.total}...`
-              : `Re-index library${
-                  storageStats && storageStats.pagesMissingEmbeddings > 0
-                    ? ` (${storageStats.pagesMissingEmbeddings})`
-                    : ""
-                }`}
-          </button>
-          {!keySaved && (
-            <p className="mt-1 text-xs text-amber-600">Set an API key to re-index.</p>
-          )}
-        </section>
+  <button
+    type="button"
+    onClick={handleReindex}
+    disabled={!keySaved || reindexing || (storageStats?.pagesMissingEmbeddings ?? 0) === 0}
+    className="mt-3 rounded-md bg-slate-200 px-3 py-2 text-sm font-medium text-slate-700 disabled:bg-slate-100 disabled:text-slate-400"
+  >
+    {reindexing && progress
+      ? `Re-indexing ${progress.done} / ${progress.total}...`
+      : `Re-index library${
+          storageStats && storageStats.pagesMissingEmbeddings > 0
+            ? ` (${storageStats.pagesMissingEmbeddings})`
+            : ""
+        }`}
+  </button>
+  {!keySaved && <p className="mt-1 text-xs text-amber-600">Set an API key to re-index.</p>}
+</section>
 ```
 
 - [ ] **Step 4: Run the Options tests**
@@ -1857,10 +1852,13 @@ git commit -am "feat: complete M5 embeddings + hybrid retrieval milestone" || tr
 
 - **Spec coverage.** M5d delivers success criteria #5 (live `pending → ready`, Task 3 + 7), #6 (keyboard shortcut, Task 6), #7 (atomic delete reflected live, Tasks 4 + 7), and #8 (re-index, Tasks 5 + 9), plus the §6.6 caching (Task 1) and the §6.5 badge (Task 8). Criterion #3 (5 hybrid queries) and the Chinese-query check are in the manual checklist (Task 10), as the parent spec's §9 places them under Manual/E2E with real embeddings.
 - **Cache invalidation is an in-process call, not a self-broadcast.** A worker cannot receive its own `chrome.runtime.sendMessage`, so the retriever can't "listen" for `page.updated`/`page.removed`. Instead every mutation site (`page.save`, the `processPage` continuation, `page.delete`, each reindex step) calls `deps.retrievalService.invalidate()` right next to `deps.broadcast(...)`. Same instant, two audiences: `invalidate()` for the in-worker cache, the broadcast for the UI contexts.
-- **Live refresh updates the library list only.** The `onMessage` reducer touches `pages` state, never `hits`. Search results are a query snapshot (parent spec §7.1); a background `page.updated` during an active search updates the underlying library but won't reorder the visible result list until the next query. The delete card vanishes via the `page.removed` broadcast the worker sends to *all* contexts including the initiating panel — so no optimistic local removal is needed, keeping one source of truth.
-- **Atomic mutations.** Delete (`deleteWithChunks`) and the embed upgrade (`commitProcessedPage`, M5b) each wrap both tables in one `rw` transaction — no orphan chunks, no half-states. Re-index is *resumable*: each page is its own `processPage` transaction, so a killed worker leaves done pages embedded and the rest keyword-only; re-clicking resumes from `pageIdsMissingEmbeddings`.
+- **Live refresh updates the library list only.** The `onMessage` reducer touches `pages` state, never `hits`. Search results are a query snapshot (parent spec §7.1); a background `page.updated` during an active search updates the underlying library but won't reorder the visible result list until the next query. The delete card vanishes via the `page.removed` broadcast the worker sends to _all_ contexts including the initiating panel — so no optimistic local removal is needed, keeping one source of truth.
+- **Atomic mutations.** Delete (`deleteWithChunks`) and the embed upgrade (`commitProcessedPage`, M5b) each wrap both tables in one `rw` transaction — no orphan chunks, no half-states. Re-index is _resumable_: each page is its own `processPage` transaction, so a killed worker leaves done pages embedded and the rest keyword-only; re-clicking resumes from `pageIdsMissingEmbeddings`.
 - **Testability boundaries.** UI broadcast wiring is injected via a `subscribe` prop (mirroring the existing `listPages`/`runSearch` pattern), so live-refresh and progress are unit-tested without a real `chrome`. The `chrome.commands` shortcut is the one piece left to the manual checklist — it is thin glue (`sidePanel.open` inside the command event) that can't run in jsdom and has no logic worth a brittle global-`chrome` stub.
 - **Stat field placement.** `pagesMissingEmbeddings` rides on the existing `storage.stats` the Options page already fetches, rather than a new request — Options needs the count exactly where it already reads storage stats. The message-contract change (Task 2) lands one task before its producer (`getStats`, Task 5), so a strict in-order run is briefly red on typecheck between them; this is called out in Task 2 Step 5 and clears in Task 5.
 - **Type consistency.** `WorkerBroadcast` is one union consumed identically by the worker (`broadcast`), the side panel, and Options. `SearchPort.invalidate`, `CapturePort.reindexPages`, and `PageListPort.{deleteWithChunks, pageIdsMissingEmbeddings, getStats}` are mirrored exactly between the production classes and the `index.test.ts` mock deps. The `SearchResultCard` `BADGE` map is keyed by `SearchMatchReason`, so adding a future reason is a compile error until the label is supplied.
 - **Security.** `highlightedHtml` is still built only from escaped chunk text + worker-added `<mark>` (M4/M5c); the badge label is static React text. Delete has no confirmation dialog — a deliberate simplicity choice for the portfolio scope; a confirm step is a trivial M6 follow-up if desired.
+
+```
+
 ```

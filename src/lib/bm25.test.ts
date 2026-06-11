@@ -4,12 +4,13 @@ import { bm25Search, tokenize } from "./bm25";
 
 describe("tokenize", () => {
   it("lowercases, splits on non-alphanumerics, and drops stopwords", () => {
+    // After stemming: horizontal→horizont, autoscaler→autoscal, scales→scale, pods→pod
     expect(tokenize("The Horizontal-Pod Autoscaler scales PODS!")).toEqual([
-      "horizontal",
+      "horizont",
       "pod",
-      "autoscaler",
-      "scales",
-      "pods",
+      "autoscal",
+      "scale",
+      "pod",
     ]);
   });
 });
@@ -35,7 +36,8 @@ describe("bm25Search", () => {
     expect(hits.length).toBeGreaterThan(0);
     expect(hits[0].index).toBe(0);
     expect(hits[0].score).toBeGreaterThan(0);
-    expect(hits[0].matchedTerms).toContain("pods");
+    // "pods" is stemmed to "pod" in both query and document
+    expect(hits[0].matchedTerms).toContain("pod");
   });
 
   it("excludes documents that contain no query term", () => {
@@ -51,6 +53,35 @@ describe("bm25Search", () => {
   });
 });
 
+describe("tokenize stemming", () => {
+  it("stems reporting and report to the same token", () => {
+    expect(tokenize("reporting")).toEqual(tokenize("report"));
+  });
+
+  it("stems stakeholder and stakeholders to the same token", () => {
+    expect(tokenize("stakeholder")).toEqual(tokenize("stakeholders"));
+  });
+
+  it("leaves CJK bigrams unchanged", () => {
+    expect(tokenize("报告")).toEqual(["报告"]);
+  });
+
+  it("does not mangle short dev tokens", () => {
+    expect(tokenize("css")).toContain("css");
+    expect(tokenize("json")).toContain("json");
+  });
+});
+
+describe("bm25 stemming recall", () => {
+  it("matches stakeholder against stakeholders", () => {
+    expect(bm25Search("stakeholder", ["...engaging stakeholders on scope..."])).toHaveLength(1);
+  });
+
+  it("matches reporting against report", () => {
+    expect(bm25Search("reporting", ["...a one-pager report ..."])).toHaveLength(1);
+  });
+});
+
 describe("tokenize — CJK support", () => {
   it("emits character bigrams for a Han run", () => {
     expect(tokenize("自动扩缩")).toEqual(["自动", "动扩", "扩缩"]);
@@ -61,13 +92,7 @@ describe("tokenize — CJK support", () => {
   });
 
   it("tokenizes mixed Latin + CJK text", () => {
-    expect(tokenize("React 服务端渲染")).toEqual([
-      "react",
-      "服务",
-      "务端",
-      "端渲",
-      "渲染",
-    ]);
+    expect(tokenize("React 服务端渲染")).toEqual(["react", "服务", "务端", "端渲", "渲染"]);
   });
 
   it("supports Hiragana, Katakana, and Hangul runs", () => {
@@ -78,6 +103,7 @@ describe("tokenize — CJK support", () => {
 
   it("preserves M4 Latin/stopword behavior", () => {
     expect(tokenize("The quick brown fox")).toEqual(["quick", "brown", "fox"]);
-    expect(tokenize("React 18 hooks")).toEqual(["react", "18", "hooks"]);
+    // "hooks" is stemmed to "hook"
+    expect(tokenize("React 18 hooks")).toEqual(["react", "18", "hook"]);
   });
 });

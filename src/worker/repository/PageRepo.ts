@@ -92,6 +92,17 @@ export class PageRepo {
 
     return pages.map(toPageListItem);
   }
+
+  async exportAll(): Promise<PageRecord[]> {
+    return this.database.pages.orderBy("savedAt").toArray();
+  }
+
+  async deleteAll(): Promise<void> {
+    await this.database.transaction("rw", this.database.pages, this.database.chunks, async () => {
+      await this.database.chunks.clear();
+      await this.database.pages.clear();
+    });
+  }
 }
 
 export function toPageListItem(page: PageRecord): PageListItem {
@@ -106,5 +117,6 @@ export function toPageListItem(page: PageRecord): PageListItem {
     technologies: page.technologies,
     savedAt: page.savedAt,
     status: page.status,
+    ...(page.errorReason !== undefined ? { errorReason: page.errorReason } : {}),
   };
 }

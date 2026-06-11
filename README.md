@@ -1,50 +1,147 @@
 # DevRecall
 
-DevRecall is a local-first Chrome extension that captures technical browsing sessions, summarizes and tags saved pages, and lets developers retrieve past documentation, GitHub issues, Stack Overflow answers, and debugging notes through natural-language search.
+DevRecall is a local-first Chrome extension that captures technical pages, summarizes and tags them via an LLM, and lets you retrieve your saved library through hybrid keyword and semantic search. All data stays in your browser's IndexedDB — nothing is synced to a server.
 
-## Status
+<!-- TODO: record a 60s demo GIF and save it to docs/demo.gif -->
 
-Current milestone: M1 Skeleton.
+![DevRecall demo](docs/demo.gif)
 
-The extension shell loads the popup, side panel, options page, and background service worker. Capture, summarization, search, and export are scoped to later milestones.
+---
 
-## Development
+## Requirements
 
-Requirements:
-
-- Node.js 20 or newer
-- pnpm 9 or newer
+- Node.js 20+
+- pnpm 9+
 - Chrome or Chromium with extension developer mode enabled
+- An OpenAI API key (required for LLM summarization/tagging and semantic search; keyword search works without one)
 
-Install dependencies:
+> The API key is stored in `chrome.storage.local` inside your browser profile. It is never written to disk in this repository and is never committed.
+
+---
+
+## Install and build
 
 ```bash
 pnpm install
-```
-
-Run checks:
-
-```bash
-pnpm lint
-pnpm typecheck
-pnpm test
 pnpm build
 ```
 
-Build the extension:
+`pnpm build` runs a TypeScript check and then Vite, writing the extension bundle to `/dist`.
+
+---
+
+## Load the unpacked extension
+
+1. Open `chrome://extensions` in Chrome.
+2. Enable **Developer mode** (toggle in the top-right corner).
+3. Click **Load unpacked**.
+4. Select the `/dist` directory in this repository.
+5. Pin the DevRecall icon to the toolbar.
+6. Open the side panel and options page to verify the extension loaded correctly.
+
+---
+
+## Usage
+
+### Set your API key
+
+Open the extension options page (click **Settings** in the side panel, or right-click the toolbar icon and choose **Options**). Paste your OpenAI API key and click **Save**. Use **Test connection** to verify the key works.
+
+Keyword search works without a key. LLM summarization, topic tagging, and semantic ("matched by meaning") search require a valid key.
+
+### Save a page manually
+
+Click the DevRecall toolbar icon to open the side panel, then click **Save to library**. The panel's save bar shows live status (updates arrive via worker broadcasts — no polling):
+
+- **Saving…** — capture in progress
+- **Processing…** — LLM summarization running in the background
+- **Saved ✓ Xm ago** — page is ready in your library
+- **Save failed — try again** — the save or LLM step failed; click the button to retry
+
+If no API key is configured, the save button is disabled and a prompt appears to set one in settings.
+
+### Auto-save on technical domains
+
+Auto-save is **opt-in and off by default**. Enable it in Options; once enabled, DevRecall automatically saves pages after you have been on them for at least 30 seconds, but only on a fixed set of technical domains:
+
+- GitHub (`github.com`)
+- Stack Overflow (`stackoverflow.com`)
+- MDN Web Docs (`developer.mozilla.org`)
+- Any subdomain whose hostname starts with `docs.`
+- ReadTheDocs sites (`*.readthedocs.io`)
+- npm (`npmjs.com`)
+- Rust (`rust-lang.org`)
+- Python (`python.org`)
+
+Navigating away or closing the tab before the 30-second dwell elapses cancels the timer. Pages already in your library (status `ready`) are skipped automatically. Existing installs have auto-save off until you enable it in Options.
+
+### Search and browse (side panel)
+
+Click the toolbar icon (or use **⌘ Shift K** / **Ctrl Shift K**) to open the side panel — the icon opens the library directly; there is no separate popup.
+
+Type a query to run a live hybrid search (BM25 keyword + vector cosine, fused with RRF). Each result shows a match-reason badge:
+
+- **keyword** — matched by BM25 term overlap
+- **matched by meaning** — matched by vector similarity (semantic)
+- **keyword + meaning** — matched by both arms
+
+Use the filter chips to narrow results by source type: **All**, **Docs**, **Stack Overflow**, **GitHub**.
+
+When no query is active, the panel shows your full library in reverse-chronological order, respecting the same filter chips. Each card has a **Delete** button to remove the page permanently.
+
+Failed saves show a **Retry** button on their library card.
+
+### Options
+
+| Action           | Description                                                                |
+| ---------------- | -------------------------------------------------------------------------- |
+| Set API key      | Paste an OpenAI key; stored in `chrome.storage.local`, never committed     |
+| Test connection  | Makes a minimal OpenAI call to validate the key                            |
+| Storage stats    | Shows saved page count and total text size                                 |
+| Re-index library | Re-generates embeddings for pages that are missing them (requires API key) |
+| Export Data      | Downloads all saved pages as `devrecall-export.json`                       |
+| Delete All Data  | Permanently removes every saved page (with confirmation prompt)            |
+
+### Dark mode
+
+The UI follows your OS color scheme automatically via Tailwind's `dark:` variants. No manual toggle is needed.
+
+---
+
+## Development commands
 
 ```bash
-pnpm build
+pnpm install        # Install dependencies
+pnpm dev            # Start Vite dev server at http://127.0.0.1:5173
+pnpm build          # TypeScript check + production build → /dist
+pnpm typecheck      # TypeScript only (no build output)
+pnpm lint           # ESLint
+pnpm test           # Run all tests once
+pnpm test:watch     # Run tests in watch mode
+pnpm test --coverage  # Run tests with coverage report
 ```
 
-Load the extension in Chrome:
+---
 
-1. Open `chrome://extensions`.
-2. Enable Developer mode.
-3. Click "Load unpacked".
-4. Select the `dist/` directory from this repository.
-5. Pin DevRecall, open the popup, open the side panel, and open the extension options page.
+## Architecture overview
 
-## Specification
+Four loosely coupled components communicate via typed Chrome RPC:
 
-The reviewed MVP design lives at `docs/superpowers/specs/2026-05-16-devrecall-mvp-design.md`.
+```
+Content Script → Service Worker ← Side Panel / Options
+                      ↓
+                 IndexedDB (Dexie)
+                 OpenAI API
+```
+
+Key files:
+
+- `src/worker/handlers.ts` — typed RPC dispatcher; read this first to understand request/response flow
+- `src/worker/index.ts` — thin MV3 entry (composition + top-level listeners)
+- `src/worker/services/AutoSaveService.ts` — alarm-driven dwell timer for auto-save
+- `src/worker/services/RetrievalService.ts` — hybrid BM25 + vector + RRF search
+- `src/ui/rpc.ts` — shared typed RPC client used by side panel and options page
+- `src/shared/messages.ts` — typed RPC request/response contract
+- `src/shared/types.ts` — shared domain types (`PageRecord`, `PageHit`, etc.)
+
+See `CLAUDE.md` for a detailed architecture reference and `docs/superpowers/specs/2026-05-16-devrecall-mvp-design.md` for the full MVP design.

@@ -489,10 +489,10 @@ The vector arm needs the query-time API key. The `search.run` handler fetches it
 In `src/worker/index.test.ts`, update the search assertion in the "runs a keyword search through RetrievalService" test (around line 135) to expect the API key argument (`makeDeps` returns `apiKey: null` by default):
 
 ```ts
-    expect(deps.retrievalService.search).toHaveBeenCalledWith("structured data", {
-      topK: undefined,
-      apiKey: null,
-    });
+expect(deps.retrievalService.search).toHaveBeenCalledWith("structured data", {
+  topK: undefined,
+  apiKey: null,
+});
 ```
 
 - [ ] **Step 2: Run the test to verify it fails**
@@ -511,10 +511,7 @@ In `src/worker/index.ts`:
 
 ```ts
 type SearchPort = {
-  search(
-    query: string,
-    options?: { topK?: number; apiKey?: string | null },
-  ): Promise<PageHit[]>;
+  search(query: string, options?: { topK?: number; apiKey?: string | null }): Promise<PageHit[]>;
 };
 ```
 

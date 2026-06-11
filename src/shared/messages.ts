@@ -1,7 +1,7 @@
 import type { ExtractedPage, PageHit, PageListItem, PageStatus } from "./types";
 
 export const APP_NAME = "DevRecall";
-export const APP_VERSION = "0.5.4.4";
+export const APP_VERSION = "0.5.7.11";
 
 export type PersistentStorageState = "unknown" | "granted" | "denied";
 
@@ -16,7 +16,12 @@ export type DevRecallRequest =
   | { type: "page.statusForUrl"; payload: { url: string } }
   | { type: "search.run"; payload: { query: string; topK?: number } }
   | { type: "page.delete"; payload: { id: string } }
-  | { type: "library.reindex" };
+  | { type: "page.retry"; payload: { id: string } }
+  | { type: "library.reindex" }
+  | { type: "data.export" }
+  | { type: "data.deleteAll" }
+  | { type: "settings.getAutoSave" }
+  | { type: "settings.setAutoSave"; payload: { enabled: boolean } };
 
 export type DevRecallResponse =
   | {
@@ -79,7 +84,12 @@ export type DevRecallResponse =
       };
     }
   | { type: "page.deleted"; payload: { id: string } }
+  | { type: "page.retryStarted"; payload: { page: PageListItem } }
   | { type: "library.reindexStarted"; payload: { total: number } }
+  | { type: "data.exported"; payload: { json: string } }
+  | { type: "data.deletedAll" }
+  | { type: "settings.autoSave"; payload: { enabled: boolean } }
+  | { type: "settings.autoSaveSet"; payload: { enabled: boolean } }
   | {
       type: "error";
       payload: {
@@ -90,6 +100,7 @@ export type DevRecallResponse =
 export type WorkerBroadcast =
   | { type: "page.updated"; payload: { page: PageListItem } }
   | { type: "page.removed"; payload: { id: string } }
+  | { type: "library.cleared" }
   | { type: "library.reindexProgress"; payload: { done: number; total: number } };
 
 export type ContentExtractRequest = { type: "content.extract" };
