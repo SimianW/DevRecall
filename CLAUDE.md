@@ -4,9 +4,20 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## Project Overview
 
-DevRecall is a local-first Chrome extension that captures technical browsing sessions, summarizes and tags saved pages, and lets developers retrieve past documentation through natural-language search. Currently at M1 (Skeleton) milestone with capture, tagging, and listing infrastructure in place.
+DevRecall is a local-first Chrome extension that captures technical browsing sessions, summarizes and tags saved pages, and lets developers retrieve past documentation through natural-language search. **M1–M6 plus the pre-v1.0 refactor are complete:** capture, LLM tagging, hybrid keyword+vector retrieval (RRF fusion), opt-in auto-save, side-panel SaveBar, and the Warm Editorial theme. Remaining for v1.0: manual E2E QA, demo GIF, version → `1.0.0.0`, tag `v1.0`.
 
 **Key Technologies:** React 18, TypeScript 6, Vite, Vitest, Dexie (IndexedDB), Chrome MV3, Tailwind CSS
+
+## Project Conventions & Gotchas
+
+- **This project is built with the Superpowers workflow — use its skills for every process.** Specs and plans live in `docs/superpowers/`. Invoke the matching skill _before_ each phase: `brainstorming` (any new feature/design), `writing-plans` (multi-step work), `test-driven-development` (all code — tests first), `systematic-debugging` (any bug/failure), `executing-plans` / `subagent-driven-development` (running a written plan), `verification-before-completion` (before claiming done), `requesting-code-review` (before merge).
+- **Version bump on every code change** — bump `version` in `package.json` AND `APP_VERSION` in `src/shared/messages.ts` (4-part `X.Y.Z.N`, must match), then commit.
+- **MV3 service worker is killed after ~30s idle; in-memory globals are lost.** Never use `setTimeout`/`setInterval` for delayed work in the worker — use `chrome.alarms` + `chrome.storage.session` (register `onAlarm` at top level). `AutoSaveService` is the reference implementation of this pattern.
+- **Auto-save is opt-in and OFF by default** (privacy). The flag lives in `chrome.storage.local` (`ChromeAutoSaveSettingStore`); the domain allowlist is in `src/shared/allowlist.ts` (shared so Options can render it). The enabled check is the FIRST gate in `AutoSaveService.startDwell`.
+- **Retrieval is hybrid** — BM25 keyword + vector cosine + RRF fusion in `RetrievalService`; `MIN_VECTOR_SCORE` (0.4) gates vector hits. Vector arm is for conceptual queries; single/peripheral words score low cosine and are correctly keyword-only.
+- **Re-index rule** — changing embeddings/chunking requires re-indexing existing pages (Options → Re-index). BM25 `tokenize()` (`src/lib/bm25.ts`, shared by query + docs) runs at query time, so tokenizer changes (e.g. stemming) need NO re-index.
+- **Capture reads all frames** — content script injects `all_frames`; `ChromePageExtractor` keeps the richest frame's body but anchors url/title to the top frame. Readability intentionally drops trailing reference/citation lists.
+- **Integration/measurement tests that call OpenAI are skipped unless `OPENAI_API_KEY` is set** (CI-safe).
 
 ## Development Setup
 
@@ -61,10 +72,11 @@ Content Script → Service Worker ← Side Panel / Options
 #### 1. **Service Worker** (`src/worker/index.ts`)
 
 - The single source of truth for all business logic and state mutations
-- Hosts `CaptureService`, `PageRepo`, `ApiKeyStore`, and `OpenAIProvider`
+- Hosts `CaptureService`, `RetrievalService`, `AutoSaveService`, `PageRepo`, `ChunkRepo`, `ApiKeyStore`, `AutoSaveSettingStore`, and `OpenAIProvider`
 - Dispatches all `chrome.runtime` messages through a typed request handler
 - Only writer to IndexedDB (no write/write races)
 - May be killed mid-operation by Chrome's MV3 lifecycle; all state is rebuildable from the database
+- Registers `chrome.sidePanel.setPanelBehavior({ openPanelOnActionClick: true })` — the toolbar icon opens the side panel directly (no popup)
 
 **Key file:** `/src/worker/handlers.ts` — read this first to understand request/response flow; `/src/worker/index.ts` is the thin MV3 entry (composition + listeners).
 
@@ -104,10 +116,16 @@ Content Script → Service Worker ← Side Panel / Options
 - `savedAt`, `visitedAt`, `readingTimeMs`, `saveMode`: metadata
 - `schemaVersion: 1` — enables future Dexie migrations
 
-**Dexie Indexes:**
+**ChunkRecord** (Dexie table `chunks`, added in schema v2 for hybrid retrieval)
+
+- Per-page text chunks with Float32Array embeddings; written by the embedding pipeline, read by `RetrievalService`
+- Deleted together with their page (`PageRepo.deleteWithChunks` / `deleteAll` are transactional)
+
+**Dexie Indexes** (schema v2 — bump in `src/worker/repository/db.ts` for migrations):
 
 ```
-pages: '&id, urlHash, savedAt, domain, sourceType, status, [sourceType+savedAt]'
+pages:  '&id, urlHash, savedAt, domain, sourceType, status, [sourceType+savedAt]'
+chunks: '&id, pageId, [pageId+ordinal]'
 ```
 
 - Primary key `id` for direct lookups
@@ -131,6 +149,9 @@ pages: '&id, urlHash, savedAt, domain, sourceType, status, [sourceType+savedAt]'
    - OpenAI response is parsed and validated; invalid fields default to safe values
    - Updates `PageRecord` with `status: "ready"` + summary/tags
    - On error, updates with `status: "failed"` + `errorReason`
+   - All three trigger paths (`page.save`, `page.retry`, auto-save) share `processPageInBackground` in `handlers.ts`
+
+**Auto-save path** (opt-in): `chrome.tabs` events start a 30 s dwell timer (`chrome.alarms`) for allowlisted URLs; on fire, the URL is re-verified and deduped before running the same capture pipeline with `saveMode: "auto"`.
 
 ### Typed RPC Contract
 
@@ -196,16 +217,16 @@ This ensures the same technical content viewed multiple times is stored once.
 
 ## Code Organization
 
-- `/src/shared/` — types and message contracts (read by all layers)
+- `/src/shared/` — types, message contracts, and the auto-save allowlist (read by all layers)
 - `/src/worker/` — service worker entry point and business logic
   - `handlers.ts` — typed RPC dispatcher (pure; unit-tested)
   - `index.ts` — thin MV3 entry (composition + top-level listeners)
   - `services/` — domain logic (CaptureService, etc.)
   - `llm/` — LLM provider interface and OpenAI implementation
-  - `settings/` — API key store (Chrome storage wrapper)
+  - `settings/` — API key store + auto-save flag store (Chrome storage wrappers)
   - `repository/db.ts` — Dexie schema definition and version (bump here for migrations)
   - `repository/` — PageRepo queries
-- `/src/sidepanel/`, `/src/options/` — UI entry points (React)
+- `/src/sidepanel/`, `/src/options/` — UI entry points (React); `sidepanel/SaveBar.tsx` is the save affordance
 - `/src/ui/components/` — shared UI components (SurfaceShell, PageCard, etc.)
 - `/src/ui/rpc.ts` — shared typed RPC client for UI surfaces
 - `/src/content/` — content script entry point
@@ -218,7 +239,7 @@ This ensures the same technical content viewed multiple times is stored once.
 - **Manifest** (`manifest.config.ts`): Defined as TypeScript, compiled to `/dist/manifest.json` by CRX plugin
 - **TypeScript** (`tsconfig.json`): Strict mode, ES2022 target, ESNext modules
 - **Linting** (`eslint.config.js`): ESLint + TypeScript rules; globals for Chrome APIs and test functions defined
-- **Styling**: Tailwind CSS with custom colors (ink, panel, accent)
+- **Styling**: Tailwind CSS with CSS-variable color tokens (`foreground`/`surface`/`surface-raised`/`default`/`accent`, defined in `src/ui/styles.css` for light + media-based dark). Theme is "Warm Editorial": warm paper light / warm charcoal dark, terracotta accent, `font-serif` titles. Restyle by editing the variables, not component classes.
 
 ## Key Design Decisions
 
