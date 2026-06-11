@@ -52,4 +52,24 @@ describe("ChromeAutoSaveSettingStore", () => {
 
     expect(set).toHaveBeenCalledWith({ autosave_enabled: true });
   });
+
+  it("defaults to disabled when the storage read throws", async () => {
+    installChrome({
+      storage: {
+        local: {
+          get: async () => {
+            throw new Error("storage corrupted");
+          },
+          set: async () => {},
+        },
+      },
+    });
+    const store = new ChromeAutoSaveSettingStore();
+    await expect(store.isEnabled()).resolves.toBe(false);
+  });
+
+  it("setEnabled throws when chrome.storage is unavailable", async () => {
+    const store = new ChromeAutoSaveSettingStore();
+    await expect(store.setEnabled(true)).rejects.toThrow("Chrome storage is unavailable");
+  });
 });
