@@ -260,13 +260,13 @@ it("renders the auto-save toggle from the stored flag", async () => {
 
 it("persists the flag when toggled", async () => {
   const setAutoSave = vi.fn().mockResolvedValue(undefined);
-  renderOptions({
+  const { user } = renderOptions({
     loadAutoSave: async () => false,
     setAutoSave,
   });
 
   const checkbox = await screen.findByRole("checkbox", { name: /enable auto-save/i });
-  await userEvent.click(checkbox);
+  await user.click(checkbox);
 
   expect(setAutoSave).toHaveBeenCalledWith(true);
 });

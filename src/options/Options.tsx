@@ -1,4 +1,5 @@
 import { useEffect, useState } from "react";
+import type { ChangeEvent } from "react";
 import { SurfaceShell } from "../ui/components";
 import type { WorkerBroadcast } from "../shared/messages";
 import { sendRequest, subscribeToBroadcasts } from "../ui/rpc";
@@ -107,14 +108,10 @@ export function Options({
       .catch(() => {});
   }, [loadAutoSave]);
 
-  const handleToggleAutoSave = async () => {
-    const next = !autoSaveEnabled;
+  const handleToggleAutoSave = (e: ChangeEvent<HTMLInputElement>) => {
+    const next = e.target.checked;
     setAutoSaveEnabled(next);
-    try {
-      await setAutoSave(next);
-    } catch {
-      setAutoSaveEnabled(!next); // roll back on failure
-    }
+    setAutoSave(next).catch(() => setAutoSaveEnabled(!next)); // roll back on failure
   };
 
   useEffect(() => {
