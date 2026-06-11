@@ -37,7 +37,7 @@ pnpm build
 3. Click **Load unpacked**.
 4. Select the `/dist` directory in this repository.
 5. Pin the DevRecall icon to the toolbar.
-6. Open the popup, side panel, and options page to verify the extension loaded correctly.
+6. Open the side panel and options page to verify the extension loaded correctly.
 
 ---
 
@@ -51,10 +51,10 @@ Keyword search works without a key. LLM summarization, topic tagging, and semant
 
 ### Save a page manually
 
-Click the DevRecall toolbar icon to open the popup, then click **Save this page**. The popup shows live status:
+Click the DevRecall toolbar icon to open the side panel, then click **Save to library**. The panel's save bar shows live status (updates arrive via worker broadcasts — no polling):
 
 - **Saving…** — capture in progress
-- **Processing…** — LLM summarization running in the background (polls every 2 s)
+- **Processing…** — LLM summarization running in the background
 - **Saved ✓ Xm ago** — page is ready in your library
 - **Save failed — try again** — the save or LLM step failed; click the button to retry
 
@@ -62,7 +62,7 @@ If no API key is configured, the save button is disabled and a prompt appears to
 
 ### Auto-save on technical domains
 
-DevRecall automatically saves pages after you have been on them for at least 30 seconds, but only on a fixed set of technical domains:
+Auto-save is **opt-in and off by default**. Enable it in Options; once enabled, DevRecall automatically saves pages after you have been on them for at least 30 seconds, but only on a fixed set of technical domains:
 
 - GitHub (`github.com`)
 - Stack Overflow (`stackoverflow.com`)
@@ -73,11 +73,11 @@ DevRecall automatically saves pages after you have been on them for at least 30 
 - Rust (`rust-lang.org`)
 - Python (`python.org`)
 
-Navigating away or closing the tab before the 30-second dwell elapses cancels the timer. Pages already in your library (status `ready`) are skipped automatically.
+Navigating away or closing the tab before the 30-second dwell elapses cancels the timer. Pages already in your library (status `ready`) are skipped automatically. Existing installs have auto-save off until you enable it in Options.
 
 ### Search and browse (side panel)
 
-Click **Open library** in the popup, or use the keyboard shortcut **⌘ Shift K** / **Ctrl Shift K**, to open the side panel.
+Click the toolbar icon (or use **⌘ Shift K** / **Ctrl Shift K**) to open the side panel — the icon opens the library directly; there is no separate popup.
 
 Type a query to run a live hybrid search (BM25 keyword + vector cosine, fused with RRF). Each result shows a match-reason badge:
 
@@ -85,7 +85,7 @@ Type a query to run a live hybrid search (BM25 keyword + vector cosine, fused wi
 - **matched by meaning** — matched by vector similarity (semantic)
 - **keyword + meaning** — matched by both arms
 
-Use the filter chips to narrow results by source type: **All**, **Docs**, **SO** (Stack Overflow), **GH** (GitHub).
+Use the filter chips to narrow results by source type: **All**, **Docs**, **Stack Overflow**, **GitHub**.
 
 When no query is active, the panel shows your full library in reverse-chronological order, respecting the same filter chips. Each card has a **Delete** button to remove the page permanently.
 
@@ -125,22 +125,22 @@ pnpm test --coverage  # Run tests with coverage report
 
 ## Architecture overview
 
-Five loosely coupled components communicate via typed Chrome RPC:
+Four loosely coupled components communicate via typed Chrome RPC:
 
 ```
-Content Script → Service Worker ← Popup
+Content Script → Service Worker ← Side Panel / Options
                       ↓
                  IndexedDB (Dexie)
                  OpenAI API
-                      ↑
-                 Side Panel / Options
 ```
 
 Key files:
 
-- `src/worker/index.ts` — service worker; single writer to IndexedDB; hosts all business logic
+- `src/worker/handlers.ts` — typed RPC dispatcher; read this first to understand request/response flow
+- `src/worker/index.ts` — thin MV3 entry (composition + top-level listeners)
 - `src/worker/services/AutoSaveService.ts` — alarm-driven dwell timer for auto-save
 - `src/worker/services/RetrievalService.ts` — hybrid BM25 + vector + RRF search
+- `src/ui/rpc.ts` — shared typed RPC client used by side panel and options page
 - `src/shared/messages.ts` — typed RPC request/response contract
 - `src/shared/types.ts` — shared domain types (`PageRecord`, `PageHit`, etc.)
 
