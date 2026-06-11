@@ -4,6 +4,7 @@ import type { WorkerBroadcast } from "../shared/messages";
 import type { PageHit, PageListItem, SourceType } from "../shared/types";
 import { PageCard, SearchResultCard, SurfaceShell } from "../ui/components";
 import { sendRequest, subscribeToBroadcasts } from "../ui/rpc";
+import { SaveBar } from "./SaveBar";
 
 const filters = ["All", "Docs", "SO", "GH"] as const;
 type Filter = (typeof filters)[number];
@@ -184,6 +185,7 @@ export function App({
       }
     >
       <div className="flex flex-col gap-4">
+        <SaveBar />
         <input
           type="search"
           aria-label="Search saved pages"
