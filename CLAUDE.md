@@ -43,21 +43,19 @@ pnpm test src/lib/urlNormalize.test.ts  # Single test file
 3. Enable Developer mode (top right)
 4. Click "Load unpacked"
 5. Select the `/dist` directory
-6. Pin the extension; open popup, side panel, and options page to verify
+6. Pin the extension; open the side panel and options page to verify
 
 ## Architecture
 
-### Five-Component Design
+### Four-Component Design
 
-The extension is structured as five loosely coupled components communicating via **typed RPC** (chrome.runtime.sendMessage with discriminated-union request/response types):
+The extension is structured as four loosely coupled components communicating via **typed RPC** (chrome.runtime.sendMessage with discriminated-union request/response types):
 
 ```
-Content Script → Service Worker ← Popup
+Content Script → Service Worker ← Side Panel / Options
                       ↓
                  Database (Dexie)
                  LLM Provider (OpenAI)
-                      ↑
-                 Side Panel
 ```
 
 #### 1. **Service Worker** (`src/worker/index.ts`)
@@ -68,7 +66,7 @@ Content Script → Service Worker ← Popup
 - Only writer to IndexedDB (no write/write races)
 - May be killed mid-operation by Chrome's MV3 lifecycle; all state is rebuildable from the database
 
-**Key file:** `/src/worker/index.ts` — read this first to understand request/response flow.
+**Key file:** `/src/worker/handlers.ts` — read this first to understand request/response flow; `/src/worker/index.ts` is the thin MV3 entry (composition + listeners).
 
 #### 2. **Content Script** (`src/content/extract.ts`)
 
@@ -77,27 +75,20 @@ Content Script → Service Worker ← Popup
 - Returns `{ url, title, fullText, readingTimeMs }`
 - Discards tracking parameters (utm\_\*, gclid, fbclid) and URL fragments during extraction
 
-#### 3. **Popup** (`src/popup/Popup.tsx`)
+#### 3. **Side Panel** (`src/sidepanel/App.tsx`)
 
-- Toolbar entry point ("Save this page" button)
-- No direct database access
-- Shows page save status (idle/saving/saved/failed/pending with retry)
-- Polls worker for url status while processing is pending
-- Opens the side panel
-
-#### 4. **Side Panel** (`src/sidepanel/App.tsx`)
-
-- Main discovery UI (search placeholder; future: hybrid retrieval)
-- Lists saved pages with filters (All/Docs/SO/GH)
+- Main discovery UI — live hybrid search (BM25 + vector + RRF) with "matched by meaning" badges
+- Hosts the "Save to library" bar (active tab title/domain + live save status via worker broadcasts)
+- Lists saved pages with filters (All / Docs / Stack Overflow / GitHub)
 - Shows loading and empty states
 - All data flows through worker via typed messages
 
-#### 5. **Options Page** (`src/options/Options.tsx`)
+#### 4. **Options Page** (`src/options/Options.tsx`)
 
 - API key management (stored in `chrome.storage.local`, not IndexedDB)
 - Connection testing (minimal OpenAI call to validate key)
 - Storage stats display (page count, total text bytes)
-- Auto-save toggle (UI placeholder; logic not yet implemented)
+- Auto-save toggle (opt-in, off by default; allowlisted domains shown) — flag in chrome.storage.local
 
 ### Data Model
 
@@ -130,11 +121,11 @@ pages: '&id, urlHash, savedAt, domain, sourceType, status, [sourceType+savedAt]'
 
 ### Capture Pipeline
 
-1. **User clicks "Save this page"** → Popup sends `page.save` message to worker
+1. **User clicks "Save to library" in the side panel** (or the toolbar icon opens the panel) → panel sends `page.save` to worker
 2. **CaptureService.save(tabId)**
    - Calls `ChromePageExtractor.extract(tabId)` → content script extracts text
    - Calls `PageRepo.upsertCapturedPage(extracted)` → writes to DB with `status: "pending"`
-   - Returns `PageListItem` to popup immediately
+   - Returns `PageListItem` to side panel immediately
 3. **Background LLM Processing** (async, non-blocking)
    - If API key is configured, worker calls `OpenAIProvider.summarizeAndTag()`
    - OpenAI response is parsed and validated; invalid fields default to safe values
@@ -184,7 +175,7 @@ This ensures the same technical content viewed multiple times is stored once.
 **Coverage targets** (configured in `vitest.config.ts`):
 
 - `src/lib/**/*.ts` (utilities: URL normalization, etc.)
-- `src/worker/index.ts` (message dispatcher: handleMessage, handleRequest)
+- `src/worker/handlers.ts` (message dispatcher: handleMessage, handleRequest)
 - `src/worker/services/**/*.ts` (CaptureService, etc.)
 - `src/worker/llm/**/*.ts` (OpenAI provider)
 - `src/worker/settings/**/*.ts` (API key store)
@@ -207,14 +198,16 @@ This ensures the same technical content viewed multiple times is stored once.
 
 - `/src/shared/` — types and message contracts (read by all layers)
 - `/src/worker/` — service worker entry point and business logic
-  - `index.ts` — message handler dispatcher
+  - `handlers.ts` — typed RPC dispatcher (pure; unit-tested)
+  - `index.ts` — thin MV3 entry (composition + top-level listeners)
   - `services/` — domain logic (CaptureService, etc.)
   - `llm/` — LLM provider interface and OpenAI implementation
   - `settings/` — API key store (Chrome storage wrapper)
   - `repository/db.ts` — Dexie schema definition and version (bump here for migrations)
   - `repository/` — PageRepo queries
-- `/src/popup/`, `/src/sidepanel/`, `/src/options/` — UI entry points (React)
+- `/src/sidepanel/`, `/src/options/` — UI entry points (React)
 - `/src/ui/components/` — shared UI components (SurfaceShell, PageCard, etc.)
+- `/src/ui/rpc.ts` — shared typed RPC client for UI surfaces
 - `/src/content/` — content script entry point
 - `/src/lib/` — utilities (URL normalization, etc.)
 - `/docs/superpowers/specs/` — design documents
