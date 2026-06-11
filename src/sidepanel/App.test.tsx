@@ -133,7 +133,7 @@ describe("Side panel app", () => {
     await user.type(screen.getByRole("searchbox", { name: "Search saved pages" }), "autoscale");
     await screen.findByRole("heading", { name: "Horizontal Pod Autoscaling" });
 
-    await user.click(screen.getByRole("button", { name: "SO" }));
+    await user.click(screen.getByRole("button", { name: "Stack Overflow" }));
 
     expect(screen.queryByRole("heading", { name: "Horizontal Pod Autoscaling" })).toBeNull();
     expect(screen.getByRole("heading", { name: "Stack Overflow Result" })).toBeInTheDocument();
@@ -306,25 +306,25 @@ describe("Filter chip wiring", () => {
     expect(screen.queryByText("GitHub Issue")).toBeNull();
   });
 
-  it("filters to stackoverflow when 'SO' chip is clicked", async () => {
+  it("filters to stackoverflow when 'Stack Overflow' chip is clicked", async () => {
     const user = userEvent.setup();
     render(<App listPages={vi.fn().mockResolvedValue(mixedPages)} runSearch={vi.fn()} />);
 
     await screen.findByText("Stack Overflow Q");
 
-    await user.click(screen.getByRole("button", { name: "SO" }));
+    await user.click(screen.getByRole("button", { name: "Stack Overflow" }));
     expect(screen.queryByText("Kubernetes Docs")).toBeNull();
     expect(screen.getByText("Stack Overflow Q")).toBeInTheDocument();
     expect(screen.queryByText("GitHub Issue")).toBeNull();
   });
 
-  it("filters to github_issue when 'GH' chip is clicked", async () => {
+  it("filters to github_issue when 'GitHub' chip is clicked", async () => {
     const user = userEvent.setup();
     render(<App listPages={vi.fn().mockResolvedValue(mixedPages)} runSearch={vi.fn()} />);
 
     await screen.findByText("GitHub Issue");
 
-    await user.click(screen.getByRole("button", { name: "GH" }));
+    await user.click(screen.getByRole("button", { name: "GitHub" }));
     expect(screen.queryByText("Kubernetes Docs")).toBeNull();
     expect(screen.queryByText("Stack Overflow Q")).toBeNull();
     expect(screen.getByText("GitHub Issue")).toBeInTheDocument();

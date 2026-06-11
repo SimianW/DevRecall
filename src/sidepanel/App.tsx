@@ -6,13 +6,13 @@ import { PageCard, SearchResultCard, SurfaceShell } from "../ui/components";
 import { sendRequest, subscribeToBroadcasts } from "../ui/rpc";
 import { SaveBar } from "./SaveBar";
 
-const filters = ["All", "Docs", "SO", "GH"] as const;
+const filters = ["All", "Docs", "Stack Overflow", "GitHub"] as const;
 type Filter = (typeof filters)[number];
 
 const filterToSourceType: Record<Exclude<Filter, "All">, SourceType> = {
   Docs: "official_docs",
-  SO: "stackoverflow",
-  GH: "github_issue",
+  "Stack Overflow": "stackoverflow",
+  GitHub: "github_issue",
 };
 
 type AppProps = {
