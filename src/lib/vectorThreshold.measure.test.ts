@@ -77,11 +77,7 @@ describe("MIN_VECTOR_SCORE measurement", () => {
       lines.push(`current MIN_VECTOR_SCORE = ${CURRENT_THRESHOLD}`);
       lines.push("");
       lines.push(
-        "query".padEnd(24) +
-          "target".padEnd(8) +
-          "best".padEnd(8) +
-          "pass?".padEnd(7) +
-          "note",
+        "query".padEnd(24) + "target".padEnd(8) + "best".padEnd(8) + "pass?".padEnd(7) + "note",
       );
       lines.push("-".repeat(80));
 
@@ -114,7 +110,9 @@ describe("MIN_VECTOR_SCORE measurement", () => {
 
       lines.push("-".repeat(80));
       lines.push("target = cosine vs the chunk it should recall");
-      lines.push("best   = max cosine across all chunks (* = top chunk is NOT the target → false-positive risk)");
+      lines.push(
+        "best   = max cosine across all chunks (* = top chunk is NOT the target → false-positive risk)",
+      );
       lines.push("");
 
       console.log(lines.join("\n"));

@@ -28,12 +28,7 @@ export function SearchResultCard({ hit, onDelete }: SearchResultCardProps) {
     <article className="rounded-lg border border-default bg-surface-raised px-4 py-3 text-foreground shadow-sm">
       <div className="flex items-start justify-between gap-2">
         <h2 className="font-serif text-sm font-semibold text-foreground">
-          <a
-            href={page.url}
-            target="_blank"
-            rel="noopener noreferrer"
-            className="hover:underline"
-          >
+          <a href={page.url} target="_blank" rel="noopener noreferrer" className="hover:underline">
             {page.title}
           </a>
         </h2>

@@ -4,7 +4,11 @@ import { describe, expect, it, vi } from "vitest";
 
 import { SaveBar } from "./SaveBar";
 
-const tab = { tabId: 7, title: "Using chrome.alarms", url: "https://developer.chrome.com/docs/extensions/reference/api/alarms" };
+const tab = {
+  tabId: 7,
+  title: "Using chrome.alarms",
+  url: "https://developer.chrome.com/docs/extensions/reference/api/alarms",
+};
 
 function makeProps(overrides: Partial<Parameters<typeof SaveBar>[0]> = {}) {
   return {
@@ -72,9 +76,7 @@ describe("SaveBar", () => {
       .mockResolvedValue({ saved: true, status: "failed", savedAt: Date.now() });
     render(<SaveBar {...makeProps({ loadUrlStatus })} />);
 
-    expect(
-      await screen.findByRole("button", { name: /save failed — try again/i }),
-    ).toBeEnabled();
+    expect(await screen.findByRole("button", { name: /save failed — try again/i })).toBeEnabled();
   });
 
   it("disables save and shows a hint when no API key is set", async () => {
@@ -106,9 +108,7 @@ describe("SaveBar", () => {
     const getActiveTab = vi
       .fn()
       // First call (mount): hangs until we resolve it manually — with the OLD tab.
-      .mockImplementationOnce(
-        () => new Promise<typeof tab | null>((r) => (resolveFirst = r)),
-      )
+      .mockImplementationOnce(() => new Promise<typeof tab | null>((r) => (resolveFirst = r)))
       // Second call (tab change): resolves immediately with the NEW tab.
       .mockResolvedValue(tab);
 

@@ -92,13 +92,7 @@ describe("tokenize — CJK support", () => {
   });
 
   it("tokenizes mixed Latin + CJK text", () => {
-    expect(tokenize("React 服务端渲染")).toEqual([
-      "react",
-      "服务",
-      "务端",
-      "端渲",
-      "渲染",
-    ]);
+    expect(tokenize("React 服务端渲染")).toEqual(["react", "服务", "务端", "端渲", "渲染"]);
   });
 
   it("supports Hiragana, Katakana, and Hangul runs", () => {

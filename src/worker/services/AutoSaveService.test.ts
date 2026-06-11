@@ -80,7 +80,11 @@ function makeTabPort(url: string = ALLOWLISTED_URL): TabQueryPort {
   };
 }
 
-import type { AutoSaveCapturePort, AutoSaveDedupePort, AutoSaveEnabledPort } from "./AutoSaveService";
+import type {
+  AutoSaveCapturePort,
+  AutoSaveDedupePort,
+  AutoSaveEnabledPort,
+} from "./AutoSaveService";
 
 type CapturePortMini = AutoSaveCapturePort & {
   saveAuto: ReturnType<typeof vi.fn> & AutoSaveCapturePort["saveAuto"];

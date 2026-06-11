@@ -154,7 +154,9 @@ describe("Side panel app", () => {
 describe("Side panel live refresh", () => {
   it("inserts a card when a page.updated broadcast arrives", async () => {
     const { subscribe, emit } = makeSubscribe();
-    render(<App listPages={vi.fn().mockResolvedValue([])} runSearch={vi.fn()} subscribe={subscribe} />);
+    render(
+      <App listPages={vi.fn().mockResolvedValue([])} runSearch={vi.fn()} subscribe={subscribe} />,
+    );
 
     await screen.findByText("No saved pages yet");
     await emit({ type: "page.updated", payload: { page: newPage } });
@@ -164,7 +166,13 @@ describe("Side panel live refresh", () => {
 
   it("removes a card when a page.removed broadcast arrives", async () => {
     const { subscribe, emit } = makeSubscribe();
-    render(<App listPages={vi.fn().mockResolvedValue(pages)} runSearch={vi.fn()} subscribe={subscribe} />);
+    render(
+      <App
+        listPages={vi.fn().mockResolvedValue(pages)}
+        runSearch={vi.fn()}
+        subscribe={subscribe}
+      />,
+    );
 
     await screen.findByRole("heading", { name: "Horizontal Pod Autoscaling" });
     await emit({ type: "page.removed", payload: { id: pages[0].id } });
@@ -174,7 +182,13 @@ describe("Side panel live refresh", () => {
 
   it("clears the library when a library.cleared broadcast arrives", async () => {
     const { subscribe, emit } = makeSubscribe();
-    render(<App listPages={vi.fn().mockResolvedValue(pages)} runSearch={vi.fn()} subscribe={subscribe} />);
+    render(
+      <App
+        listPages={vi.fn().mockResolvedValue(pages)}
+        runSearch={vi.fn()}
+        subscribe={subscribe}
+      />,
+    );
 
     await screen.findByRole("heading", { name: "Horizontal Pod Autoscaling" });
     await emit({ type: "library.cleared" });
@@ -238,7 +252,13 @@ it("labels a vector-only hit as matched by meaning", async () => {
   const user = userEvent.setup();
   const runSearch = vi.fn().mockResolvedValue([vectorHit]);
 
-  render(<App listPages={vi.fn().mockResolvedValue([])} runSearch={runSearch} subscribe={makeSubscribe().subscribe} />);
+  render(
+    <App
+      listPages={vi.fn().mockResolvedValue([])}
+      runSearch={runSearch}
+      subscribe={makeSubscribe().subscribe}
+    />,
+  );
 
   await user.type(screen.getByRole("searchbox", { name: "Search saved pages" }), "elastic scaling");
 

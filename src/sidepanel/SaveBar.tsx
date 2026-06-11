@@ -28,10 +28,7 @@ async function defaultGetActiveTab(): Promise<ActiveTab | null> {
 }
 
 async function defaultSaveTab(tabId: number): Promise<void> {
-  const response = await sendRequest(
-    { type: "page.save", payload: { tabId } },
-    "page.saved",
-  );
+  const response = await sendRequest({ type: "page.save", payload: { tabId } }, "page.saved");
   if (!response) {
     throw new Error("Save failed");
   }
@@ -99,9 +96,7 @@ export function SaveBar({
   const refresh = useCallback(async () => {
     const seq = ++refreshSeq.current;
     const nextTab = await getActiveTab();
-    const nextStatus: UrlStatus = nextTab
-      ? await loadUrlStatus(nextTab.url)
-      : { saved: false };
+    const nextStatus: UrlStatus = nextTab ? await loadUrlStatus(nextTab.url) : { saved: false };
     if (seq !== refreshSeq.current) {
       return; // a newer refresh superseded us
     }
@@ -188,9 +183,7 @@ export function SaveBar({
       <p className="text-[10px] font-semibold uppercase tracking-[0.06em] text-foreground/55">
         Reading now
       </p>
-      <p className="mt-1 truncate font-serif text-sm font-semibold text-foreground">
-        {tab.title}
-      </p>
+      <p className="mt-1 truncate font-serif text-sm font-semibold text-foreground">{tab.title}</p>
       <p className="text-xs text-foreground/55">{domain}</p>
       <button
         type="button"
@@ -201,9 +194,7 @@ export function SaveBar({
         {buttonLabel}
       </button>
       {missingKey && (
-        <p className="mt-2 text-xs text-amber-700 dark:text-amber-300">
-          Set API key in settings
-        </p>
+        <p className="mt-2 text-xs text-amber-700 dark:text-amber-300">Set API key in settings</p>
       )}
     </section>
   );

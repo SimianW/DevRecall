@@ -315,9 +315,7 @@ describe("Options status-text dark: variants", () => {
   it("connection-test failure message carries dark:text-red-300", async () => {
     const { user } = renderOptions({
       loadStatus: vi.fn().mockResolvedValue({ hasApiKey: true }),
-      testConnection: vi
-        .fn()
-        .mockResolvedValue({ success: false, message: "Invalid API key" }),
+      testConnection: vi.fn().mockResolvedValue({ success: false, message: "Invalid API key" }),
     });
 
     const testButton = await screen.findByRole("button", { name: "Test connection" });

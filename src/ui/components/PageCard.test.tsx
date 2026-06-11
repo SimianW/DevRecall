@@ -64,7 +64,11 @@ describe("PageCard", () => {
 
     await user.click(screen.getByRole("button", { name: /Horizontal Pod Autoscaling/i }));
 
-    expect(container.firstChild).toHaveClass("border-default", "bg-surface-raised", "text-foreground");
+    expect(container.firstChild).toHaveClass(
+      "border-default",
+      "bg-surface-raised",
+      "text-foreground",
+    );
     expect(screen.getByText("Summary")).toBeInTheDocument();
     expect(screen.getByText("Topics")).toBeInTheDocument();
     expect(screen.getByText("Technologies")).toBeInTheDocument();
@@ -228,9 +232,7 @@ describe("PageCard errorReason display", () => {
   it("shows the errorReason text in the expanded detail view when status=failed and errorReason is present", async () => {
     const user = userEvent.setup();
     render(
-      <PageCard
-        page={makePage({ status: "failed", errorReason: "OpenAI rate limit exceeded" })}
-      />,
+      <PageCard page={makePage({ status: "failed", errorReason: "OpenAI rate limit exceeded" })} />,
     );
 
     await user.click(screen.getByRole("button", { name: /Horizontal Pod Autoscaling/i }));
@@ -240,11 +242,7 @@ describe("PageCard errorReason display", () => {
 
   it("does not show errorReason text when status=ready even if errorReason is somehow present", async () => {
     const user = userEvent.setup();
-    render(
-      <PageCard
-        page={makePage({ status: "ready", errorReason: "stale error" })}
-      />,
-    );
+    render(<PageCard page={makePage({ status: "ready", errorReason: "stale error" })} />);
 
     await user.click(screen.getByRole("button", { name: /Horizontal Pod Autoscaling/i }));
 
@@ -253,11 +251,7 @@ describe("PageCard errorReason display", () => {
 
   it("errorReason carries dark:text-red-300 variant class", async () => {
     const user = userEvent.setup();
-    render(
-      <PageCard
-        page={makePage({ status: "failed", errorReason: "Connection timed out" })}
-      />,
-    );
+    render(<PageCard page={makePage({ status: "failed", errorReason: "Connection timed out" })} />);
 
     await user.click(screen.getByRole("button", { name: /Horizontal Pod Autoscaling/i }));
 

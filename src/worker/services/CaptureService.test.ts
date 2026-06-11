@@ -275,11 +275,10 @@ describe("CaptureService", () => {
     };
 
     await expect(
-      new CaptureService(
-        { upsertCapturedPage: vi.fn() },
-        { extract: vi.fn() },
-        reader,
-      ).processPage("no-such-id", "sk-test"),
+      new CaptureService({ upsertCapturedPage: vi.fn() }, { extract: vi.fn() }, reader).processPage(
+        "no-such-id",
+        "sk-test",
+      ),
     ).rejects.toThrow("no-such-id");
   });
 

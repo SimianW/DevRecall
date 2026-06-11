@@ -28,10 +28,7 @@ const defaultLoadStatus = async (): Promise<StatusResult> => {
 };
 
 const defaultSaveApiKey = async (apiKey: string): Promise<void> => {
-  await sendRequest(
-    { type: "settings.setApiKey", payload: { apiKey } },
-    "settings.apiKeySet",
-  );
+  await sendRequest({ type: "settings.setApiKey", payload: { apiKey } }, "settings.apiKeySet");
 };
 
 const defaultTestConnection = async (): Promise<TestResult> => {
@@ -72,10 +69,7 @@ const defaultLoadAutoSave = async (): Promise<boolean> => {
 };
 
 const defaultSetAutoSave = async (enabled: boolean): Promise<void> => {
-  await sendRequest(
-    { type: "settings.setAutoSave", payload: { enabled } },
-    "settings.autoSaveSet",
-  );
+  await sendRequest({ type: "settings.setAutoSave", payload: { enabled } }, "settings.autoSaveSet");
 };
 
 export function Options({
@@ -134,7 +128,9 @@ export function Options({
         setProgress(message.payload);
         if (message.payload.done >= message.payload.total) {
           setReindexing(false);
-          loadStorageStats().then(setStorageStats).catch(() => {});
+          loadStorageStats()
+            .then(setStorageStats)
+            .catch(() => {});
         }
       }
     });
@@ -196,7 +192,9 @@ export function Options({
       await deleteAll();
       setShowDeleteConfirm(false);
       setStorageStats(null);
-      loadStorageStats().then(setStorageStats).catch(() => {});
+      loadStorageStats()
+        .then(setStorageStats)
+        .catch(() => {});
     } catch (err) {
       setDeleteError(err instanceof Error ? err.message : "Delete failed");
     }
@@ -288,8 +286,8 @@ export function Options({
               Ctrl Shift K
             </kbd>{" "}
             opens the side panel. To customize, open{" "}
-            <span className="font-medium text-foreground/80">chrome://extensions/shortcuts</span>{" "}
-            in Chrome and find DevRecall.
+            <span className="font-medium text-foreground/80">chrome://extensions/shortcuts</span> in
+            Chrome and find DevRecall.
           </p>
           <p className="mt-1 text-xs text-foreground/50">
             Note: the shortcut opens the panel but cannot toggle it closed — this is a Chrome
@@ -308,9 +306,7 @@ export function Options({
           <button
             type="button"
             onClick={handleReindex}
-            disabled={
-              !keySaved || reindexing || (storageStats?.pagesMissingEmbeddings ?? 0) === 0
-            }
+            disabled={!keySaved || reindexing || (storageStats?.pagesMissingEmbeddings ?? 0) === 0}
             className="mt-3 rounded-md bg-foreground/5 px-3 py-2 text-sm font-medium text-foreground/80 transition-colors hover:bg-foreground/10 disabled:bg-foreground/5 disabled:text-foreground/40 disabled:hover:bg-foreground/5"
           >
             {reindexing && progress

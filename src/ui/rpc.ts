@@ -1,8 +1,4 @@
-import type {
-  DevRecallRequest,
-  DevRecallResponse,
-  WorkerBroadcast,
-} from "../shared/messages";
+import type { DevRecallRequest, DevRecallResponse, WorkerBroadcast } from "../shared/messages";
 
 /**
  * Send a typed request to the worker. Returns the full typed response when the
@@ -19,9 +15,7 @@ export async function sendRequest<T extends DevRecallResponse["type"]>(
   }
 
   try {
-    const response = (await chrome.runtime.sendMessage(request)) as
-      | DevRecallResponse
-      | undefined;
+    const response = (await chrome.runtime.sendMessage(request)) as DevRecallResponse | undefined;
 
     if (!response || response.type !== expectedType) {
       return null;
@@ -34,9 +28,7 @@ export async function sendRequest<T extends DevRecallResponse["type"]>(
 }
 
 /** Subscribe to worker broadcasts. Returns an unsubscribe function. */
-export function subscribeToBroadcasts(
-  handler: (message: WorkerBroadcast) => void,
-): () => void {
+export function subscribeToBroadcasts(handler: (message: WorkerBroadcast) => void): () => void {
   if (typeof chrome === "undefined" || !chrome.runtime?.onMessage) {
     return () => {};
   }

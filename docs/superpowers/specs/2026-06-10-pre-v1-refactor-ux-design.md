@@ -109,7 +109,7 @@ than a generic dev tool.
 
 **Light theme (warm paper):**
 
-- Surfaces: warm paper neutrals (Tailwind *stone* family) — page `#faf9f7`,
+- Surfaces: warm paper neutrals (Tailwind _stone_ family) — page `#faf9f7`,
   raised cards `#fffdfa`, borders `#e7e2da`/`#efe9e0`.
 - Accent: terracotta `#9a3412` (replaces blue `#2563eb`).
 - Typography: serif stack (Georgia/`ui-serif`) for page/card **titles** only;

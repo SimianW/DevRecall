@@ -24,9 +24,7 @@ export function highlightTerms(text: string, terms: string[]): string {
   // "autoscaler"). Store them as-is so we can match a text word either by
   // exact lowercase equality or by stemming the text word and checking its
   // stem against the set.
-  const termSet = new Set(
-    terms.map((term) => term.trim().toLowerCase()).filter(Boolean),
-  );
+  const termSet = new Set(terms.map((term) => term.trim().toLowerCase()).filter(Boolean));
 
   if (termSet.size === 0) {
     return escaped;

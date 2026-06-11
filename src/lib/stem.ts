@@ -70,11 +70,7 @@ function endsDoubleConsonant(w: string, j: number): boolean {
  */
 function endsCvc(w: string, j: number): boolean {
   if (j < 2) return false;
-  if (
-    !isConsonantAt(w, j) ||
-    isConsonantAt(w, j - 1) ||
-    !isConsonantAt(w, j - 2)
-  ) {
+  if (!isConsonantAt(w, j) || isConsonantAt(w, j - 1) || !isConsonantAt(w, j - 2)) {
     return false;
   }
   const last = w[j];
@@ -125,12 +121,7 @@ function step1b(w: string): string {
     return base + "e";
   }
   const j = base.length - 1;
-  if (
-    endsDoubleConsonant(base, j) &&
-    base[j] !== "l" &&
-    base[j] !== "s" &&
-    base[j] !== "z"
-  ) {
+  if (endsDoubleConsonant(base, j) && base[j] !== "l" && base[j] !== "s" && base[j] !== "z") {
     return base.slice(0, -1);
   }
   if (measure(base, j) === 1 && endsCvc(base, j)) {

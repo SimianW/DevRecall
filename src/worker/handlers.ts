@@ -38,10 +38,7 @@ export type PageListPort = {
 };
 
 export type SearchPort = {
-  search(
-    query: string,
-    options?: { topK?: number; apiKey?: string | null },
-  ): Promise<PageHit[]>;
+  search(query: string, options?: { topK?: number; apiKey?: string | null }): Promise<PageHit[]>;
   invalidate(): void;
 };
 

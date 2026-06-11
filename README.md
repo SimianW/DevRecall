@@ -3,6 +3,7 @@
 DevRecall is a local-first Chrome extension that captures technical pages, summarizes and tags them via an LLM, and lets you retrieve your saved library through hybrid keyword and semantic search. All data stays in your browser's IndexedDB — nothing is synced to a server.
 
 <!-- TODO: record a 60s demo GIF and save it to docs/demo.gif -->
+
 ![DevRecall demo](docs/demo.gif)
 
 ---
@@ -92,14 +93,14 @@ Failed saves show a **Retry** button on their library card.
 
 ### Options
 
-| Action | Description |
-|---|---|
-| Set API key | Paste an OpenAI key; stored in `chrome.storage.local`, never committed |
-| Test connection | Makes a minimal OpenAI call to validate the key |
-| Storage stats | Shows saved page count and total text size |
+| Action           | Description                                                                |
+| ---------------- | -------------------------------------------------------------------------- |
+| Set API key      | Paste an OpenAI key; stored in `chrome.storage.local`, never committed     |
+| Test connection  | Makes a minimal OpenAI call to validate the key                            |
+| Storage stats    | Shows saved page count and total text size                                 |
 | Re-index library | Re-generates embeddings for pages that are missing them (requires API key) |
-| Export Data | Downloads all saved pages as `devrecall-export.json` |
-| Delete All Data | Permanently removes every saved page (with confirmation prompt) |
+| Export Data      | Downloads all saved pages as `devrecall-export.json`                       |
+| Delete All Data  | Permanently removes every saved page (with confirmation prompt)            |
 
 ### Dark mode
 

@@ -34,25 +34,17 @@ describe("sendRequest", () => {
     const sendMessage = vi.fn().mockResolvedValue(response);
     installChrome({ runtime: { sendMessage } });
 
-    const result = await sendRequest(
-      { type: "page.list", payload: { limit: 50 } },
-      "page.listed",
-    );
+    const result = await sendRequest({ type: "page.list", payload: { limit: 50 } }, "page.listed");
 
     expect(sendMessage).toHaveBeenCalledWith({ type: "page.list", payload: { limit: 50 } });
     expect(result).toEqual(response);
   });
 
   it("returns null when the response type does not match", async () => {
-    const sendMessage = vi
-      .fn()
-      .mockResolvedValue({ type: "error", payload: { message: "boom" } });
+    const sendMessage = vi.fn().mockResolvedValue({ type: "error", payload: { message: "boom" } });
     installChrome({ runtime: { sendMessage } });
 
-    const result = await sendRequest(
-      { type: "page.list", payload: { limit: 50 } },
-      "page.listed",
-    );
+    const result = await sendRequest({ type: "page.list", payload: { limit: 50 } }, "page.listed");
 
     expect(result).toBeNull();
   });

@@ -24,18 +24,12 @@ type AppProps = {
 };
 
 async function defaultListPages(): Promise<PageListItem[]> {
-  const response = await sendRequest(
-    { type: "page.list", payload: { limit: 50 } },
-    "page.listed",
-  );
+  const response = await sendRequest({ type: "page.list", payload: { limit: 50 } }, "page.listed");
   return response?.payload.pages ?? [];
 }
 
 async function defaultRunSearch(query: string): Promise<PageHit[]> {
-  const response = await sendRequest(
-    { type: "search.run", payload: { query } },
-    "search.results",
-  );
+  const response = await sendRequest({ type: "search.run", payload: { query } }, "search.results");
   return response?.payload.hits ?? [];
 }
 

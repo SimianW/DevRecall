@@ -28,18 +28,18 @@ Spec: `docs/superpowers/specs/2026-06-10-pre-v1-refactor-ux-design.md` (user-app
 
 ## Task status
 
-| # | Task | Status | Commit |
-|---|------|--------|--------|
-| 1 | Shared RPC client `src/ui/rpc.ts` + collapse App/Options defaults | ✅ done, both reviews approved | `f374169` (0.5.7.0) |
-| 2 | Worker split: `handlers.ts` + thin `index.ts` + `processPageInBackground` | ✅ done, both reviews approved | `abf8e6b` (0.5.7.1) |
-| 3 | Auto-save flag: `shared/allowlist.ts`, `AutoSaveSettingStore`, messages, handler cases, `startDwell` gate (off by default) | ✅ done, both reviews approved | `7bb53a0` (0.5.7.2) |
-| 4 | Options auto-save toggle + allowlist display | 🔶 NEXT — not started | target 0.5.7.3 |
-| 5 | Remove popup; `setPanelBehavior({ openPanelOnActionClick: true })` | ⬜ | target 0.5.7.4 |
-| 6 | SaveBar in side panel (save + live status, tab tracking) | ⬜ | target 0.5.7.5 |
-| 7 | Filter labels: All / Docs / Stack Overflow / GitHub | ⬜ | target 0.5.7.6 |
-| 8 | Warm Editorial restyle (CSS variables, terracotta accent, serif titles, pill filters) | ⬜ | target 0.5.7.7 |
-| 9 | Housekeeping: move root `HANDOFF.md` (main repo) → docs, rewrite CLAUDE.md | ⬜ | docs only |
-| 10 | Final verification + final whole-implementation code review | ⬜ | — |
+| #   | Task                                                                                                                       | Status                         | Commit              |
+| --- | -------------------------------------------------------------------------------------------------------------------------- | ------------------------------ | ------------------- |
+| 1   | Shared RPC client `src/ui/rpc.ts` + collapse App/Options defaults                                                          | ✅ done, both reviews approved | `f374169` (0.5.7.0) |
+| 2   | Worker split: `handlers.ts` + thin `index.ts` + `processPageInBackground`                                                  | ✅ done, both reviews approved | `abf8e6b` (0.5.7.1) |
+| 3   | Auto-save flag: `shared/allowlist.ts`, `AutoSaveSettingStore`, messages, handler cases, `startDwell` gate (off by default) | ✅ done, both reviews approved | `7bb53a0` (0.5.7.2) |
+| 4   | Options auto-save toggle + allowlist display                                                                               | 🔶 NEXT — not started          | target 0.5.7.3      |
+| 5   | Remove popup; `setPanelBehavior({ openPanelOnActionClick: true })`                                                         | ⬜                             | target 0.5.7.4      |
+| 6   | SaveBar in side panel (save + live status, tab tracking)                                                                   | ⬜                             | target 0.5.7.5      |
+| 7   | Filter labels: All / Docs / Stack Overflow / GitHub                                                                        | ⬜                             | target 0.5.7.6      |
+| 8   | Warm Editorial restyle (CSS variables, terracotta accent, serif titles, pill filters)                                      | ⬜                             | target 0.5.7.7      |
+| 9   | Housekeeping: move root `HANDOFF.md` (main repo) → docs, rewrite CLAUDE.md                                                 | ⬜                             | docs only           |
+| 10  | Final verification + final whole-implementation code review                                                                | ⬜                             | —                   |
 
 Test/quality state at HEAD: **290 passed, 1 skipped; typecheck, lint clean.**
 
@@ -65,7 +65,7 @@ Test/quality state at HEAD: **290 passed, 1 skipped; typecheck, lint clean.**
   point the test at `shared/allowlist` instead; `AutoSaveEnabledPort` lacks a doc
   comment; index.ts wraps the store in a redundant arrow (defensible for symmetry).
 - T3 reviewer suggestion: tiny test asserting `ALLOWLIST_DISPLAY.length ===
-  ALLOWLIST_PATTERNS.length` to catch drift (out of scope; nice for Task 10 or v1.1).
+ALLOWLIST_PATTERNS.length` to catch drift (out of scope; nice for Task 10 or v1.1).
 
 ## Gotchas discovered this run
 

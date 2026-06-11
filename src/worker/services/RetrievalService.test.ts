@@ -193,10 +193,9 @@ describe("RetrievalService", () => {
     expect(keywordOnly).toEqual([]);
 
     // Hybrid (with key) surfaces p1 by meaning, with no literal term overlap.
-    const hybrid = await makeService(vectorChunks, embedder).search(
-      "distributed memory cache",
-      { apiKey: "sk-test" },
-    );
+    const hybrid = await makeService(vectorChunks, embedder).search("distributed memory cache", {
+      apiKey: "sk-test",
+    });
 
     expect(hybrid[0].page.id).toBe("p1");
     expect(hybrid[0].matchReason).toBe("vector");

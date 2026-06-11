@@ -34,13 +34,7 @@ function Chip({ label }: { label: string }) {
   );
 }
 
-function DetailGroup({
-  label,
-  children,
-}: {
-  label: string;
-  children: ReactNode;
-}) {
+function DetailGroup({ label, children }: { label: string; children: ReactNode }) {
   return (
     <section className="flex flex-col gap-2">
       <h3 className="text-[11px] font-semibold uppercase tracking-[0.08em] text-foreground/55">

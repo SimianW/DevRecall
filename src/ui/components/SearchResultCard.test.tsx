@@ -95,11 +95,7 @@ describe("SearchResultCard topic chips", () => {
   });
 
   it("renders no topic chips when topics array is empty", () => {
-    render(
-      <SearchResultCard
-        hit={makeHit({ page: { ...makeHit().page, topics: [] } })}
-      />,
-    );
+    render(<SearchResultCard hit={makeHit({ page: { ...makeHit().page, topics: [] } })} />);
     // The topic chip for "react" must be absent; the badge "keyword" is still present.
     // We verify no chip-like spans for topics exist by checking the container has
     // neither "react" text nor a chip with those styles.

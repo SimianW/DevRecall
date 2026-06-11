@@ -11,6 +11,7 @@
 **Branch:** `worktree-M6-polish-auto-save-ship` (work in the existing worktree at `.claude/worktrees/M6-polish-auto-save-ship`).
 
 **Project rules that apply to every task:**
+
 - TDD: write the failing test first, watch it fail, implement, watch it pass.
 - **Version bump on every code-change commit**: bump `version` in `package.json` AND `APP_VERSION` in `src/shared/messages.ts` (they must match). This plan starts at `0.5.7.0` (Task 1) and bumps the last digit each task (exact version given per task).
 - Run `pnpm typecheck && pnpm lint` before each commit.
@@ -20,6 +21,7 @@
 ### Task 1: Shared typed RPC client (`src/ui/rpc.ts`)
 
 **Files:**
+
 - Create: `src/ui/rpc.ts`
 - Create: `src/ui/rpc.test.ts`
 - Modify: `src/sidepanel/App.tsx` (default fns only)
@@ -69,25 +71,17 @@ describe("sendRequest", () => {
     const sendMessage = vi.fn().mockResolvedValue(response);
     installChrome({ runtime: { sendMessage } });
 
-    const result = await sendRequest(
-      { type: "page.list", payload: { limit: 50 } },
-      "page.listed",
-    );
+    const result = await sendRequest({ type: "page.list", payload: { limit: 50 } }, "page.listed");
 
     expect(sendMessage).toHaveBeenCalledWith({ type: "page.list", payload: { limit: 50 } });
     expect(result).toEqual(response);
   });
 
   it("returns null when the response type does not match", async () => {
-    const sendMessage = vi
-      .fn()
-      .mockResolvedValue({ type: "error", payload: { message: "boom" } });
+    const sendMessage = vi.fn().mockResolvedValue({ type: "error", payload: { message: "boom" } });
     installChrome({ runtime: { sendMessage } });
 
-    const result = await sendRequest(
-      { type: "page.list", payload: { limit: 50 } },
-      "page.listed",
-    );
+    const result = await sendRequest({ type: "page.list", payload: { limit: 50 } }, "page.listed");
 
     expect(result).toBeNull();
   });
@@ -136,11 +130,7 @@ Expected: FAIL — cannot resolve `./rpc`.
 - [ ] **Step 3: Implement `src/ui/rpc.ts`**
 
 ```typescript
-import type {
-  DevRecallRequest,
-  DevRecallResponse,
-  WorkerBroadcast,
-} from "../shared/messages";
+import type { DevRecallRequest, DevRecallResponse, WorkerBroadcast } from "../shared/messages";
 
 /**
  * Send a typed request to the worker. Returns the full typed response when the
@@ -157,9 +147,7 @@ export async function sendRequest<T extends DevRecallResponse["type"]>(
   }
 
   try {
-    const response = (await chrome.runtime.sendMessage(request)) as
-      | DevRecallResponse
-      | undefined;
+    const response = (await chrome.runtime.sendMessage(request)) as DevRecallResponse | undefined;
 
     if (!response || response.type !== expectedType) {
       return null;
@@ -172,9 +160,7 @@ export async function sendRequest<T extends DevRecallResponse["type"]>(
 }
 
 /** Subscribe to worker broadcasts. Returns an unsubscribe function. */
-export function subscribeToBroadcasts(
-  handler: (message: WorkerBroadcast) => void,
-): () => void {
+export function subscribeToBroadcasts(handler: (message: WorkerBroadcast) => void): () => void {
   if (typeof chrome === "undefined" || !chrome.runtime?.onMessage) {
     return () => {};
   }
@@ -200,18 +186,12 @@ Replace the four `default*` functions and `defaultSubscribe` (lines ~24–90) wi
 import { sendRequest, subscribeToBroadcasts } from "../ui/rpc";
 
 async function defaultListPages(): Promise<PageListItem[]> {
-  const response = await sendRequest(
-    { type: "page.list", payload: { limit: 50 } },
-    "page.listed",
-  );
+  const response = await sendRequest({ type: "page.list", payload: { limit: 50 } }, "page.listed");
   return response?.payload.pages ?? [];
 }
 
 async function defaultRunSearch(query: string): Promise<PageHit[]> {
-  const response = await sendRequest(
-    { type: "search.run", payload: { query } },
-    "search.results",
-  );
+  const response = await sendRequest({ type: "search.run", payload: { query } }, "search.results");
   return response?.payload.hits ?? [];
 }
 
@@ -241,10 +221,7 @@ const defaultLoadStatus = async (): Promise<StatusResult> => {
 };
 
 const defaultSaveApiKey = async (apiKey: string): Promise<void> => {
-  await sendRequest(
-    { type: "settings.setApiKey", payload: { apiKey } },
-    "settings.apiKeySet",
-  );
+  await sendRequest({ type: "settings.setApiKey", payload: { apiKey } }, "settings.apiKeySet");
 };
 
 const defaultTestConnection = async (): Promise<TestResult> => {
@@ -301,6 +278,7 @@ git commit -m "refactor: shared typed RPC client for UI surfaces"
 ### Task 2: Split the worker — `handlers.ts` + thin entry + `processPageInBackground`
 
 **Files:**
+
 - Create: `src/worker/handlers.ts`
 - Modify: `src/worker/index.ts` (shrinks to composition + listeners)
 - Modify: `src/worker/index.test.ts` → rename to `src/worker/handlers.test.ts`
@@ -370,9 +348,9 @@ export function processPageInBackground(deps: HandlerDeps, pageId: string): void
 `page.retry` keeps its guards (not-found / not-failed / no-API-key error responses) and its `updatePage` + immediate broadcast, but its trailing `void deps.captureService.processPage(...)` block is replaced by:
 
 ```typescript
-      processPageInBackground(deps, page.id);
+processPageInBackground(deps, page.id);
 
-      return { type: "page.retryStarted", payload: { page: listItem } };
+return { type: "page.retryStarted", payload: { page: listItem } };
 ```
 
 All other cases move verbatim. `handleMessage` moves verbatim (with required `deps`).
@@ -462,6 +440,7 @@ git commit -m "refactor: split worker into handlers + thin MV3 entry, dedupe bac
 ### Task 3: Auto-save enabled flag (storage, messages, handler, service gate)
 
 **Files:**
+
 - Create: `src/shared/allowlist.ts` (moved from AutoSaveService, + display list)
 - Create: `src/worker/settings/AutoSaveSettingStore.ts`
 - Create: `src/worker/settings/AutoSaveSettingStore.test.ts`
@@ -658,27 +637,27 @@ In `src/worker/handlers.test.ts`, the deps factory (`makeDeps()`) gains an `auto
 Add tests:
 
 ```typescript
-  it("settings.getAutoSave returns the stored flag", async () => {
-    const deps = makeDeps();
-    deps.autoSaveSettings.isEnabled = vi.fn().mockResolvedValue(true);
+it("settings.getAutoSave returns the stored flag", async () => {
+  const deps = makeDeps();
+  deps.autoSaveSettings.isEnabled = vi.fn().mockResolvedValue(true);
 
-    await expect(handleRequest({ type: "settings.getAutoSave" }, deps)).resolves.toEqual({
-      type: "settings.autoSave",
-      payload: { enabled: true },
-    });
+  await expect(handleRequest({ type: "settings.getAutoSave" }, deps)).resolves.toEqual({
+    type: "settings.autoSave",
+    payload: { enabled: true },
   });
+});
 
-  it("settings.setAutoSave persists and echoes the flag", async () => {
-    const deps = makeDeps();
+it("settings.setAutoSave persists and echoes the flag", async () => {
+  const deps = makeDeps();
 
-    await expect(
-      handleRequest({ type: "settings.setAutoSave", payload: { enabled: true } }, deps),
-    ).resolves.toEqual({
-      type: "settings.autoSaveSet",
-      payload: { enabled: true },
-    });
-    expect(deps.autoSaveSettings.setEnabled).toHaveBeenCalledWith(true);
+  await expect(
+    handleRequest({ type: "settings.setAutoSave", payload: { enabled: true } }, deps),
+  ).resolves.toEqual({
+    type: "settings.autoSaveSet",
+    payload: { enabled: true },
   });
+  expect(deps.autoSaveSettings.setEnabled).toHaveBeenCalledWith(true);
+});
 ```
 
 Run: `pnpm test src/worker/handlers.test.ts` — expected FAIL (type error / unhandled request type).
@@ -733,44 +712,47 @@ const enabledPort = { isEnabled: vi.fn().mockResolvedValue(true) };
 New tests:
 
 ```typescript
-  it("does not start a dwell timer when auto-save is disabled", async () => {
-    const enabledPort = { isEnabled: vi.fn().mockResolvedValue(false) };
-    const alarm = { create: vi.fn(), clear: vi.fn().mockResolvedValue(false) };
-    const session = { get: vi.fn(), set: vi.fn(), remove: vi.fn() };
-    const service = new AutoSaveService(
-      alarm,
-      session,
-      { getActiveTabUrl: vi.fn() },
-      { saveAuto: vi.fn() },
-      { getByUrlHash: vi.fn() },
-      enabledPort,
-      1000,
-    );
+it("does not start a dwell timer when auto-save is disabled", async () => {
+  const enabledPort = { isEnabled: vi.fn().mockResolvedValue(false) };
+  const alarm = { create: vi.fn(), clear: vi.fn().mockResolvedValue(false) };
+  const session = { get: vi.fn(), set: vi.fn(), remove: vi.fn() };
+  const service = new AutoSaveService(
+    alarm,
+    session,
+    { getActiveTabUrl: vi.fn() },
+    { saveAuto: vi.fn() },
+    { getByUrlHash: vi.fn() },
+    enabledPort,
+    1000,
+  );
 
-    await service.startDwell(1, "https://github.com/some/repo");
+  await service.startDwell(1, "https://github.com/some/repo");
 
-    expect(alarm.create).not.toHaveBeenCalled();
-    expect(session.set).not.toHaveBeenCalled();
-  });
+  expect(alarm.create).not.toHaveBeenCalled();
+  expect(session.set).not.toHaveBeenCalled();
+});
 
-  it("starts a dwell timer when auto-save is enabled", async () => {
-    const enabledPort = { isEnabled: vi.fn().mockResolvedValue(true) };
-    const alarm = { create: vi.fn().mockResolvedValue(undefined), clear: vi.fn().mockResolvedValue(false) };
-    const session = { get: vi.fn(), set: vi.fn().mockResolvedValue(undefined), remove: vi.fn() };
-    const service = new AutoSaveService(
-      alarm,
-      session,
-      { getActiveTabUrl: vi.fn() },
-      { saveAuto: vi.fn() },
-      { getByUrlHash: vi.fn() },
-      enabledPort,
-      1000,
-    );
+it("starts a dwell timer when auto-save is enabled", async () => {
+  const enabledPort = { isEnabled: vi.fn().mockResolvedValue(true) };
+  const alarm = {
+    create: vi.fn().mockResolvedValue(undefined),
+    clear: vi.fn().mockResolvedValue(false),
+  };
+  const session = { get: vi.fn(), set: vi.fn().mockResolvedValue(undefined), remove: vi.fn() };
+  const service = new AutoSaveService(
+    alarm,
+    session,
+    { getActiveTabUrl: vi.fn() },
+    { saveAuto: vi.fn() },
+    { getByUrlHash: vi.fn() },
+    enabledPort,
+    1000,
+  );
 
-    await service.startDwell(1, "https://github.com/some/repo");
+  await service.startDwell(1, "https://github.com/some/repo");
 
-    expect(alarm.create).toHaveBeenCalledTimes(1);
-  });
+  expect(alarm.create).toHaveBeenCalledTimes(1);
+});
 ```
 
 (Adapt mock shapes to the existing test file's conventions — the existing tests show the exact port stubs in use.)
@@ -837,6 +819,7 @@ git commit -m "feat: auto-save opt-in flag (off by default), gate dwell timers"
 ### Task 4: Options — functional auto-save toggle + allowlist display
 
 **Files:**
+
 - Modify: `src/options/Options.tsx`
 - Modify: `src/options/Options.test.tsx`
 - Modify: `package.json`, `src/shared/messages.ts` (version → `0.5.7.3`)
@@ -846,41 +829,31 @@ git commit -m "feat: auto-save opt-in flag (off by default), gate dwell timers"
 Add to `src/options/Options.test.tsx` (follow the file's existing render-with-injected-props pattern):
 
 ```tsx
-  it("renders the auto-save toggle from the stored flag", async () => {
-    render(
-      <Options
-        {...baseProps}
-        loadAutoSave={async () => true}
-        setAutoSave={async () => {}}
-      />,
-    );
+it("renders the auto-save toggle from the stored flag", async () => {
+  render(<Options {...baseProps} loadAutoSave={async () => true} setAutoSave={async () => {}} />);
 
-    const checkbox = await screen.findByRole("checkbox", { name: /enable auto-save/i });
-    await waitFor(() => expect(checkbox).toBeChecked());
-    expect(checkbox).toBeEnabled();
-  });
+  const checkbox = await screen.findByRole("checkbox", { name: /enable auto-save/i });
+  await waitFor(() => expect(checkbox).toBeChecked());
+  expect(checkbox).toBeEnabled();
+});
 
-  it("persists the flag when toggled", async () => {
-    const setAutoSave = vi.fn().mockResolvedValue(undefined);
-    render(
-      <Options {...baseProps} loadAutoSave={async () => false} setAutoSave={setAutoSave} />,
-    );
+it("persists the flag when toggled", async () => {
+  const setAutoSave = vi.fn().mockResolvedValue(undefined);
+  render(<Options {...baseProps} loadAutoSave={async () => false} setAutoSave={setAutoSave} />);
 
-    const checkbox = await screen.findByRole("checkbox", { name: /enable auto-save/i });
-    await userEvent.click(checkbox);
+  const checkbox = await screen.findByRole("checkbox", { name: /enable auto-save/i });
+  await userEvent.click(checkbox);
 
-    expect(setAutoSave).toHaveBeenCalledWith(true);
-  });
+  expect(setAutoSave).toHaveBeenCalledWith(true);
+});
 
-  it("lists the allowlisted domains", async () => {
-    render(
-      <Options {...baseProps} loadAutoSave={async () => false} setAutoSave={async () => {}} />,
-    );
+it("lists the allowlisted domains", async () => {
+  render(<Options {...baseProps} loadAutoSave={async () => false} setAutoSave={async () => {}} />);
 
-    expect(await screen.findByText("github.com")).toBeInTheDocument();
-    expect(screen.getByText("stackoverflow.com")).toBeInTheDocument();
-    expect(screen.getByText("*.readthedocs.io")).toBeInTheDocument();
-  });
+  expect(await screen.findByText("github.com")).toBeInTheDocument();
+  expect(screen.getByText("stackoverflow.com")).toBeInTheDocument();
+  expect(screen.getByText("*.readthedocs.io")).toBeInTheDocument();
+});
 ```
 
 (`baseProps` = whatever minimal prop set the existing tests pass; reuse the file's helper if one exists.)
@@ -915,53 +888,52 @@ const defaultSetAutoSave = async (enabled: boolean): Promise<void> => {
 State + load effect inside the component:
 
 ```typescript
-  const [autoSaveEnabled, setAutoSaveEnabled] = useState(false);
+const [autoSaveEnabled, setAutoSaveEnabled] = useState(false);
 
-  useEffect(() => {
-    loadAutoSave()
-      .then(setAutoSaveEnabled)
-      .catch(() => {});
-  }, [loadAutoSave]);
+useEffect(() => {
+  loadAutoSave()
+    .then(setAutoSaveEnabled)
+    .catch(() => {});
+}, [loadAutoSave]);
 
-  const handleToggleAutoSave = async () => {
-    const next = !autoSaveEnabled;
-    setAutoSaveEnabled(next);
-    try {
-      await setAutoSave(next);
-    } catch {
-      setAutoSaveEnabled(!next); // roll back on failure
-    }
-  };
+const handleToggleAutoSave = async () => {
+  const next = !autoSaveEnabled;
+  setAutoSaveEnabled(next);
+  try {
+    await setAutoSave(next);
+  } catch {
+    setAutoSaveEnabled(!next); // roll back on failure
+  }
+};
 ```
 
 Replace the disabled-checkbox block (`<label ...><input type="checkbox" disabled .../>Enable auto-save</label>`) with a section:
 
 ```tsx
-        <section className="rounded-md border border-default bg-surface-raised p-4">
-          <label className="flex items-center gap-3 text-sm font-medium text-foreground">
-            <input
-              type="checkbox"
-              checked={autoSaveEnabled}
-              onChange={handleToggleAutoSave}
-              className="h-4 w-4 accent-accent"
-            />
-            Enable auto-save
-          </label>
-          <p className="mt-2 text-sm text-foreground/65">
-            When enabled, pages you read for 30+ seconds on these technical sites are
-            saved automatically:
-          </p>
-          <ul className="mt-2 flex flex-wrap gap-2">
-            {ALLOWLIST_DISPLAY.map((domain) => (
-              <li
-                key={domain}
-                className="rounded-full border border-default/80 bg-foreground/5 px-2 py-1 text-xs text-foreground/75"
-              >
-                {domain}
-              </li>
-            ))}
-          </ul>
-        </section>
+<section className="rounded-md border border-default bg-surface-raised p-4">
+  <label className="flex items-center gap-3 text-sm font-medium text-foreground">
+    <input
+      type="checkbox"
+      checked={autoSaveEnabled}
+      onChange={handleToggleAutoSave}
+      className="h-4 w-4 accent-accent"
+    />
+    Enable auto-save
+  </label>
+  <p className="mt-2 text-sm text-foreground/65">
+    When enabled, pages you read for 30+ seconds on these technical sites are saved automatically:
+  </p>
+  <ul className="mt-2 flex flex-wrap gap-2">
+    {ALLOWLIST_DISPLAY.map((domain) => (
+      <li
+        key={domain}
+        className="rounded-full border border-default/80 bg-foreground/5 px-2 py-1 text-xs text-foreground/75"
+      >
+        {domain}
+      </li>
+    ))}
+  </ul>
+</section>
 ```
 
 - [ ] **Step 3: Run, bump, commit**
@@ -979,6 +951,7 @@ git commit -m "feat: functional auto-save toggle with allowlist display in Optio
 ### Task 5: Remove the popup — icon opens the side panel
 
 **Files:**
+
 - Delete: `src/popup/` (index.html, main.tsx, Popup.tsx, Popup.test.tsx)
 - Modify: `manifest.config.ts`
 - Modify: `src/worker/index.ts`
@@ -1032,6 +1005,7 @@ git commit -m "feat: remove popup; toolbar icon opens the side panel"
 ### Task 6: SaveBar — "Save this page" moves into the side panel
 
 **Files:**
+
 - Create: `src/sidepanel/SaveBar.tsx`
 - Create: `src/sidepanel/SaveBar.test.tsx`
 - Modify: `src/sidepanel/App.tsx` (render `<SaveBar />` above the search input)
@@ -1048,7 +1022,11 @@ import { describe, expect, it, vi } from "vitest";
 
 import { SaveBar } from "./SaveBar";
 
-const tab = { tabId: 7, title: "Using chrome.alarms", url: "https://developer.chrome.com/docs/extensions/reference/api/alarms" };
+const tab = {
+  tabId: 7,
+  title: "Using chrome.alarms",
+  url: "https://developer.chrome.com/docs/extensions/reference/api/alarms",
+};
 
 function makeProps(overrides: Partial<Parameters<typeof SaveBar>[0]> = {}) {
   return {
@@ -1115,9 +1093,7 @@ describe("SaveBar", () => {
       .mockResolvedValue({ saved: true, status: "failed", savedAt: Date.now() });
     render(<SaveBar {...makeProps({ loadUrlStatus })} />);
 
-    expect(
-      await screen.findByRole("button", { name: /save failed — try again/i }),
-    ).toBeEnabled();
+    expect(await screen.findByRole("button", { name: /save failed — try again/i })).toBeEnabled();
   });
 
   it("disables save and shows a hint when no API key is set", async () => {
@@ -1180,10 +1156,7 @@ async function defaultGetActiveTab(): Promise<ActiveTab | null> {
 }
 
 async function defaultSaveTab(tabId: number): Promise<void> {
-  const response = await sendRequest(
-    { type: "page.save", payload: { tabId } },
-    "page.saved",
-  );
+  const response = await sendRequest({ type: "page.save", payload: { tabId } }, "page.saved");
   if (!response) {
     throw new Error("Save failed");
   }
@@ -1328,9 +1301,7 @@ export function SaveBar({
       <p className="text-[10px] font-semibold uppercase tracking-[0.06em] text-foreground/55">
         Reading now
       </p>
-      <p className="mt-1 truncate font-serif text-sm font-semibold text-foreground">
-        {tab.title}
-      </p>
+      <p className="mt-1 truncate font-serif text-sm font-semibold text-foreground">{tab.title}</p>
       <p className="text-xs text-foreground/55">{domain}</p>
       <button
         type="button"
@@ -1341,9 +1312,7 @@ export function SaveBar({
         {buttonLabel}
       </button>
       {missingKey && (
-        <p className="mt-2 text-xs text-amber-700 dark:text-amber-300">
-          Set API key in settings
-        </p>
+        <p className="mt-2 text-xs text-amber-700 dark:text-amber-300">Set API key in settings</p>
       )}
     </section>
   );
@@ -1381,6 +1350,7 @@ git commit -m "feat: SaveBar in side panel — save current page with live statu
 ### Task 7: Readable filter labels
 
 **Files:**
+
 - Modify: `src/sidepanel/App.tsx`
 - Modify: `src/sidepanel/App.test.tsx` (any "SO"/"GH" references)
 - Modify: `package.json`, `src/shared/messages.ts` (version → `0.5.7.6`)
@@ -1422,6 +1392,7 @@ git commit -m "feat: readable filter labels (Stack Overflow, GitHub)"
 ### Task 8: Warm Editorial restyle
 
 **Files:**
+
 - Modify: `src/ui/styles.css`
 - Modify: `tailwind.config.js`
 - Modify: `src/sidepanel/App.tsx` (pill filters)
@@ -1500,7 +1471,8 @@ Add `font-serif` to the title elements only:
 In `src/sidepanel/App.tsx`, the filter button className becomes (behavior/aria unchanged):
 
 ```tsx
-className="rounded-full border border-default bg-surface-raised px-3 py-1 text-sm text-foreground/75 transition-colors hover:bg-foreground/5 aria-pressed:border-accent aria-pressed:bg-accent aria-pressed:text-white"
+className =
+  "rounded-full border border-default bg-surface-raised px-3 py-1 text-sm text-foreground/75 transition-colors hover:bg-foreground/5 aria-pressed:border-accent aria-pressed:bg-accent aria-pressed:text-white";
 ```
 
 - [ ] **Step 5: Full suite + build, visual sanity**
@@ -1524,6 +1496,7 @@ git commit -m "feat: Warm Editorial theme — warm paper/charcoal palettes, terr
 ### Task 9: Housekeeping — HANDOFF relocation + CLAUDE.md accuracy
 
 **Files:**
+
 - Move: `HANDOFF.md` → `docs/superpowers/handoffs/2026-06-01-m6.md`
 - Modify: `CLAUDE.md`
 
@@ -1555,7 +1528,7 @@ Content Script → Service Worker ← Side Panel / Options
 
 4. **Options subsection**: replace `- Auto-save toggle (UI placeholder; logic not yet implemented)` with `- Auto-save toggle (opt-in, off by default; allowlisted domains shown) — flag in chrome.storage.local`.
 
-5. **Code Organization**: remove `/src/popup/` from the UI entry points line; add `- \`src/worker/handlers.ts\` — typed RPC dispatcher (pure; unit-tested)` and `- \`/src/ui/rpc.ts\` — shared typed RPC client for UI surfaces`.
+5. **Code Organization**: remove `/src/popup/` from the UI entry points line; add `- \`src/worker/handlers.ts\` — typed RPC dispatcher (pure; unit-tested)`and`- \`/src/ui/rpc.ts\` — shared typed RPC client for UI surfaces`.
 
 6. **Worker section key-file pointer**: `**Key file:** /src/worker/handlers.ts — read this first to understand request/response flow; /src/worker/index.ts is the thin MV3 entry (composition + listeners).`
 
@@ -1583,6 +1556,7 @@ Expected: `src/lib/**`, `src/worker/handlers.ts`, `src/worker/services/**`, `src
 - [ ] **Step 3: Manual E2E in Chrome**
 
 Load `/dist` unpacked and verify:
+
 1. Toolbar icon opens the side panel (no popup).
 2. SaveBar shows the active tab; Save → Processing… → Saved ✓.
 3. Switching tabs retargets the SaveBar.
