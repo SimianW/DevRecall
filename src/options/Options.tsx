@@ -2,6 +2,7 @@ import { useEffect, useState } from "react";
 import { SurfaceShell } from "../ui/components";
 import type { WorkerBroadcast } from "../shared/messages";
 import { sendRequest, subscribeToBroadcasts } from "../ui/rpc";
+import { ALLOWLIST_DISPLAY } from "../shared/allowlist";
 
 type StatusResult = { hasApiKey: boolean };
 type TestResult = { success: boolean; message: string };
@@ -16,6 +17,8 @@ type OptionsProps = {
   subscribe?: (handler: (message: WorkerBroadcast) => void) => () => void;
   exportData?: () => Promise<string>;
   deleteAll?: () => Promise<void>;
+  loadAutoSave?: () => Promise<boolean>;
+  setAutoSave?: (enabled: boolean) => Promise<void>;
 };
 
 const defaultLoadStatus = async (): Promise<StatusResult> => {
@@ -62,6 +65,18 @@ const defaultDeleteAll = async (): Promise<void> => {
   await sendRequest({ type: "data.deleteAll" }, "data.deletedAll");
 };
 
+const defaultLoadAutoSave = async (): Promise<boolean> => {
+  const response = await sendRequest({ type: "settings.getAutoSave" }, "settings.autoSave");
+  return response?.payload.enabled ?? false;
+};
+
+const defaultSetAutoSave = async (enabled: boolean): Promise<void> => {
+  await sendRequest(
+    { type: "settings.setAutoSave", payload: { enabled } },
+    "settings.autoSaveSet",
+  );
+};
+
 export function Options({
   loadStatus = defaultLoadStatus,
   saveApiKey = defaultSaveApiKey,
@@ -71,6 +86,8 @@ export function Options({
   subscribe = defaultSubscribe,
   exportData = defaultExportData,
   deleteAll = defaultDeleteAll,
+  loadAutoSave = defaultLoadAutoSave,
+  setAutoSave = defaultSetAutoSave,
 }: OptionsProps) {
   const [apiKey, setApiKey] = useState("");
   const [keySaved, setKeySaved] = useState(false);
@@ -82,6 +99,23 @@ export function Options({
   const [showDeleteConfirm, setShowDeleteConfirm] = useState(false);
   const [exportError, setExportError] = useState<string | null>(null);
   const [deleteError, setDeleteError] = useState<string | null>(null);
+  const [autoSaveEnabled, setAutoSaveEnabled] = useState(false);
+
+  useEffect(() => {
+    loadAutoSave()
+      .then(setAutoSaveEnabled)
+      .catch(() => {});
+  }, [loadAutoSave]);
+
+  const handleToggleAutoSave = async () => {
+    const next = !autoSaveEnabled;
+    setAutoSaveEnabled(next);
+    try {
+      await setAutoSave(next);
+    } catch {
+      setAutoSaveEnabled(!next); // roll back on failure
+    }
+  };
 
   useEffect(() => {
     loadStatus().then((status) => {
@@ -220,10 +254,31 @@ export function Options({
           )}
         </div>
 
-        <label className="flex items-center gap-3 text-sm font-medium text-foreground">
-          <input type="checkbox" disabled className="h-4 w-4 accent-accent" />
-          Enable auto-save
-        </label>
+        <section className="rounded-md border border-default bg-surface-raised p-4">
+          <label className="flex items-center gap-3 text-sm font-medium text-foreground">
+            <input
+              type="checkbox"
+              checked={autoSaveEnabled}
+              onChange={handleToggleAutoSave}
+              className="h-4 w-4 accent-accent"
+            />
+            Enable auto-save
+          </label>
+          <p className="mt-2 text-sm text-foreground/65">
+            When enabled, pages you read for 30+ seconds on these technical sites are saved
+            automatically:
+          </p>
+          <ul className="mt-2 flex flex-wrap gap-2">
+            {ALLOWLIST_DISPLAY.map((domain) => (
+              <li
+                key={domain}
+                className="rounded-full border border-default/80 bg-foreground/5 px-2 py-1 text-xs text-foreground/75"
+              >
+                {domain}
+              </li>
+            ))}
+          </ul>
+        </section>
 
         <section className="rounded-md border border-default bg-surface-raised p-4">
           <h2 className="text-sm font-semibold text-foreground">Keyboard shortcut</h2>

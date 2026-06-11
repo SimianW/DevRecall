@@ -245,6 +245,43 @@ it("shows an error message when deleteAll rejects", async () => {
   expect(screen.getByRole("button", { name: /Cancel/i })).toBeInTheDocument();
 });
 
+// ── Auto-save toggle ─────────────────────────────────────────────────────────
+
+it("renders the auto-save toggle from the stored flag", async () => {
+  renderOptions({
+    loadAutoSave: async () => true,
+    setAutoSave: async () => {},
+  });
+
+  const checkbox = await screen.findByRole("checkbox", { name: /enable auto-save/i });
+  await waitFor(() => expect(checkbox).toBeChecked());
+  expect(checkbox).toBeEnabled();
+});
+
+it("persists the flag when toggled", async () => {
+  const setAutoSave = vi.fn().mockResolvedValue(undefined);
+  renderOptions({
+    loadAutoSave: async () => false,
+    setAutoSave,
+  });
+
+  const checkbox = await screen.findByRole("checkbox", { name: /enable auto-save/i });
+  await userEvent.click(checkbox);
+
+  expect(setAutoSave).toHaveBeenCalledWith(true);
+});
+
+it("lists the allowlisted domains", async () => {
+  renderOptions({
+    loadAutoSave: async () => false,
+    setAutoSave: async () => {},
+  });
+
+  expect(await screen.findByText("github.com")).toBeInTheDocument();
+  expect(screen.getByText("stackoverflow.com")).toBeInTheDocument();
+  expect(screen.getByText("*.readthedocs.io")).toBeInTheDocument();
+});
+
 // ── Status-text dark: variant assertions ─────────────────────────────────────
 
 describe("Options status-text dark: variants", () => {
