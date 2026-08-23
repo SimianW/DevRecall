@@ -1,6 +1,6 @@
 # DevRecall
 
-DevRecall is a local-first Chrome extension that captures technical pages, summarizes and tags them via an LLM, and lets you retrieve your saved library through hybrid keyword and semantic search. All data stays in your browser's IndexedDB — nothing is synced to a server.
+DevRecall is a local-first Chrome extension that captures technical pages, summarizes and tags them with an LLM, and retrieves saved pages through keyword and semantic search. Saved pages and search indexes stay in browser storage. When an OpenAI API key is configured, DevRecall sends extracted page text and search queries directly to OpenAI for summaries, tags, embeddings, and semantic query vectors.
 
 <!-- TODO: record a 60s demo GIF and save it to docs/demo.gif -->
 
@@ -13,9 +13,9 @@ DevRecall is a local-first Chrome extension that captures technical pages, summa
 - Node.js 20+
 - pnpm 9+
 - Chrome or Chromium with extension developer mode enabled
-- An OpenAI API key (required for LLM summarization/tagging and semantic search; keyword search works without one)
+- An OpenAI API key. The current UI requires a key to save new pages. Existing keyword indexes remain searchable without one.
 
-> The API key is stored in `chrome.storage.local` inside your browser profile. It is never written to disk in this repository and is never committed.
+> The API key is stored in `chrome.storage.local` inside your browser profile. It is never written to this repository or committed. DevRecall has no sync service, but OpenAI receives page content during enrichment and search queries during semantic search.
 
 ---
 
@@ -47,16 +47,16 @@ pnpm build
 
 Open the extension options page (click **Settings** in the side panel, or right-click the toolbar icon and choose **Options**). Paste your OpenAI API key and click **Save**. Use **Test connection** to verify the key works.
 
-Keyword search works without a key. LLM summarization, topic tagging, and semantic ("matched by meaning") search require a valid key.
+The current UI requires a key before saving new pages. BM25 does not call OpenAI, so pages that already have keyword chunks remain searchable when no key is available. Summaries, topic tags, embeddings, and semantic matches require a valid key.
 
 ### Save a page manually
 
-Click the DevRecall toolbar icon to open the side panel, then click **Save to library**. The panel's save bar shows live status (updates arrive via worker broadcasts — no polling):
+Click the DevRecall toolbar icon to open the side panel, then click **Save to library**. Worker broadcasts update the save bar without polling:
 
-- **Saving…** — capture in progress
-- **Processing…** — LLM summarization running in the background
-- **Saved ✓ Xm ago** — page is ready in your library
-- **Save failed — try again** — the save or LLM step failed; click the button to retry
+- **Saving…**: capture in progress
+- **Processing…**: LLM summarization running in the background
+- **Saved ✓ Xm ago**: page is ready in your library
+- **Save failed, try again**: the save or LLM step failed; click the button to retry
 
 If no API key is configured, the save button is disabled and a prompt appears to set one in settings.
 
@@ -77,13 +77,13 @@ Navigating away or closing the tab before the 30-second dwell elapses cancels th
 
 ### Search and browse (side panel)
 
-Click the toolbar icon (or use **⌘ Shift K** / **Ctrl Shift K**) to open the side panel — the icon opens the library directly; there is no separate popup.
+Click the toolbar icon or use **⌘ Shift K** / **Ctrl Shift K** to open the side panel. The icon opens the library directly; there is no separate popup.
 
-Type a query to run a live hybrid search (BM25 keyword + vector cosine, fused with RRF). Each result shows a match-reason badge:
+Type a query to search the library. With an API key, DevRecall combines BM25 keyword ranking and vector similarity through RRF. Without a key, it uses BM25 alone over existing keyword chunks. Each result shows a match-reason badge:
 
-- **keyword** — matched by BM25 term overlap
-- **matched by meaning** — matched by vector similarity (semantic)
-- **keyword + meaning** — matched by both arms
+- **keyword**: matched by BM25 term overlap
+- **matched by meaning**: matched by vector similarity
+- **keyword + meaning**: matched by both search methods
 
 Use the filter chips to narrow results by source type: **All**, **Docs**, **Stack Overflow**, **GitHub**.
 
@@ -136,12 +136,12 @@ Content Script → Service Worker ← Side Panel / Options
 
 Key files:
 
-- `src/worker/handlers.ts` — typed RPC dispatcher; read this first to understand request/response flow
-- `src/worker/index.ts` — thin MV3 entry (composition + top-level listeners)
-- `src/worker/services/AutoSaveService.ts` — alarm-driven dwell timer for auto-save
-- `src/worker/services/RetrievalService.ts` — hybrid BM25 + vector + RRF search
-- `src/ui/rpc.ts` — shared typed RPC client used by side panel and options page
-- `src/shared/messages.ts` — typed RPC request/response contract
-- `src/shared/types.ts` — shared domain types (`PageRecord`, `PageHit`, etc.)
+- `src/worker/handlers.ts`: typed RPC dispatcher; read this first to understand request and response flow
+- `src/worker/index.ts`: thin MV3 entry with composition and top-level listeners
+- `src/worker/services/AutoSaveService.ts`: alarm-driven dwell timer for auto-save
+- `src/worker/services/RetrievalService.ts`: hybrid BM25, vector, and RRF search
+- `src/ui/rpc.ts`: shared typed RPC client used by the side panel and options page
+- `src/shared/messages.ts`: typed RPC request and response contract
+- `src/shared/types.ts`: shared domain types such as `PageRecord` and `PageHit`
 
 See `CLAUDE.md` for a detailed architecture reference and `docs/superpowers/specs/2026-05-16-devrecall-mvp-design.md` for the full MVP design.
