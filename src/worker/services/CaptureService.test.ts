@@ -1,14 +1,16 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
-import type { ExtractedPage, PageRecord, TaggingResult } from "../../shared/types";
+import { ContentType, Platform } from "../../shared/enums";
+import type { ExtractedPage, PageRecord } from "../../shared/types";
 import { ChunkRepo } from "../repository/ChunkRepo";
 import { DevRecallDatabase } from "../repository/db";
 import { PageRepo } from "../repository/PageRepo";
 import { MockLLMProvider } from "../llm/MockLLMProvider";
-import type { Embedder } from "../llm/OpenAIProvider";
+import type { Embedder, PageTaggingResult } from "../llm/OpenAIProvider";
 import {
   CaptureService,
   ChromePageExtractor,
+  SEMANTIC_INDEX_VERSION,
   mergeFrameExtractions,
   type ChunkWriter,
   type FrameExtraction,
@@ -31,7 +33,8 @@ const pendingPage: PageRecord = {
   urlHash: "a".repeat(64),
   title: extracted.title,
   domain: "kubernetes.io",
-  sourceType: "unknown",
+  platform: Platform.Web,
+  contentType: ContentType.Documentation,
   summary: "",
   topics: [],
   technologies: [],
@@ -45,9 +48,9 @@ const pendingPage: PageRecord = {
   schemaVersion: 1,
 };
 
-const taggingResult: TaggingResult = {
+const taggingResult: PageTaggingResult = {
   summary: "HPA autoscales pods based on metrics.",
-  sourceType: "official_docs",
+  contentType: ContentType.Documentation,
   topics: ["kubernetes", "autoscaling"],
   technologies: ["Kubernetes"],
   intent: "reference",
@@ -69,10 +72,30 @@ function mockChunkWriter(): ChunkWriter {
   };
 }
 
+function mockReader(page: PageRecord | undefined = pendingPage): PageReader {
+  return {
+    getById: vi.fn().mockResolvedValue(page),
+    claimEnrichment: vi.fn(async () => {
+      if (!page) {
+        throw new Error("Page not found");
+      }
+      if (page.status !== "keyword_ready") {
+        throw new Error(`Page ${page.id} is not eligible for enrichment (${page.status})`);
+      }
+      return { ...page, status: "enriching", enrichmentError: undefined } satisfies PageRecord;
+    }),
+    updatePage: vi.fn().mockResolvedValue(undefined),
+    recoverStaleEnriching: vi.fn().mockResolvedValue(0),
+  };
+}
+
 describe("CaptureService", () => {
-  it("extracts the tab, stores a pending page, and writes word chunks", async () => {
+  it("extracts the tab and atomically commits a keyword-ready page with word chunks", async () => {
     const extractor: PageExtractor = { extract: vi.fn().mockResolvedValue(extracted) };
-    const writer: PageWriter = { upsertCapturedPage: vi.fn().mockResolvedValue(pendingPage) };
+    const keywordReadyPage: PageRecord = { ...pendingPage, status: "keyword_ready" };
+    const writer: PageWriter = {
+      commitCapturedPage: vi.fn().mockResolvedValue(keywordReadyPage),
+    };
     const chunkWriter = mockChunkWriter();
 
     const result = await new CaptureService(
@@ -84,24 +107,21 @@ describe("CaptureService", () => {
     ).save(123);
 
     expect(extractor.extract).toHaveBeenCalledWith(123);
-    expect(writer.upsertCapturedPage).toHaveBeenCalledWith({ ...extracted, saveMode: "manual" });
-    expect(chunkWriter.replaceChunksForPage).toHaveBeenCalledWith(pendingPage.id, [
+    expect(writer.commitCapturedPage).toHaveBeenCalledWith({ ...extracted, saveMode: "manual" }, [
       pendingPage.fullText,
     ]);
-    expect(result).toBe(pendingPage);
+    expect(chunkWriter.replaceChunksForPage).not.toHaveBeenCalled();
+    expect(result).toBe(keywordReadyPage);
   });
 
   it("tags, embeds, and commits the page atomically", async () => {
-    const reader: PageReader = {
-      getById: vi.fn().mockResolvedValue(pendingPage),
-      updatePage: vi.fn().mockResolvedValue(undefined),
-    };
+    const reader = mockReader({ ...pendingPage, status: "keyword_ready" });
     const tagger: PageTagger = { summarizeAndTag: vi.fn().mockResolvedValue(taggingResult) };
     const chunkWriter = mockChunkWriter();
     const embedder = mockEmbedder();
 
     const result = await new CaptureService(
-      { upsertCapturedPage: vi.fn() },
+      { commitCapturedPage: vi.fn() },
       { extract: vi.fn() },
       reader,
       tagger,
@@ -109,29 +129,30 @@ describe("CaptureService", () => {
       embedder,
     ).processPage(pendingPage.id, "sk-test");
 
+    expect(reader.claimEnrichment).toHaveBeenCalledWith(pendingPage.id);
+
     expect(tagger.summarizeAndTag).toHaveBeenCalledWith(
       pendingPage.fullText,
       pendingPage.title,
       pendingPage.url,
       "sk-test",
+      pendingPage.contentType,
     );
     expect(embedder.embedBatch).toHaveBeenCalledOnce();
     expect(chunkWriter.commitProcessedPage).toHaveBeenCalledWith(
       pendingPage.id,
       expect.any(Array),
       "mock:embedding",
-      { ...taggingResult, status: "ready" },
+      { ...taggingResult, status: "ready", enrichmentError: undefined },
+      SEMANTIC_INDEX_VERSION,
     );
     expect(reader.updatePage).not.toHaveBeenCalled();
     expect(result.status).toBe("ready");
     expect(result.summary).toBe(taggingResult.summary);
   });
 
-  it("marks a page failed when tagging throws, before embedding", async () => {
-    const reader: PageReader = {
-      getById: vi.fn().mockResolvedValue(pendingPage),
-      updatePage: vi.fn().mockResolvedValue(undefined),
-    };
+  it("returns a page to keyword_ready when tagging throws, before embedding", async () => {
+    const reader = mockReader({ ...pendingPage, status: "keyword_ready" });
     const tagger: PageTagger = {
       summarizeAndTag: vi.fn().mockRejectedValue(new Error("rate_limited")),
     };
@@ -139,7 +160,7 @@ describe("CaptureService", () => {
     const embedder = mockEmbedder();
 
     const result = await new CaptureService(
-      { upsertCapturedPage: vi.fn() },
+      { commitCapturedPage: vi.fn() },
       { extract: vi.fn() },
       reader,
       tagger,
@@ -149,18 +170,16 @@ describe("CaptureService", () => {
 
     expect(embedder.embedBatch).not.toHaveBeenCalled();
     expect(chunkWriter.commitProcessedPage).not.toHaveBeenCalled();
-    expect(reader.updatePage).toHaveBeenCalledWith(pendingPage.id, {
-      status: "failed",
-      errorReason: "rate_limited",
+    expect(reader.updatePage).toHaveBeenLastCalledWith(pendingPage.id, {
+      status: "keyword_ready",
+      enrichmentError: "rate_limited",
     });
-    expect(result.status).toBe("failed");
+    expect(result.status).toBe("keyword_ready");
+    expect(result.enrichmentError).toBe("rate_limited");
   });
 
-  it("marks a page failed when embedding throws, keeping chunks untouched", async () => {
-    const reader: PageReader = {
-      getById: vi.fn().mockResolvedValue(pendingPage),
-      updatePage: vi.fn().mockResolvedValue(undefined),
-    };
+  it("returns a page to keyword_ready when embedding throws, keeping chunks untouched", async () => {
+    const reader = mockReader({ ...pendingPage, status: "keyword_ready" });
     const tagger: PageTagger = { summarizeAndTag: vi.fn().mockResolvedValue(taggingResult) };
     const chunkWriter = mockChunkWriter();
     const embedder = mockEmbedder({
@@ -168,7 +187,7 @@ describe("CaptureService", () => {
     });
 
     const result = await new CaptureService(
-      { upsertCapturedPage: vi.fn() },
+      { commitCapturedPage: vi.fn() },
       { extract: vi.fn() },
       reader,
       tagger,
@@ -177,18 +196,15 @@ describe("CaptureService", () => {
     ).processPage(pendingPage.id, "sk-test");
 
     expect(chunkWriter.commitProcessedPage).not.toHaveBeenCalled();
-    expect(reader.updatePage).toHaveBeenCalledWith(pendingPage.id, {
-      status: "failed",
-      errorReason: "network",
+    expect(reader.updatePage).toHaveBeenLastCalledWith(pendingPage.id, {
+      status: "keyword_ready",
+      enrichmentError: "network",
     });
-    expect(result.status).toBe("failed");
+    expect(result.status).toBe("keyword_ready");
   });
 
   it("marks a page failed when the embedder returns a mismatched vector count", async () => {
-    const reader: PageReader = {
-      getById: vi.fn().mockResolvedValue(pendingPage),
-      updatePage: vi.fn().mockResolvedValue(undefined),
-    };
+    const reader = mockReader({ ...pendingPage, status: "keyword_ready" });
     const tagger: PageTagger = { summarizeAndTag: vi.fn().mockResolvedValue(taggingResult) };
     const chunkWriter = mockChunkWriter();
     const embedder = mockEmbedder({
@@ -196,7 +212,7 @@ describe("CaptureService", () => {
     });
 
     const result = await new CaptureService(
-      { upsertCapturedPage: vi.fn() },
+      { commitCapturedPage: vi.fn() },
       { extract: vi.fn() },
       reader,
       tagger,
@@ -205,24 +221,21 @@ describe("CaptureService", () => {
     ).processPage(pendingPage.id, "sk-test");
 
     expect(chunkWriter.commitProcessedPage).not.toHaveBeenCalled();
-    expect(reader.updatePage).toHaveBeenCalledWith(pendingPage.id, {
-      status: "failed",
-      errorReason: expect.stringContaining("mismatch"),
+    expect(reader.updatePage).toHaveBeenLastCalledWith(pendingPage.id, {
+      status: "keyword_ready",
+      enrichmentError: expect.stringContaining("mismatch"),
     });
-    expect(result.status).toBe("failed");
+    expect(result.status).toBe("keyword_ready");
   });
 
   it("reindexes pages sequentially and reports progress", async () => {
     const processed: string[] = [];
-    const reader: PageReader = {
-      getById: vi.fn().mockResolvedValue(pendingPage),
-      updatePage: vi.fn().mockResolvedValue(undefined),
-    };
+    const reader = mockReader({ ...pendingPage, status: "keyword_ready" });
     const tagger: PageTagger = { summarizeAndTag: vi.fn().mockResolvedValue(taggingResult) };
     const chunkWriter = mockChunkWriter();
     const embedder = mockEmbedder();
     const service = new CaptureService(
-      { upsertCapturedPage: vi.fn() },
+      { commitCapturedPage: vi.fn() },
       { extract: vi.fn() },
       reader,
       tagger,
@@ -252,7 +265,9 @@ describe("CaptureService", () => {
   it("passes saveMode:'auto' through to the page writer", async () => {
     const extractor: PageExtractor = { extract: vi.fn().mockResolvedValue(extracted) };
     const writer: PageWriter = {
-      upsertCapturedPage: vi.fn().mockResolvedValue({ ...pendingPage, saveMode: "auto" }),
+      commitCapturedPage: vi
+        .fn()
+        .mockResolvedValue({ ...pendingPage, saveMode: "auto", status: "keyword_ready" }),
     };
     const chunkWriter = mockChunkWriter();
 
@@ -264,22 +279,142 @@ describe("CaptureService", () => {
       chunkWriter,
     ).save(123, "auto");
 
-    expect(writer.upsertCapturedPage).toHaveBeenCalledWith({ ...extracted, saveMode: "auto" });
+    expect(writer.commitCapturedPage).toHaveBeenCalledWith({ ...extracted, saveMode: "auto" }, [
+      extracted.fullText,
+    ]);
     expect(result.saveMode).toBe("auto");
+  });
+
+  it("rebuilds keyword chunks from a failed page's stored full text", async () => {
+    const failed = {
+      ...pendingPage,
+      status: "failed" as const,
+      enrichmentError: "local write failed",
+    };
+    const keywordReady: PageRecord = { ...failed, status: "keyword_ready" };
+    delete keywordReady.enrichmentError;
+    const writer: PageWriter = {
+      commitCapturedPage: vi.fn(),
+      retryFailedPage: vi.fn().mockResolvedValue(keywordReady),
+    };
+
+    const result = await new CaptureService(
+      writer,
+      { extract: vi.fn() },
+      mockReader(failed),
+    ).retryLocalPage(failed.id);
+
+    expect(writer.retryFailedPage).toHaveBeenCalledWith(failed.id, [failed.fullText]);
+    expect(result.status).toBe("keyword_ready");
   });
 
   it("throws when processPage is called for a non-existent page id", async () => {
     const reader: PageReader = {
       getById: vi.fn().mockResolvedValue(undefined),
+      claimEnrichment: vi.fn().mockRejectedValue(new Error("Page no-such-id not found")),
       updatePage: vi.fn(),
+      recoverStaleEnriching: vi.fn(),
     };
 
     await expect(
-      new CaptureService({ upsertCapturedPage: vi.fn() }, { extract: vi.fn() }, reader).processPage(
+      new CaptureService({ commitCapturedPage: vi.fn() }, { extract: vi.fn() }, reader).processPage(
         "no-such-id",
         "sk-test",
       ),
     ).rejects.toThrow("no-such-id");
+  });
+
+  it.each(["pending", "enriching", "ready", "failed"] as const)(
+    "rejects %s pages before any paid enrichment request",
+    async (status) => {
+      const reader = mockReader({ ...pendingPage, status });
+      const tagger: PageTagger = { summarizeAndTag: vi.fn() };
+      const embedder = mockEmbedder();
+      const service = new CaptureService(
+        { commitCapturedPage: vi.fn() },
+        { extract: vi.fn() },
+        reader,
+        tagger,
+        mockChunkWriter(),
+        embedder,
+      );
+
+      await expect(service.processPage(pendingPage.id, "sk-test")).rejects.toThrow(
+        `not eligible for enrichment (${status})`,
+      );
+      expect(reader.updatePage).not.toHaveBeenCalled();
+      expect(tagger.summarizeAndTag).not.toHaveBeenCalled();
+      expect(embedder.embedBatch).not.toHaveBeenCalled();
+    },
+  );
+
+  it("delegates stale enrichment recovery without starting network work", async () => {
+    const reader = mockReader();
+    vi.mocked(reader.recoverStaleEnriching).mockResolvedValue(2);
+    const tagger: PageTagger = { summarizeAndTag: vi.fn() };
+
+    const recovered = await new CaptureService(
+      { commitCapturedPage: vi.fn() },
+      { extract: vi.fn() },
+      reader,
+      tagger,
+    ).recoverStaleEnriching();
+
+    expect(recovered).toBe(2);
+    expect(reader.recoverStaleEnriching).toHaveBeenCalledOnce();
+    expect(tagger.summarizeAndTag).not.toHaveBeenCalled();
+  });
+
+  it("rebuilds semantic chunks without re-running page enrichment", async () => {
+    const readyPage: PageRecord = {
+      ...pendingPage,
+      status: "ready",
+      summary: "Keep this summary",
+      topics: ["keep"],
+    };
+    const reader = mockReader(readyPage);
+    const tagger: PageTagger = { summarizeAndTag: vi.fn() };
+    const chunkWriter = mockChunkWriter();
+    const embedder = mockEmbedder();
+    const service = new CaptureService(
+      { commitCapturedPage: vi.fn() },
+      { extract: vi.fn() },
+      reader,
+      tagger,
+      chunkWriter,
+      embedder,
+    );
+
+    const result = await service.reindexSemanticPage(readyPage.id, "sk-test");
+
+    expect(tagger.summarizeAndTag).not.toHaveBeenCalled();
+    expect(reader.updatePage).not.toHaveBeenCalled();
+    expect(chunkWriter.commitProcessedPage).toHaveBeenCalledWith(
+      readyPage.id,
+      expect.any(Array),
+      "mock:embedding",
+      { status: "ready" },
+      SEMANTIC_INDEX_VERSION,
+    );
+    expect(result).toBe(readyPage);
+  });
+
+  it("leaves page metadata unchanged and throws when semantic re-indexing fails", async () => {
+    const readyPage: PageRecord = { ...pendingPage, status: "ready", summary: "Keep me" };
+    const reader = mockReader(readyPage);
+    const chunkWriter = mockChunkWriter();
+    vi.mocked(chunkWriter.commitProcessedPage).mockRejectedValue(new Error("quota"));
+    const service = new CaptureService(
+      { commitCapturedPage: vi.fn() },
+      { extract: vi.fn() },
+      reader,
+      { summarizeAndTag: vi.fn() },
+      chunkWriter,
+      mockEmbedder(),
+    );
+
+    await expect(service.reindexSemanticPage(readyPage.id, "sk-test")).rejects.toThrow("quota");
+    expect(reader.updatePage).not.toHaveBeenCalled();
   });
 
   it("embeds chunks and marks the page ready end-to-end (integration)", async () => {
@@ -291,14 +426,18 @@ describe("CaptureService", () => {
     const chunkRepo = new ChunkRepo(database);
     const mock = new MockLLMProvider();
 
-    const saved = await pageRepo.upsertCapturedPage({
-      url: extracted.url,
-      title: extracted.title,
-      fullText:
-        "The HorizontalPodAutoscaler automatically scales workloads based on observed CPU metrics.",
-      readingTimeMs: 1000,
-      saveMode: "manual",
-    });
+    const fullText =
+      "The HorizontalPodAutoscaler automatically scales workloads based on observed CPU metrics.";
+    const saved = await pageRepo.commitCapturedPage(
+      {
+        url: extracted.url,
+        title: extracted.title,
+        fullText,
+        readingTimeMs: 1000,
+        saveMode: "manual",
+      },
+      [fullText],
+    );
 
     const service = new CaptureService(
       pageRepo,

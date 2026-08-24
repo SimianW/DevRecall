@@ -8,6 +8,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import type { PageRecord } from "../../shared/types";
+import { ContentType, Platform } from "../../shared/enums";
 import {
   AutoSaveService,
   ALLOWLIST_PATTERNS,
@@ -32,7 +33,8 @@ const readyPage: PageRecord = {
   urlHash: "a".repeat(64),
   title: "GitHub Repo",
   domain: "github.com",
-  sourceType: "unknown",
+  platform: Platform.Github,
+  contentType: ContentType.Repository,
   summary: "",
   topics: [],
   technologies: [],
@@ -353,6 +355,24 @@ describe("AutoSaveService.onAlarmFired — dedup", () => {
 
     expect(capture.saveAuto).not.toHaveBeenCalled();
   });
+
+  it.each(["pending", "keyword_ready", "enriching"])(
+    "skips capture when the page is already saved with status '%s'",
+    async (status) => {
+      const session = makeSessionPort({
+        get: vi.fn().mockResolvedValue({ url: ALLOWLISTED_URL, startedAt: Date.now() }),
+        remove: vi.fn().mockResolvedValue(undefined),
+      });
+      const tab = makeTabPort(ALLOWLISTED_URL);
+      const capture = makeCapturePort();
+      const dedupe = makeDedupePort({ ...readyPage, status } as PageRecord);
+      const { service } = buildService({ session, tab, capture, dedupe });
+
+      await service.onAlarmFired(`autosave:${TAB_ID}`);
+
+      expect(capture.saveAuto).not.toHaveBeenCalled();
+    },
+  );
 
   it("DOES capture when the page exists but status is 'failed' (retry is allowed)", async () => {
     const session = makeSessionPort({

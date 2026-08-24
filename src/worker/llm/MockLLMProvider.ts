@@ -1,4 +1,5 @@
 import { normalize } from "../../lib/vector";
+import { ContentType } from "../../shared/enums";
 import type { TaggingResult } from "../../shared/types";
 import type { Embedder, PageTagger } from "./OpenAIProvider";
 
@@ -18,10 +19,12 @@ export class MockLLMProvider implements PageTagger, Embedder {
     title: string,
     _url: string,
     _apiKey: string,
+    localContentType: ContentType,
   ): Promise<TaggingResult> {
     return {
       summary: `Mock summary of "${title}".`,
-      sourceType: "official_docs",
+      contentType:
+        localContentType === ContentType.Page ? ContentType.Documentation : localContentType,
       topics: ["mock"],
       technologies: [],
       intent: "reference",

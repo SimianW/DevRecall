@@ -9,17 +9,21 @@ export type EmbeddedChunkInput = {
   tokenCount: number;
 };
 
+export function makeWordChunkRecords(pageId: string, texts: string[]): ChunkRecord[] {
+  return texts.map((text, ordinal) => ({
+    id: ulid(),
+    pageId,
+    ordinal,
+    text,
+    schemaVersion: 1,
+  }));
+}
+
 export class ChunkRepo {
   constructor(private readonly database: DevRecallDatabase = db) {}
 
   async replaceChunksForPage(pageId: string, texts: string[]): Promise<ChunkRecord[]> {
-    const chunks: ChunkRecord[] = texts.map((text, ordinal) => ({
-      id: ulid(),
-      pageId,
-      ordinal,
-      text,
-      schemaVersion: 1,
-    }));
+    const chunks = makeWordChunkRecords(pageId, texts);
 
     await this.database.transaction("rw", this.database.chunks, async () => {
       await this.database.chunks.where("pageId").equals(pageId).delete();
@@ -37,6 +41,7 @@ export class ChunkRepo {
     chunks: EmbeddedChunkInput[],
     embeddingModel: string,
     pageUpdate: Partial<Omit<PageRecord, "id" | "schemaVersion">>,
+    indexVersion = 1,
   ): Promise<ChunkRecord[]> {
     const records: ChunkRecord[] = chunks.map((chunk, ordinal) => ({
       id: ulid(),
@@ -45,6 +50,7 @@ export class ChunkRepo {
       text: chunk.text,
       embedding: chunk.embedding,
       embeddingModel,
+      indexVersion,
       tokenCount: chunk.tokenCount,
       schemaVersion: 1,
     }));

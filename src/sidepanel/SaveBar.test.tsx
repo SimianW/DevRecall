@@ -14,7 +14,6 @@ function makeProps(overrides: Partial<Parameters<typeof SaveBar>[0]> = {}) {
   return {
     getActiveTab: vi.fn().mockResolvedValue(tab),
     saveTab: vi.fn().mockResolvedValue(undefined),
-    checkApiKey: vi.fn().mockResolvedValue(true),
     loadUrlStatus: vi.fn().mockResolvedValue({ saved: false }),
     subscribe: vi.fn().mockReturnValue(() => {}),
     onTabChange: vi.fn().mockReturnValue(() => {}),
@@ -77,14 +76,6 @@ describe("SaveBar", () => {
     render(<SaveBar {...makeProps({ loadUrlStatus })} />);
 
     expect(await screen.findByRole("button", { name: /save failed — try again/i })).toBeEnabled();
-  });
-
-  it("disables save and shows a hint when no API key is set", async () => {
-    const checkApiKey = vi.fn().mockResolvedValue(false);
-    render(<SaveBar {...makeProps({ checkApiKey })} />);
-
-    expect(await screen.findByRole("button", { name: /save to library/i })).toBeDisabled();
-    expect(screen.getByText(/set api key in settings/i)).toBeInTheDocument();
   });
 
   it("re-resolves the active tab when the tab changes", async () => {

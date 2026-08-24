@@ -10,7 +10,6 @@ type ActiveTab = { tabId: number; title: string; url: string };
 type SaveBarProps = {
   getActiveTab?: () => Promise<ActiveTab | null>;
   saveTab?: (tabId: number) => Promise<void>;
-  checkApiKey?: () => Promise<boolean>;
   loadUrlStatus?: (url: string) => Promise<UrlStatus>;
   subscribe?: (handler: (message: WorkerBroadcast) => void) => () => void;
   onTabChange?: (handler: () => void) => () => void;
@@ -32,11 +31,6 @@ async function defaultSaveTab(tabId: number): Promise<void> {
   if (!response) {
     throw new Error("Save failed");
   }
-}
-
-async function defaultCheckApiKey(): Promise<boolean> {
-  const response = await sendRequest({ type: "settings.getStatus" }, "settings.status");
-  return response?.payload.hasApiKey ?? false;
 }
 
 async function defaultLoadUrlStatus(url: string): Promise<UrlStatus> {
@@ -78,14 +72,12 @@ function formatRelativeTime(savedAt: number): string {
 export function SaveBar({
   getActiveTab = defaultGetActiveTab,
   saveTab = defaultSaveTab,
-  checkApiKey = defaultCheckApiKey,
   loadUrlStatus = defaultLoadUrlStatus,
   subscribe = subscribeToBroadcasts,
   onTabChange = defaultOnTabChange,
 }: SaveBarProps) {
   const [tab, setTab] = useState<ActiveTab | null>(null);
   const [urlStatus, setUrlStatus] = useState<UrlStatus>({ saved: false });
-  const [hasApiKey, setHasApiKey] = useState<boolean | null>(null);
   const [saving, setSaving] = useState(false);
   const [saveFailed, setSaveFailed] = useState(false);
 
@@ -103,10 +95,6 @@ export function SaveBar({
     setTab(nextTab);
     setUrlStatus(nextStatus);
   }, [getActiveTab, loadUrlStatus]);
-
-  useEffect(() => {
-    void checkApiKey().then(setHasApiKey);
-  }, [checkApiKey]);
 
   useEffect(() => {
     void refresh();
@@ -157,8 +145,6 @@ export function SaveBar({
     domain = tab.url;
   }
 
-  const missingKey = hasApiKey === false;
-
   let buttonLabel: string;
   let disabled: boolean;
   if (saving) {
@@ -172,10 +158,10 @@ export function SaveBar({
     disabled = true;
   } else if ((urlStatus.saved && urlStatus.status === "failed") || saveFailed) {
     buttonLabel = "Save failed — try again";
-    disabled = missingKey;
+    disabled = false;
   } else {
     buttonLabel = "Save to library";
-    disabled = hasApiKey === null || missingKey;
+    disabled = false;
   }
 
   return (
@@ -193,9 +179,6 @@ export function SaveBar({
       >
         {buttonLabel}
       </button>
-      {missingKey && (
-        <p className="mt-2 text-xs text-amber-700 dark:text-amber-300">Set API key in settings</p>
-      )}
     </section>
   );
 }

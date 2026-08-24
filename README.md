@@ -1,23 +1,19 @@
 # DevRecall
 
-DevRecall is a local-first Chrome extension that captures technical pages, summarizes and tags them with an LLM, and retrieves saved pages through keyword and semantic search. Saved pages and search indexes stay in browser storage. When an OpenAI API key is configured, DevRecall sends extracted page text and search queries directly to OpenAI for summaries, tags, embeddings, and semantic query vectors.
+DevRecall is a local-first Chrome extension for saving and finding technical pages. Every save gets a local BM25 index immediately, so capture and keyword search work without an OpenAI API key. AI summaries, tags, embeddings, and semantic search are optional.
+
+Saved pages and indexes stay in browser storage. DevRecall sends data to OpenAI only in the cases listed under [Privacy and OpenAI](#privacy-and-openai).
 
 <!-- TODO: record a 60s demo GIF and save it to docs/demo.gif -->
 
 ![DevRecall demo](docs/demo.gif)
-
----
 
 ## Requirements
 
 - Node.js 20+
 - pnpm 9+
 - Chrome or Chromium with extension developer mode enabled
-- An OpenAI API key. The current UI requires a key to save new pages. Existing keyword indexes remain searchable without one.
-
-> The API key is stored in `chrome.storage.local` inside your browser profile. It is never written to this repository or committed. DevRecall has no sync service, but OpenAI receives page content during enrichment and search queries during semantic search.
-
----
+- An OpenAI API key only if you want AI features or semantic search
 
 ## Install and build
 
@@ -26,122 +22,141 @@ pnpm install
 pnpm build
 ```
 
-`pnpm build` runs a TypeScript check and then Vite, writing the extension bundle to `/dist`.
-
----
+`pnpm build` runs the TypeScript check and Vite, then writes the extension bundle to `/dist`.
 
 ## Load the unpacked extension
 
 1. Open `chrome://extensions` in Chrome.
-2. Enable **Developer mode** (toggle in the top-right corner).
+2. Enable **Developer mode**.
 3. Click **Load unpacked**.
 4. Select the `/dist` directory in this repository.
 5. Pin the DevRecall icon to the toolbar.
-6. Open the side panel and options page to verify the extension loaded correctly.
-
----
+6. Open the side panel and Options to check the installation.
 
 ## Usage
 
-### Set your API key
+### Choose a search mode
 
-Open the extension options page (click **Settings** in the side panel, or right-click the toolbar icon and choose **Options**). Paste your OpenAI API key and click **Save**. Use **Test connection** to verify the key works.
+Options has two stored preferences:
 
-The current UI requires a key before saving new pages. BM25 does not call OpenAI, so pages that already have keyword chunks remain searchable when no key is available. Summaries, topic tags, embeddings, and semantic matches require a valid key.
+- **Local-only** uses BM25 and never contacts OpenAI automatically, even when a key is saved.
+- **Hybrid** combines BM25 and vector similarity through RRF when a usable key is available.
 
-### Save a page manually
+The stored preference and effective mode are separate. If Hybrid is stored but no usable key exists, the effective mode becomes Local-only without overwriting the Hybrid preference. Adding a key restores Hybrid on the next operation. If semantic query embedding fails during a Hybrid search, that search returns BM25 results as a keyword fallback.
 
-Click the DevRecall toolbar icon to open the side panel, then click **Save to library**. Worker broadcasts update the save bar without polling:
+### Save a page
 
-- **Saving…**: capture in progress
-- **Processing…**: LLM summarization running in the background
-- **Saved ✓ Xm ago**: page is ready in your library
-- **Save failed, try again**: the save or LLM step failed; click the button to retry
+Click the DevRecall toolbar icon to open the side panel, then click **Save to library**. No API key is required. The worker extracts the page, classifies its `platform` and `contentType` locally, and commits the page plus its BM25 chunks in one IndexedDB transaction.
 
-If no API key is configured, the save button is disabled and a prompt appears to set one in settings.
+The page lifecycle is:
 
-### Auto-save on technical domains
+```text
+pending -> keyword_ready -> enriching -> ready
+```
 
-Auto-save is **opt-in and off by default**. Enable it in Options; once enabled, DevRecall automatically saves pages after you have been on them for at least 30 seconds, but only on a fixed set of technical domains:
+- `pending` exists only while the local page and keyword chunks are being written.
+- `keyword_ready` is saved locally and searchable with BM25.
+- `enriching` means an approved OpenAI request is in flight.
+- `ready` has AI metadata and embeddings in addition to the local index.
+- `failed` is reserved for a local persistence failure. An OpenAI failure returns the page to `keyword_ready`, records `enrichmentError`, and keeps BM25 search working.
+
+Repeated saves deduplicate `pending`, `keyword_ready`, `enriching`, and `ready` records. A `failed` local save can be tried again.
+
+### Add AI features
+
+A `keyword_ready` page has an **Add AI features** action. With a saved key, this explicitly sends that page's text to OpenAI for a summary, topics, technologies, content type refinement, and embeddings. This action is available in Local-only mode because the click is explicit consent. A failed enrichment can be retried from the same card.
+
+Options can apply the same action to every eligible local page. DevRecall shows a confirmation first, then processes pages sequentially. The progress panel reports completed, failed, and remaining pages. You can cancel between pages. Removing the key, switching to Local-only, worker shutdown, or pressing **Cancel** prevents queued paid work from continuing; the worker never replays the queue automatically.
+
+### Auto-save
+
+Auto-save is opt-in and off by default. When enabled, it saves a page after a 30 second dwell on the fixed allowlist:
 
 - GitHub (`github.com`)
 - Stack Overflow (`stackoverflow.com`)
 - MDN Web Docs (`developer.mozilla.org`)
-- Any subdomain whose hostname starts with `docs.`
-- ReadTheDocs sites (`*.readthedocs.io`)
+- Hosts beginning with `docs.`
+- ReadTheDocs (`*.readthedocs.io`)
 - npm (`npmjs.com`)
 - Rust (`rust-lang.org`)
 - Python (`python.org`)
 
-Navigating away or closing the tab before the 30-second dwell elapses cancels the timer. Pages already in your library (status `ready`) are skipped automatically. Existing installs have auto-save off until you enable it in Options.
+Navigating away or closing the tab cancels the dwell timer. Auto-save always completes the local BM25 save first. In effective Local-only mode it makes no OpenAI request. In effective Hybrid mode it may start enrichment after the local save succeeds.
 
-### Search and browse (side panel)
+### Search and browse
 
-Click the toolbar icon or use **⌘ Shift K** / **Ctrl Shift K** to open the side panel. The icon opens the library directly; there is no separate popup.
+Click the toolbar icon or use **Cmd Shift K** / **Ctrl Shift K** to open the side panel. Type a query to search the library.
 
-Type a query to search the library. With an API key, DevRecall combines BM25 keyword ranking and vector similarity through RRF. Without a key, it uses BM25 alone over existing keyword chunks. Each result shows a match-reason badge:
+- Local-only sends no query to OpenAI and searches BM25 chunks in IndexedDB.
+- Hybrid sends the query to OpenAI to create a query embedding, then combines BM25 and vector results.
+- Keyword fallback means a Hybrid semantic request failed and the displayed results came from BM25 only.
 
-- **keyword**: matched by BM25 term overlap
-- **matched by meaning**: matched by vector similarity
-- **keyword + meaning**: matched by both search methods
+Result badges distinguish keyword, semantic, and combined matches. Filters use the independent `platform` and `contentType` fields, including Docs, Stack Overflow, and GitHub. With no active query, the panel lists saved pages newest first.
 
-Use the filter chips to narrow results by source type: **All**, **Docs**, **Stack Overflow**, **GitHub**.
+### Re-index semantic search
 
-When no query is active, the panel shows your full library in reverse-chronological order, respecting the same filter chips. Each card has a **Delete** button to remove the page permanently.
+Semantic re-index is separate from AI metadata enrichment. Options shows the number of pages whose embeddings are missing or stale and requires confirmation before starting. It sends relevant page chunks to OpenAI, processes pages sequentially, and can be canceled between pages. It updates token chunks and embeddings only. Existing summaries, topics, technologies, platforms, content types, and intent stay unchanged.
 
-Failed saves show a **Retry** button on their library card.
+### Privacy and OpenAI
 
-### Options
+The API key lives in `chrome.storage.local` inside the browser profile. DevRecall has no sync service.
 
-| Action           | Description                                                                |
-| ---------------- | -------------------------------------------------------------------------- |
-| Set API key      | Paste an OpenAI key; stored in `chrome.storage.local`, never committed     |
-| Test connection  | Makes a minimal OpenAI call to validate the key                            |
-| Storage stats    | Shows saved page count and total text size                                 |
-| Re-index library | Re-generates embeddings for pages that are missing them (requires API key) |
-| Export Data      | Downloads all saved pages as `devrecall-export.json`                       |
-| Delete All Data  | Permanently removes every saved page (with confirmation prompt)            |
+DevRecall sends page content to OpenAI only when one of these conditions applies:
 
-### Dark mode
+- Effective Hybrid mode automatically enriches a newly saved manual or auto-saved page.
+- You click **Add AI features** for one page.
+- You confirm bulk **Add AI features to local pages**.
+- You confirm **Re-index semantic search**, which sends relevant chunks for embeddings.
 
-The UI follows your OS color scheme automatically via Tailwind's `dark:` variants. No manual toggle is needed.
+DevRecall sends a search query to OpenAI only for an effective Hybrid search. Local-only capture, auto-save, browsing, and BM25 search make no OpenAI request.
 
----
+### Other Options actions
+
+| Action          | Description                                                         |
+| --------------- | ------------------------------------------------------------------- |
+| Set API key     | Saves an OpenAI key in `chrome.storage.local`                       |
+| Test connection | Makes a minimal OpenAI request                                      |
+| Storage stats   | Shows page count, local text size, and semantic re-index candidates |
+| Export data     | Downloads saved records as `devrecall-export.json`                  |
+| Delete all data | Removes every saved page and chunk after a confirmation             |
+
+The UI follows the operating system color scheme.
 
 ## Development commands
 
 ```bash
-pnpm install        # Install dependencies
-pnpm dev            # Start Vite dev server at http://127.0.0.1:5173
-pnpm build          # TypeScript check + production build → /dist
-pnpm typecheck      # TypeScript only (no build output)
-pnpm lint           # ESLint
-pnpm test           # Run all tests once
-pnpm test:watch     # Run tests in watch mode
-pnpm test --coverage  # Run tests with coverage report
+pnpm install          # Install dependencies
+pnpm dev              # Start Vite at http://127.0.0.1:5173
+pnpm build            # TypeScript check and production build to /dist
+pnpm typecheck        # TypeScript only
+pnpm lint             # ESLint
+pnpm test             # Run all tests once
+pnpm test:watch       # Run tests in watch mode
+pnpm test --coverage  # Run tests with coverage
 ```
-
----
 
 ## Architecture overview
 
-Four loosely coupled components communicate via typed Chrome RPC:
+Four components communicate through typed Chrome RPC:
 
-```
-Content Script → Service Worker ← Side Panel / Options
-                      ↓
+```text
+Content Script -> Service Worker <- Side Panel / Options
+                      |
                  IndexedDB (Dexie)
                  OpenAI API
 ```
 
 Key files:
 
-- `src/worker/handlers.ts`: typed RPC dispatcher; read this first to understand request and response flow
-- `src/worker/index.ts`: thin MV3 entry with composition and top-level listeners
-- `src/worker/services/AutoSaveService.ts`: alarm-driven dwell timer for auto-save
-- `src/worker/services/RetrievalService.ts`: hybrid BM25, vector, and RRF search
-- `src/ui/rpc.ts`: shared typed RPC client used by the side panel and options page
-- `src/shared/messages.ts`: typed RPC request and response contract
-- `src/shared/types.ts`: shared domain types such as `PageRecord` and `PageHit`
+- `src/worker/handlers.ts`: typed RPC dispatcher and privacy gates
+- `src/worker/index.ts`: MV3 composition and top-level listeners
+- `src/worker/services/CaptureService.ts`: atomic local capture and enrichment state machine
+- `src/worker/services/RetrievalService.ts`: Local-only and Hybrid retrieval
+- `src/worker/services/BulkTaskRunner.ts`: sequential, cancellable paid work queues
+- `src/worker/services/AutoSaveService.ts`: alarm-driven allowlisted auto-save
+- `src/worker/settings/ModeStore.ts`: stored and effective mode resolution
+- `src/shared/modes.ts`: shared `StoredMode`, `EffectiveMode`, and per-search `SearchMode` types
+- `src/shared/messages.ts`: typed RPC and worker broadcast contracts
+- `src/shared/types.ts`: `PageRecord`, `ChunkRecord`, and search result types
 
-See `CLAUDE.md` for a detailed architecture reference and `docs/superpowers/specs/2026-05-16-devrecall-mvp-design.md` for the full MVP design.
+See `CLAUDE.md` for the detailed architecture reference and `docs/superpowers/specs/2026-05-16-devrecall-mvp-design.md` for the original MVP design.

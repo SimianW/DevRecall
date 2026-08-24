@@ -30,7 +30,12 @@ function makeSubscribe() {
 
 const renderOptions = (props: Partial<React.ComponentProps<typeof Options>> = {}) => {
   const defaultProps = {
-    loadStatus: vi.fn().mockResolvedValue({ hasApiKey: false }),
+    loadStatus: vi.fn().mockResolvedValue({
+      hasApiKey: false,
+      storedMode: "hybrid" as const,
+      effectiveMode: "local" as const,
+    }),
+    loadMode: vi.fn().mockResolvedValue({ storedMode: "hybrid", effectiveMode: "local" }),
     saveApiKey: vi.fn().mockResolvedValue(undefined),
     testConnection: vi.fn().mockResolvedValue({ success: true, message: "Connection successful" }),
     ...props,
@@ -116,7 +121,115 @@ describe("Options", () => {
   });
 });
 
-it("disables re-index when no pages are missing embeddings", async () => {
+describe("Local-only settings", () => {
+  it("shows Local-only enabled and locked without a key", async () => {
+    renderOptions();
+
+    const toggle = await screen.findByRole("checkbox", { name: "Local-only mode" });
+    expect(toggle).toBeChecked();
+    expect(toggle).toBeDisabled();
+    expect(screen.getByTestId("search-mode-indicator")).toHaveTextContent("Local-only");
+    expect(screen.getAllByText("Add an API key to use AI features.").length).toBeGreaterThan(0);
+  });
+
+  it("lets a user with a key switch from Local-only to Hybrid", async () => {
+    const setMode = vi.fn().mockResolvedValue({ storedMode: "hybrid", effectiveMode: "hybrid" });
+    const { user } = renderOptions({
+      loadStatus: vi.fn().mockResolvedValue({
+        hasApiKey: true,
+        storedMode: "local",
+        effectiveMode: "local",
+      }),
+      loadMode: vi.fn().mockResolvedValue({ storedMode: "local", effectiveMode: "local" }),
+      setMode,
+    });
+
+    const toggle = await screen.findByRole("checkbox", { name: "Local-only mode" });
+    await waitFor(() => expect(toggle).toBeEnabled());
+    expect(toggle).toBeChecked();
+    await user.click(toggle);
+
+    expect(setMode).toHaveBeenCalledWith("hybrid");
+    await waitFor(() =>
+      expect(screen.getByTestId("search-mode-indicator")).toHaveTextContent("Hybrid"),
+    );
+  });
+
+  it("removes only the key and explains that saved data remains", async () => {
+    const removeApiKey = vi.fn().mockResolvedValue(undefined);
+    const setMode = vi.fn();
+    const { user } = renderOptions({
+      loadStatus: vi.fn().mockResolvedValue({
+        hasApiKey: true,
+        storedMode: "hybrid",
+        effectiveMode: "hybrid",
+      }),
+      loadMode: vi.fn().mockResolvedValue({ storedMode: "hybrid", effectiveMode: "hybrid" }),
+      removeApiKey,
+      setMode,
+    });
+
+    await user.click(await screen.findByRole("button", { name: "Remove API key" }));
+    expect(screen.getByText(/saved pages and their metadata.*preserved/i)).toBeInTheDocument();
+    await user.click(screen.getByRole("button", { name: "Remove key" }));
+
+    expect(removeApiKey).toHaveBeenCalledOnce();
+    expect(setMode).not.toHaveBeenCalled();
+  });
+
+  it("uses the required local privacy explanation", () => {
+    renderOptions();
+    expect(
+      screen.getByText(
+        "Pages stay in this browser. DevRecall uses keyword search and does not automatically contact OpenAI. Content is sent to OpenAI only when you explicitly choose Add AI features for one or more saved pages.",
+      ),
+    ).toBeInTheDocument();
+  });
+});
+
+describe("confirmed bulk AI operations", () => {
+  const keyedStatus = {
+    hasApiKey: true,
+    storedMode: "local" as const,
+    effectiveMode: "local" as const,
+  };
+
+  it("shows the exact enrichment count before starting", async () => {
+    const startBulkEnrich = vi.fn().mockResolvedValue({ total: 3 });
+    const { user } = renderOptions({
+      loadStatus: vi.fn().mockResolvedValue(keyedStatus),
+      loadKeywordReadyCount: vi.fn().mockResolvedValue(3),
+      startBulkEnrich,
+    });
+
+    await user.click(
+      await screen.findByRole("button", { name: "Add AI features to local pages (3)" }),
+    );
+    expect(startBulkEnrich).not.toHaveBeenCalled();
+    expect(screen.getByText(/Send 3 pages to OpenAI\?/)).toHaveTextContent("full text");
+    await user.click(screen.getByRole("button", { name: "Add AI features" }));
+    expect(startBulkEnrich).toHaveBeenCalledOnce();
+  });
+
+  it("cancels a running bulk operation", async () => {
+    const cancelBulk = vi.fn().mockResolvedValue(undefined);
+    const { user } = renderOptions({
+      loadStatus: vi.fn().mockResolvedValue(keyedStatus),
+      loadKeywordReadyCount: vi.fn().mockResolvedValue(2),
+      startBulkEnrich: vi.fn().mockResolvedValue({ total: 2 }),
+      cancelBulk,
+    });
+
+    await user.click(
+      await screen.findByRole("button", { name: "Add AI features to local pages (2)" }),
+    );
+    await user.click(screen.getByRole("button", { name: "Add AI features" }));
+    await user.click(await screen.findByRole("button", { name: "Cancel" }));
+    expect(cancelBulk).toHaveBeenCalledOnce();
+  });
+});
+
+it("disables semantic re-index when no pages are missing embeddings", async () => {
   renderOptions({
     loadStatus: vi.fn().mockResolvedValue({ hasApiKey: true }),
     loadStorageStats: vi
@@ -124,7 +237,7 @@ it("disables re-index when no pages are missing embeddings", async () => {
       .mockResolvedValue({ pageCount: 3, totalTextBytes: 100, pagesMissingEmbeddings: 0 }),
   });
 
-  const button = await screen.findByRole("button", { name: /Re-index library/ });
+  const button = await screen.findByRole("button", { name: /Re-index semantic search/ });
   expect(button).toBeDisabled();
 });
 
@@ -186,26 +299,32 @@ it("calls deleteAll when user confirms deletion", async () => {
   expect(deleteAll).toHaveBeenCalledOnce();
 });
 
-it("starts a re-index and shows live progress", async () => {
+it("confirms semantic re-index and shows live progress", async () => {
   const { subscribe, emit } = makeSubscribe();
-  const startReindex = vi.fn().mockResolvedValue({ total: 2 });
+  const startReindexSemantic = vi.fn().mockResolvedValue({ total: 2 });
 
   renderOptions({
     loadStatus: vi.fn().mockResolvedValue({ hasApiKey: true }),
     loadStorageStats: vi
       .fn()
       .mockResolvedValue({ pageCount: 2, totalTextBytes: 100, pagesMissingEmbeddings: 2 }),
-    startReindex,
+    startReindexSemantic,
     subscribe,
   });
 
   const user = userEvent.setup();
-  const button = await screen.findByRole("button", { name: /Re-index library \(2\)/ });
+  const button = await screen.findByRole("button", { name: /Re-index semantic search \(2\)/ });
   await user.click(button);
 
-  expect(startReindex).toHaveBeenCalled();
-  await emit({ type: "library.reindexProgress", payload: { done: 1, total: 2 } });
-  expect(await screen.findByText(/Re-indexing 1\s*\/\s*2/)).toBeInTheDocument();
+  expect(startReindexSemantic).not.toHaveBeenCalled();
+  expect(screen.getByText(/Re-index 2 pages\?/)).toBeInTheDocument();
+  await user.click(screen.getByRole("button", { name: "Re-index semantic search" }));
+  expect(startReindexSemantic).toHaveBeenCalled();
+  await emit({
+    type: "bulk.progress",
+    payload: { kind: "semantic", done: 1, total: 2, failed: 0, remaining: 1 },
+  });
+  expect(await screen.findByText(/Completed 1 of 2.*Remaining 1/)).toBeInTheDocument();
 });
 
 // ── Error handling for data management actions ───────────────────────────────
@@ -285,7 +404,7 @@ it("lists the allowlisted domains", async () => {
 // ── Status-text dark: variant assertions ─────────────────────────────────────
 
 describe("Options status-text dark: variants", () => {
-  it("'Set an API key to re-index' warning carries dark:text-amber-300", async () => {
+  it("the API-key warning uses the required copy and dark-mode class", async () => {
     renderOptions({
       loadStatus: vi.fn().mockResolvedValue({ hasApiKey: false }),
       loadStorageStats: vi
@@ -293,7 +412,7 @@ describe("Options status-text dark: variants", () => {
         .mockResolvedValue({ pageCount: 5, totalTextBytes: 1024, pagesMissingEmbeddings: 2 }),
     });
 
-    const warning = await screen.findByText("Set an API key to re-index.");
+    const warning = (await screen.findAllByText("Add an API key to use AI features."))[0];
     expect(warning).toHaveClass("dark:text-amber-300");
   });
 

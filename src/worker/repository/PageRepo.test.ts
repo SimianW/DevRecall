@@ -4,6 +4,9 @@ import { DevRecallDatabase } from "./db";
 import { ChunkRepo } from "./ChunkRepo";
 import { PageRepo } from "./PageRepo";
 
+import { deriveExcerpt } from "../../lib/excerpt";
+import { ContentType, Platform } from "../../shared/enums";
+
 describe("PageRepo", () => {
   let database: DevRecallDatabase;
   let repo: PageRepo;
@@ -28,7 +31,8 @@ describe("PageRepo", () => {
       url: "https://kubernetes.io/docs/tasks/run-application/horizontal-pod-autoscale/",
       title: "Horizontal Pod Autoscaling",
       domain: "kubernetes.io",
-      sourceType: "unknown",
+      platform: Platform.Web,
+      contentType: ContentType.Documentation,
       summary: "",
       topics: [],
       technologies: [],
@@ -72,22 +76,243 @@ describe("PageRepo", () => {
     expect(pages).toHaveLength(1);
   });
 
+  it("commits a captured page and its keyword chunks before returning keyword_ready", async () => {
+    const page = await repo.commitCapturedPage(
+      {
+        url: "https://developer.mozilla.org/en-US/docs/Web/API/fetch",
+        title: "Fetch API",
+        fullText: "Fetch returns a response with a readable stream.",
+        readingTimeMs: 1000,
+        saveMode: "manual",
+      },
+      ["Fetch returns a response", "readable stream"],
+    );
+
+    expect(page).toMatchObject({
+      status: "keyword_ready",
+      platform: Platform.Mdn,
+      contentType: ContentType.Documentation,
+    });
+    await expect(repo.getById(page.id)).resolves.toMatchObject({ status: "keyword_ready" });
+
+    const chunks = (await new ChunkRepo(database).allChunks()).sort(
+      (left, right) => left.ordinal - right.ordinal,
+    );
+    expect(chunks.map((chunk) => chunk.text)).toEqual([
+      "Fetch returns a response",
+      "readable stream",
+    ]);
+    expect(chunks.every((chunk) => chunk.embedding === undefined)).toBe(true);
+  });
+
+  it("rolls back the local transaction and records failed when a chunk write fails", async () => {
+    database.chunks.hook("creating", () => {
+      throw new Error("IndexedDB quota exceeded");
+    });
+
+    await expect(
+      repo.commitCapturedPage(
+        {
+          url: "https://example.test/quota-failure",
+          title: "Quota failure",
+          fullText: "This chunk cannot be stored.",
+          readingTimeMs: 1000,
+          saveMode: "manual",
+        },
+        ["This chunk cannot be stored."],
+      ),
+    ).rejects.toThrow(/quota/i);
+
+    expect(await database.chunks.count()).toBe(0);
+    const [failed] = await database.pages.toArray();
+    expect(failed).toMatchObject({
+      status: "failed",
+      enrichmentError: "IndexedDB quota exceeded",
+    });
+  });
+
+  it("never marks a page keyword_ready when chunking produced no searchable chunks", async () => {
+    await expect(
+      repo.commitCapturedPage(
+        {
+          url: "https://example.test/empty",
+          title: "Empty page",
+          fullText: "",
+          readingTimeMs: 0,
+          saveMode: "manual",
+        },
+        [],
+      ),
+    ).rejects.toThrow("No searchable text chunks produced");
+
+    expect(await database.chunks.count()).toBe(0);
+    await expect(database.pages.toArray()).resolves.toEqual([
+      expect.objectContaining({ status: "failed" }),
+    ]);
+  });
+
+  it("deduplicates live statuses and retries a failed capture in place", async () => {
+    const input = {
+      url: "https://example.test/dedup",
+      title: "Original",
+      fullText: "original body",
+      readingTimeMs: 1000,
+      saveMode: "manual" as const,
+    };
+    const original = await repo.commitCapturedPage(input, ["original body"]);
+
+    for (const status of ["pending", "keyword_ready", "enriching", "ready"] as const) {
+      await repo.updatePage(original.id, { status });
+      const duplicate = await repo.commitCapturedPage(
+        { ...input, title: "Duplicate", fullText: "duplicate body" },
+        ["duplicate body"],
+      );
+
+      expect(duplicate).toMatchObject({ id: original.id, title: "Original", status });
+      expect((await new ChunkRepo(database).allChunks()).map((chunk) => chunk.text)).toEqual([
+        "original body",
+      ]);
+    }
+
+    await repo.updatePage(original.id, {
+      status: "failed",
+      enrichmentError: "previous failure",
+    });
+    const retried = await repo.commitCapturedPage(
+      { ...input, title: "Retried", fullText: "fresh body" },
+      ["fresh body"],
+    );
+
+    expect(retried).toMatchObject({
+      id: original.id,
+      title: "Retried",
+      status: "keyword_ready",
+    });
+    expect(retried.enrichmentError).toBeUndefined();
+    expect((await new ChunkRepo(database).allChunks()).map((chunk) => chunk.text)).toEqual([
+      "fresh body",
+    ]);
+    expect(await database.pages.count()).toBe(1);
+  });
+
+  it("rebuilds a failed page and its keyword chunks in one local retry", async () => {
+    const original = await repo.commitCapturedPage(
+      {
+        url: "https://example.test/local-retry",
+        title: "Local retry",
+        fullText: "stored full text survives the failed write",
+        readingTimeMs: 1000,
+        saveMode: "manual",
+      },
+      ["old chunk"],
+    );
+    await repo.updatePage(original.id, {
+      status: "failed",
+      enrichmentError: "local write failed",
+    });
+
+    const retried = await repo.retryFailedPage(original.id, ["rebuilt one", "rebuilt two"]);
+
+    expect(retried).toMatchObject({ id: original.id, status: "keyword_ready" });
+    expect(retried.enrichmentError).toBeUndefined();
+    const chunks = (await new ChunkRepo(database).allChunks()).sort(
+      (left, right) => left.ordinal - right.ordinal,
+    );
+    expect(chunks.map((chunk) => chunk.text)).toEqual(["rebuilt one", "rebuilt two"]);
+  });
+
+  it("recovers only stale enriching pages without touching chunks", async () => {
+    const stale = await repo.commitCapturedPage(
+      {
+        url: "https://example.test/stale",
+        title: "Stale",
+        fullText: "stale keyword body",
+        readingTimeMs: 1000,
+        saveMode: "manual",
+      },
+      ["stale keyword body"],
+    );
+    const ready = await repo.commitCapturedPage(
+      {
+        url: "https://example.test/ready",
+        title: "Ready",
+        fullText: "ready keyword body",
+        readingTimeMs: 1000,
+        saveMode: "manual",
+      },
+      ["ready keyword body"],
+    );
+    await repo.updatePage(stale.id, { status: "enriching" });
+    await repo.updatePage(ready.id, { status: "ready" });
+    const chunksBefore = await new ChunkRepo(database).allChunks();
+
+    await expect(repo.recoverStaleEnriching()).resolves.toBe(1);
+
+    expect((await repo.getById(stale.id))?.status).toBe("keyword_ready");
+    expect((await repo.getById(ready.id))?.status).toBe("ready");
+    expect(await new ChunkRepo(database).allChunks()).toHaveLength(chunksBefore.length);
+  });
+
+  it("atomically claims a keyword-ready page for enrichment and clears its old error", async () => {
+    const page = await repo.commitCapturedPage(
+      {
+        url: "https://example.test/claim",
+        title: "Claim",
+        fullText: "claim body",
+        readingTimeMs: 0,
+        saveMode: "manual",
+      },
+      ["claim body"],
+    );
+    await repo.updatePage(page.id, { enrichmentError: "old error" });
+
+    const claimed = await repo.claimEnrichment(page.id);
+
+    expect(claimed.status).toBe("enriching");
+    expect(claimed.enrichmentError).toBeUndefined();
+    await expect(repo.getById(page.id)).resolves.toMatchObject({ status: "enriching" });
+  });
+
+  it("allows only one concurrent enrichment claim", async () => {
+    const page = await repo.commitCapturedPage(
+      {
+        url: "https://example.test/concurrent-claim",
+        title: "Concurrent claim",
+        fullText: "claim body",
+        readingTimeMs: 0,
+        saveMode: "manual",
+      },
+      ["claim body"],
+    );
+
+    const attempts = await Promise.allSettled([
+      repo.claimEnrichment(page.id),
+      repo.claimEnrichment(page.id),
+    ]);
+
+    expect(attempts.filter((result) => result.status === "fulfilled")).toHaveLength(1);
+    expect(attempts.filter((result) => result.status === "rejected")).toHaveLength(1);
+    expect((await repo.getById(page.id))?.status).toBe("enriching");
+  });
+
   it("lists pages newest first without fullText", async () => {
-    await repo.upsertCapturedPage({
+    const older = await repo.upsertCapturedPage({
       url: "https://developer.mozilla.org/en-US/docs/Web/API/IndexedDB_API",
       title: "IndexedDB API",
       fullText: "IndexedDB stores structured data.",
       readingTimeMs: 3000,
       saveMode: "manual",
     });
+    await repo.updatePage(older.id, { savedAt: 1 });
 
-    await repo.upsertCapturedPage({
+    const newer = await repo.upsertCapturedPage({
       url: "https://stackoverflow.com/questions/1/example",
       title: "Example Stack Overflow answer",
       fullText: "A useful debugging note.",
       readingTimeMs: 4000,
       saveMode: "manual",
     });
+    await repo.updatePage(newer.id, { savedAt: 2 });
 
     const pages = await repo.listPages({ limit: 10 });
 
@@ -129,7 +354,7 @@ describe("PageRepo", () => {
 
     await repo.updatePage(page.id, {
       summary: "Synchronizes a component with an external system.",
-      sourceType: "official_docs",
+      contentType: ContentType.Documentation,
       topics: ["react", "hooks"],
       technologies: ["React"],
       intent: "reference",
@@ -142,7 +367,7 @@ describe("PageRepo", () => {
       id: page.id,
       title: "useEffect",
       summary: "Synchronizes a component with an external system.",
-      sourceType: "official_docs",
+      contentType: ContentType.Documentation,
       topics: ["react", "hooks"],
       technologies: ["React"],
       intent: "reference",
@@ -284,5 +509,157 @@ describe("PageRepo", () => {
     const stats = await repo.getStats();
     expect(stats.pagesMissingEmbeddings).toBe(1);
     expect(stats.pageCount).toBe(2);
+  });
+
+  it("lists only keyword-ready pages for enrichment", async () => {
+    const keywordReady = await repo.commitCapturedPage(
+      {
+        url: "https://example.test/keyword-ready",
+        title: "Keyword ready",
+        fullText: "keyword body",
+        readingTimeMs: 0,
+        saveMode: "manual",
+      },
+      ["keyword body"],
+    );
+    const ready = await repo.commitCapturedPage(
+      {
+        url: "https://example.test/already-ready",
+        title: "Already ready",
+        fullText: "ready body",
+        readingTimeMs: 0,
+        saveMode: "manual",
+      },
+      ["ready body"],
+    );
+    await repo.updatePage(ready.id, { status: "ready" });
+
+    expect(await repo.pageIdsKeywordReady()).toEqual([keywordReady.id]);
+  });
+
+  it("finds ready pages with missing or stale semantic chunks", async () => {
+    const chunkRepo = new ChunkRepo(database);
+    const makeReadyPage = async (slug: string) => {
+      const page = await repo.commitCapturedPage(
+        {
+          url: `https://example.test/${slug}`,
+          title: slug,
+          fullText: `${slug} body`,
+          readingTimeMs: 0,
+          saveMode: "manual",
+        },
+        [`${slug} body`],
+      );
+      await repo.updatePage(page.id, { status: "ready" });
+      return page;
+    };
+
+    const noChunks = await makeReadyPage("no-chunks");
+    await chunkRepo.deleteForPage(noChunks.id);
+    const noEmbedding = await makeReadyPage("no-embedding");
+    const staleModel = await makeReadyPage("stale-model");
+    await chunkRepo.commitProcessedPage(
+      staleModel.id,
+      [{ text: "stale model", embedding: Float32Array.from([1]), tokenCount: 2 }],
+      "old-model",
+      { status: "ready" },
+      2,
+    );
+    const staleVersion = await makeReadyPage("stale-version");
+    await chunkRepo.commitProcessedPage(
+      staleVersion.id,
+      [{ text: "stale version", embedding: Float32Array.from([1]), tokenCount: 2 }],
+      "current-model",
+      { status: "ready" },
+      1,
+    );
+    const current = await makeReadyPage("current");
+    await chunkRepo.commitProcessedPage(
+      current.id,
+      [{ text: "current", embedding: Float32Array.from([1]), tokenCount: 1 }],
+      "current-model",
+      { status: "ready" },
+      2,
+    );
+    const keywordOnly = await repo.commitCapturedPage(
+      {
+        url: "https://example.test/keyword-only",
+        title: "keyword-only",
+        fullText: "keyword-only body",
+        readingTimeMs: 0,
+        saveMode: "manual",
+      },
+      ["keyword-only body"],
+    );
+
+    const candidates = await repo.pageIdsNeedingSemanticIndex("current-model", 2);
+
+    expect(new Set(candidates)).toEqual(
+      new Set([noChunks.id, noEmbedding.id, staleModel.id, staleVersion.id]),
+    );
+    expect(candidates).not.toContain(current.id);
+    expect(candidates).not.toContain(keywordOnly.id);
+  });
+
+  describe("excerpt derivation", () => {
+    it("returns an empty excerpt for empty or whitespace-only text", () => {
+      expect(deriveExcerpt("")).toBe("");
+      expect(deriveExcerpt("   \n\t   \n ")).toBe("");
+    });
+
+    it("collapses whitespace runs into single spaces and trims", () => {
+      expect(deriveExcerpt("  React   hooks\n\n  quick   reference  ")).toBe(
+        "React hooks quick reference",
+      );
+    });
+
+    it("returns text at or under the 240-char cap unchanged", () => {
+      const short = "IndexedDB stores structured data.";
+      expect(deriveExcerpt(short)).toBe(short);
+
+      const exactCap = "a".repeat(240);
+      expect(deriveExcerpt(exactCap)).toBe(exactCap);
+    });
+
+    it("cuts over-cap text at the last word boundary within the cap", () => {
+      // 11-char pattern; usable boundaries at indices 10, 21, ... — the last
+      // one within the cap sits at 230.
+      const fullText = "abcdefghij ".repeat(30);
+
+      const excerpt = deriveExcerpt(fullText);
+
+      expect(excerpt).toBe("abcdefghij ".repeat(20) + "abcdefghij");
+      expect(excerpt.length).toBeLessThanOrEqual(240);
+      expect(excerpt.endsWith(" ")).toBe(false);
+    });
+
+    it("hard-cuts a long unbroken token at the cap instead of a near-empty excerpt", () => {
+      expect(deriveExcerpt("x".repeat(500))).toBe("x".repeat(240));
+
+      // The only boundary (index 5) sits far below the minimum usable cut.
+      expect(deriveExcerpt(`intro ${"y".repeat(400)}`)).toBe(`intro ${"y".repeat(234)}`);
+    });
+
+    it("listPages derives excerpt from fullText without persisting it", async () => {
+      const fullText = `${"useMemo caches expensive results ".repeat(20)}tail`;
+      const saved = await repo.upsertCapturedPage({
+        url: "https://react.dev/reference/react/useMemo",
+        title: "useMemo",
+        fullText,
+        readingTimeMs: 1000,
+        saveMode: "manual",
+      });
+
+      const [item] = await repo.listPages({ limit: 10 });
+
+      expect(item).toBeDefined();
+      expect(item?.excerpt).toBe(deriveExcerpt(fullText));
+      expect(item?.excerpt.length).toBeLessThanOrEqual(240);
+      expect(fullText.startsWith(item?.excerpt ?? "")).toBe(true);
+
+      const record = await repo.getById(saved.id);
+      expect(record).toMatchObject({ id: saved.id, fullText });
+      expect(record).not.toHaveProperty("excerpt");
+    });
   });
 });

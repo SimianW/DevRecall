@@ -4,19 +4,22 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## Project Overview
 
-DevRecall is a local-first Chrome extension that captures technical browsing sessions, summarizes and tags saved pages, and lets developers retrieve past documentation through natural-language search. **M1–M6 plus the pre-v1.0 refactor are complete:** capture, LLM tagging, hybrid keyword+vector retrieval (RRF fusion), opt-in auto-save, side-panel SaveBar, and the Warm Editorial theme. Remaining for v1.0: manual E2E QA, demo GIF, version → `1.0.0.0`, tag `v1.0`.
+DevRecall is a local-first Chrome extension that captures technical pages and retrieves them with BM25 or optional Hybrid search. Saving and keyword search require no API key. OpenAI summaries, tags, and embeddings run only through effective Hybrid mode or an explicit user action. **M1–M6, the pre-v1.0 refactor, and issues #10–#21 are complete.** Remaining for v1.0: manual E2E QA, demo GIF, version → `1.0.0.0`, tag `v1.0`.
 
 **Key Technologies:** React 18, TypeScript 6, Vite, Vitest, Dexie (IndexedDB), Chrome MV3, Tailwind CSS
 
 ## Project Conventions & Gotchas
 
-- **This project is built with the Superpowers workflow — use its skills for every process.** Specs and plans live in `docs/superpowers/`. Invoke the matching skill _before_ each phase: `brainstorming` (any new feature/design), `writing-plans` (multi-step work), `test-driven-development` (all code — tests first), `systematic-debugging` (any bug/failure), `executing-plans` / `subagent-driven-development` (running a written plan), `verification-before-completion` (before claiming done), `requesting-code-review` (before merge).
-- **Version bump on every code change** — bump `version` in `package.json` AND `APP_VERSION` in `src/shared/messages.ts` (4-part `X.Y.Z.N`, must match), then commit.
-- **MV3 service worker is killed after ~30s idle; in-memory globals are lost.** Never use `setTimeout`/`setInterval` for delayed work in the worker — use `chrome.alarms` + `chrome.storage.session` (register `onAlarm` at top level). `AutoSaveService` is the reference implementation of this pattern.
+- **This project is built with the Superpowers workflow.** Use its skills for every process. Specs and plans live in `docs/superpowers/`. Invoke the matching skill _before_ each phase: `brainstorming` (any new feature/design), `writing-plans` (multi-step work), `test-driven-development` (all code, tests first), `systematic-debugging` (any bug/failure), `executing-plans` / `subagent-driven-development` (running a written plan), `verification-before-completion` (before claiming done), `requesting-code-review` (before merge).
+- **Version bump on every code change.** Bump `version` in `package.json` and `APP_VERSION` in `src/shared/messages.ts` (4-part `X.Y.Z.N`, must match), then commit.
+- **MV3 service worker is killed after ~30s idle; in-memory globals are lost.** Never use `setTimeout`/`setInterval` for delayed work in the worker. Use `chrome.alarms` + `chrome.storage.session` and register `onAlarm` at top level. `AutoSaveService` is the reference implementation.
 - **Auto-save is opt-in and OFF by default** (privacy). The flag lives in `chrome.storage.local` (`ChromeAutoSaveSettingStore`); the domain allowlist is in `src/shared/allowlist.ts` (shared so Options can render it). The enabled check is the FIRST gate in `AutoSaveService.startDwell`.
-- **Retrieval is hybrid** — BM25 keyword + vector cosine + RRF fusion in `RetrievalService`; `MIN_VECTOR_SCORE` (0.4) gates vector hits. Vector arm is for conceptual queries; single/peripheral words score low cosine and are correctly keyword-only.
-- **Re-index rule** — changing embeddings/chunking requires re-indexing existing pages (Options → Re-index). BM25 `tokenize()` (`src/lib/bm25.ts`, shared by query + docs) runs at query time, so tokenizer changes (e.g. stemming) need NO re-index.
-- **Capture reads all frames** — content script injects `all_frames`; `ChromePageExtractor` keeps the richest frame's body but anchors url/title to the top frame. Readability intentionally drops trailing reference/citation lists.
+- **Local-only is a hard privacy boundary.** It never sends page content or search queries to OpenAI automatically, even if a key exists. Explicit **Add AI features** and confirmed bulk operations may send content while Local-only is selected because those actions are direct consent.
+- **Stored and effective modes are different.** `src/shared/modes.ts` defines both. A missing key forces the effective mode to `local` but never overwrites a stored `hybrid` preference. `keyword_fallback` describes one completed search and is never stored.
+- **Retrieval has Local-only and Hybrid paths.** Local-only is BM25. Hybrid creates a query embedding and combines BM25 with vector cosine through RRF; `MIN_VECTOR_SCORE` (0.4) gates vector hits. If query embedding fails, return the BM25 results with `searchMode: "keyword_fallback"`.
+- **Semantic re-index is not metadata enrichment.** It repairs missing or stale embeddings and only replaces token chunks and embeddings. BM25 `tokenize()` (`src/lib/bm25.ts`) runs at query time, so tokenizer changes need no re-index.
+- **Paid bulk work is confirmed, sequential, and cancellable.** `BulkTaskRunner` processes one page at a time and checks that work may continue before each page. Its queue stays in memory so a worker restart cannot replay paid requests.
+- **Capture reads all frames.** The content script injects `all_frames`; `ChromePageExtractor` keeps the richest frame's body but anchors url/title to the top frame. Readability intentionally drops trailing reference/citation lists.
 - **Integration/measurement tests that call OpenAI are skipped unless `OPENAI_API_KEY` is set** (CI-safe).
 
 ## Development Setup
@@ -72,13 +75,13 @@ Content Script → Service Worker ← Side Panel / Options
 #### 1. **Service Worker** (`src/worker/index.ts`)
 
 - The single source of truth for all business logic and state mutations
-- Hosts `CaptureService`, `RetrievalService`, `AutoSaveService`, `PageRepo`, `ChunkRepo`, `ApiKeyStore`, `AutoSaveSettingStore`, and `OpenAIProvider`
+- Hosts `CaptureService`, `RetrievalService`, `BulkTaskRunner`, `AutoSaveService`, repositories, setting stores, and `OpenAIProvider`
 - Dispatches all `chrome.runtime` messages through a typed request handler
 - Only writer to IndexedDB (no write/write races)
 - May be killed mid-operation by Chrome's MV3 lifecycle; all state is rebuildable from the database
-- Registers `chrome.sidePanel.setPanelBehavior({ openPanelOnActionClick: true })` — the toolbar icon opens the side panel directly (no popup)
+- Registers `chrome.sidePanel.setPanelBehavior({ openPanelOnActionClick: true })`; the toolbar icon opens the side panel directly, with no popup
 
-**Key file:** `/src/worker/handlers.ts` — read this first to understand request/response flow; `/src/worker/index.ts` is the thin MV3 entry (composition + listeners).
+**Key file.** Read `/src/worker/handlers.ts` first to understand request and response flow. `/src/worker/index.ts` is the thin MV3 entry with composition and listeners.
 
 #### 2. **Content Script** (`src/content/extract.ts`)
 
@@ -89,18 +92,21 @@ Content Script → Service Worker ← Side Panel / Options
 
 #### 3. **Side Panel** (`src/sidepanel/App.tsx`)
 
-- Main discovery UI — live hybrid search (BM25 + vector + RRF) with "matched by meaning" badges
+- Main discovery UI with Local-only BM25 and optional Hybrid search
 - Hosts the "Save to library" bar (active tab title/domain + live save status via worker broadcasts)
-- Lists saved pages with filters (All / Docs / Stack Overflow / GitHub)
+- Lists saved pages with filters based on `platform` and `contentType`
+- Offers explicit per-page **Add AI features** on `keyword_ready` records
 - Shows loading and empty states
 - All data flows through worker via typed messages
 
 #### 4. **Options Page** (`src/options/Options.tsx`)
 
 - API key management (stored in `chrome.storage.local`, not IndexedDB)
+- Stored/effective search mode controls
 - Connection testing (minimal OpenAI call to validate key)
 - Storage stats display (page count, total text bytes)
-- Auto-save toggle (opt-in, off by default; allowlisted domains shown) — flag in chrome.storage.local
+- Auto-save toggle (opt-in, off by default; allowlisted domains shown)
+- Confirmed, cancellable bulk AI enrichment and semantic re-index actions
 
 ### Data Model
 
@@ -110,48 +116,54 @@ Content Script → Service Worker ← Side Panel / Options
 - `url`: normalized canonical URL
 - `urlHash`: SHA-256(url), indexed for deduplication
 - `title`, `domain`, `fullText`: extracted from page
-- `sourceType`: initially "unknown"; set by LLM tagging
+- `platform`: where the content lives, classified locally from the URL
+- `contentType`: what the content is, classified locally and optionally refined during enrichment
 - `summary`, `topics`, `technologies`, `intent`: empty until LLM processing completes
-- `status`: "pending" | "ready" | "failed" — differentiates pending saves from completed ones
+- `status`: `pending` | `keyword_ready` | `enriching` | `ready` | `failed`
+- `enrichmentError`: last OpenAI failure; the page remains `keyword_ready`
 - `savedAt`, `visitedAt`, `readingTimeMs`, `saveMode`: metadata
-- `schemaVersion: 1` — enables future Dexie migrations
+- `schemaVersion: 1`: record format version
 
-**ChunkRecord** (Dexie table `chunks`, added in schema v2 for hybrid retrieval)
+**ChunkRecord** (Dexie table `chunks`)
 
-- Per-page text chunks with Float32Array embeddings; written by the embedding pipeline, read by `RetrievalService`
+- Local saves write word chunks without embeddings for immediate BM25 search
+- Enrichment replaces them atomically with token chunks, `Float32Array` embeddings, `embeddingModel`, and `indexVersion`
 - Deleted together with their page (`PageRepo.deleteWithChunks` / `deleteAll` are transactional)
 
-**Dexie Indexes** (schema v2 — bump in `src/worker/repository/db.ts` for migrations):
+**Dexie schema** (`src/worker/repository/db.ts`):
 
 ```
-pages:  '&id, urlHash, savedAt, domain, sourceType, status, [sourceType+savedAt]'
+pages:  '&id, urlHash, savedAt, domain, platform, contentType, status, [platform+savedAt], [contentType+savedAt]'
 chunks: '&id, pageId, [pageId+ordinal]'
 ```
 
 - Primary key `id` for direct lookups
 - `urlHash` for O(1) dedup checks
-- `[sourceType+savedAt]` compound index for filtered library views
+- Compound indexes support filtered library views ordered by save time
 
 **API Key Storage**
 
 - Kept in `chrome.storage.local` (not IndexedDB) for defense-in-depth isolation from content scripts
 - Retrieved/set via `ChromeApiKeyStore` interface
+- Optional for save and BM25 search
+- Required for AI enrichment, semantic re-index, and Hybrid query embeddings
 
 ### Capture Pipeline
 
-1. **User clicks "Save to library" in the side panel** (or the toolbar icon opens the panel) → panel sends `page.save` to worker
-2. **CaptureService.save(tabId)**
-   - Calls `ChromePageExtractor.extract(tabId)` → content script extracts text
-   - Calls `PageRepo.upsertCapturedPage(extracted)` → writes to DB with `status: "pending"`
-   - Returns `PageListItem` to side panel immediately
-3. **Background LLM Processing** (async, non-blocking)
-   - If API key is configured, worker calls `OpenAIProvider.summarizeAndTag()`
-   - OpenAI response is parsed and validated; invalid fields default to safe values
-   - Updates `PageRecord` with `status: "ready"` + summary/tags
-   - On error, updates with `status: "failed"` + `errorReason`
-   - All three trigger paths (`page.save`, `page.retry`, auto-save) share `processPageInBackground` in `handlers.ts`
+1. The UI sends `page.save`; no API key gate applies.
+2. `ChromePageExtractor` reads all frames and returns the richest body while preserving the top-frame URL and title.
+3. `CaptureService.save` locally classifies `platform` and `contentType`, word-chunks the text, then calls `PageRepo.commitCapturedPage`.
+4. One Dexie transaction writes the page as `pending`, replaces its BM25 chunks, flips it to `keyword_ready`, and commits before the RPC returns success.
+5. Automatic enrichment runs only when the current effective mode is Hybrid and a usable key exists. `PageRepo.claimEnrichment` atomically claims `keyword_ready → enriching` before any OpenAI request.
+6. Success atomically replaces chunks with embeddings and writes `ready`. An OpenAI failure restores `keyword_ready`, records `enrichmentError`, and preserves the local chunks. `failed` is reserved for a local save failure.
 
-**Auto-save path** (opt-in): `chrome.tabs` events start a 30 s dwell timer (`chrome.alarms`) for allowlisted URLs; on fire, the URL is re-verified and deduped before running the same capture pipeline with `saveMode: "auto"`.
+Non-failed records deduplicate by `urlHash`; a failed local save can be captured again. On startup, stale `enriching` records return to `keyword_ready` without replaying an OpenAI request.
+
+**Explicit AI path:** `page.addAiFeatures` is direct consent to enrich one `keyword_ready` page, including while Local-only is selected. Bulk enrichment requires confirmation, uses `BulkTaskRunner`, and is cancellable between pages.
+
+**Semantic re-index path:** the confirmed bulk action selects `ready` pages with missing embeddings, a stale embedding model, or a stale index version. It sends chunks for embedding and changes no page metadata.
+
+**Auto-save path:** auto-save is opt-in and allowlisted. `chrome.tabs` events start a 30 second `chrome.alarms` dwell timer. The local BM25 save always runs first. Effective Local-only mode sends nothing to OpenAI; effective Hybrid may enrich after the local transaction commits.
 
 ### Typed RPC Contract
 
@@ -162,23 +174,27 @@ All extension messages use a single discriminated-union pattern:
 type DevRecallRequest =
   | { type: "page.save"; payload: { tabId: number } }
   | { type: "page.list"; payload: { limit: number } }
+  | { type: "page.addAiFeatures"; payload: { pageId: string } }
+  | { type: "search.run"; payload: { query: string; topK?: number } }
   | { type: "settings.getStatus" }
   | { type: "settings.setApiKey"; payload: { apiKey: string } }
-  | { type: "settings.testConnection" }
-  | { type: "storage.getStats" }
-  | { type: "page.statusForUrl"; payload: { url: string } }
+  | { type: "settings.setMode"; payload: { mode: StoredMode } }
+  | { type: "library.bulkEnrich"; payload: Record<string, never> }
+  | { type: "library.reindexSemantic"; payload: Record<string, never> }
+  | { type: "library.cancelBulk"; payload: Record<string, never> }
   | ...
 
 // responses from worker → UI
 type DevRecallResponse =
   | { type: "page.saved"; payload: { page: PageListItem } }
   | { type: "page.listed"; payload: { pages: PageListItem[] } }
-  | { type: "settings.status"; payload: { hasApiKey: boolean } }
+  | { type: "settings.status"; payload: { hasApiKey: boolean; storedMode: StoredMode; effectiveMode: EffectiveMode } }
+  | { type: "search.results"; payload: { results: PageHit[]; searchMode: SearchMode } }
   | ...
   | { type: "error"; payload: { message: string } }
 ```
 
-All types defined in `/src/shared/messages.ts` and `/src/shared/types.ts`.
+RPC types live in `/src/shared/messages.ts`; domain and mode types live in `/src/shared/types.ts` and `/src/shared/modes.ts`.
 
 ### URL Normalization
 
@@ -217,21 +233,21 @@ This ensures the same technical content viewed multiple times is stored once.
 
 ## Code Organization
 
-- `/src/shared/` — types, message contracts, and the auto-save allowlist (read by all layers)
-- `/src/worker/` — service worker entry point and business logic
-  - `handlers.ts` — typed RPC dispatcher (pure; unit-tested)
-  - `index.ts` — thin MV3 entry (composition + top-level listeners)
-  - `services/` — domain logic (CaptureService, etc.)
-  - `llm/` — LLM provider interface and OpenAI implementation
-  - `settings/` — API key store + auto-save flag store (Chrome storage wrappers)
-  - `repository/db.ts` — Dexie schema definition and version (bump here for migrations)
-  - `repository/` — PageRepo queries
-- `/src/sidepanel/`, `/src/options/` — UI entry points (React); `sidepanel/SaveBar.tsx` is the save affordance
-- `/src/ui/components/` — shared UI components (SurfaceShell, PageCard, etc.)
-- `/src/ui/rpc.ts` — shared typed RPC client for UI surfaces
-- `/src/content/` — content script entry point
-- `/src/lib/` — utilities (URL normalization, etc.)
-- `/docs/superpowers/specs/` — design documents
+- `/src/shared/`: domain types, `modes.ts`, message contracts, enums, and the auto-save allowlist
+- `/src/worker/`: service worker entry point and business logic
+  - `handlers.ts`: typed RPC dispatcher, pure and unit-tested
+  - `index.ts`: thin MV3 entry with composition and top-level listeners
+  - `services/`: capture, retrieval, auto-save, and sequential bulk task logic
+  - `llm/`: LLM provider interface and OpenAI implementation
+  - `settings/`: API key, stored mode, and auto-save Chrome storage wrappers
+  - `repository/db.ts`: Dexie schema definition and version
+  - `repository/`: PageRepo queries
+- `/src/sidepanel/`, `/src/options/`: React UI entry points; `sidepanel/SaveBar.tsx` is the save affordance
+- `/src/ui/components/`: shared UI components
+- `/src/ui/rpc.ts`: shared typed RPC client used by the UI
+- `/src/content/`: content script entry point
+- `/src/lib/`: utilities such as URL normalization
+- `/docs/superpowers/specs/`: design documents
 
 ## Build & Config
 
@@ -246,11 +262,13 @@ This ensures the same technical content viewed multiple times is stored once.
 1. **All UI talks through the worker**: Single place to change schema, hold API key, and add RAG in v1.1.
 2. **Service worker hosts retrieval**: Intentional surface to showcase MV3 lifecycle (worker may be killed mid-operation).
 3. **Typed RPC over string messages**: Compile-time safety; no stringly-typed event soup.
-4. **`status` field on pages**: Async capture requires pending/ready/failed states visible to UI.
+4. **Keyword-first lifecycle**: The local transaction reaches `keyword_ready` before any optional network work. Only local persistence failures use `failed`.
 5. **`fullText` stored in DB**: Re-chunking strategy may change; kept for future flexibility.
 6. **Float32Array for embeddings**: 4× smaller than number[], 4× faster cosine similarity (powers the hybrid vector arm in `RetrievalService`).
 7. **`urlHash` for dedup**: O(1) lookup; `url` not separately indexed.
-8. **Compound index `[sourceType+savedAt]`**: Filtered library views avoid full O(n) scan.
+8. **Independent `platform` and `contentType`**: Filters do not conflate where a page lives with what kind of page it is.
+9. **Stored/effective mode split**: Key availability changes behavior without rewriting the user's preference.
+10. **In-memory paid queues**: Cancellation is immediate between pages, and MV3 restart never replays queued OpenAI work.
 
 ## Specification
 

@@ -1,16 +1,23 @@
 import { describe, expect, it } from "vitest";
 
 import { dot } from "../../lib/vector";
+import { ContentType } from "../../shared/enums";
 import { MockLLMProvider } from "./MockLLMProvider";
 
 describe("MockLLMProvider", () => {
   const provider = new MockLLMProvider();
 
   it("returns canned, valid tags", async () => {
-    const result = await provider.summarizeAndTag("body", "Title", "https://x.test", "sk");
+    const result = await provider.summarizeAndTag(
+      "body",
+      "Title",
+      "https://x.test",
+      "sk",
+      ContentType.Page,
+    );
 
     expect(result.summary.length).toBeGreaterThan(0);
-    expect(result.sourceType).toBe("official_docs");
+    expect(result.contentType).toBe(ContentType.Documentation);
     expect(Array.isArray(result.topics)).toBe(true);
   });
 
