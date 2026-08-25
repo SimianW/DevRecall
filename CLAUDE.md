@@ -280,3 +280,17 @@ GitHub Actions (`.github/workflows/ci.yml`):
 
 - Runs on main push and all PRs
 - pnpm install → typecheck → lint → test → build
+
+## Agent skills
+
+### Issue tracker
+
+Issues are tracked in GitHub Issues. See `docs/agents/issue-tracker.md`.
+
+### Triage labels
+
+Triage uses the five default label names. See `docs/agents/triage-labels.md`.
+
+### Domain docs
+
+This is a single-context repository. See `docs/agents/domain.md`.
