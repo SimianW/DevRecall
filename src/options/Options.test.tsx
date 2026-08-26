@@ -263,6 +263,153 @@ describe("confirmed bulk AI operations", () => {
   });
 });
 
+describe("bulk operation cancel and terminal states", () => {
+  const keyedStatus = {
+    hasApiKey: true,
+    storedMode: "local" as const,
+    effectiveMode: "local" as const,
+  };
+  const storageStats = { pageCount: 3, totalTextBytes: 100, pagesMissingEmbeddings: 2 };
+
+  const bulkProps = () => ({
+    loadStatus: vi.fn().mockResolvedValue(keyedStatus),
+    loadKeywordReadyCount: vi.fn().mockResolvedValue(3),
+    loadStorageStats: vi.fn().mockResolvedValue(storageStats),
+    prepareBulkEnrich: vi.fn().mockResolvedValue({ batchId: "batch-t", count: 3 }),
+    startBulkEnrich: vi.fn().mockResolvedValue({ total: 3 }),
+  });
+
+  const canceledBroadcast = {
+    type: "bulk.progress" as const,
+    payload: {
+      kind: "enrich" as const,
+      done: 1,
+      total: 3,
+      failed: 0,
+      remaining: 2,
+      canceled: true,
+    },
+  };
+
+  async function startEnrichBatch(user: ReturnType<typeof userEvent.setup>) {
+    await user.click(
+      await screen.findByRole("button", { name: "Add AI features to local pages (3)" }),
+    );
+    await user.click(screen.getByRole("button", { name: "Add AI features" }));
+  }
+
+  it("keeps showing Canceling... after the cancel RPC resolves", async () => {
+    let resolveCancel!: () => void;
+    const cancelBulk = vi.fn().mockImplementation(
+      () =>
+        new Promise<void>((resolve) => {
+          resolveCancel = resolve;
+        }),
+    );
+    const { subscribe } = makeSubscribe();
+    const { user } = renderOptions({ ...bulkProps(), cancelBulk, subscribe });
+
+    await startEnrichBatch(user);
+    await user.click(await screen.findByRole("button", { name: "Cancel" }));
+    expect(screen.getByRole("button", { name: "Canceling..." })).toBeDisabled();
+
+    resolveCancel();
+    await act(async () => {});
+
+    expect(cancelBulk).toHaveBeenCalledOnce();
+    expect(screen.getByRole("button", { name: "Canceling..." })).toBeInTheDocument();
+    expect(screen.queryByText(/^Canceled\./)).not.toBeInTheDocument();
+  });
+
+  it("shows a persistent canceled terminal state with Dismiss after the canceled broadcast", async () => {
+    const { subscribe, emit } = makeSubscribe();
+    const { user } = renderOptions({ ...bulkProps(), subscribe });
+
+    await startEnrichBatch(user);
+    await emit(canceledBroadcast);
+
+    expect(
+      screen.getByText("Canceled. Processed 1 of 3 pages. 2 were not processed. 0 failed."),
+    ).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Dismiss" })).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Cancel" })).not.toBeInTheDocument();
+  });
+
+  it("re-enables the batch buttons once the terminal state appears", async () => {
+    const { subscribe, emit } = makeSubscribe();
+    const { user } = renderOptions({ ...bulkProps(), subscribe });
+
+    await startEnrichBatch(user);
+    expect(screen.getByRole("button", { name: /^Re-index semantic search/ })).toBeDisabled();
+    await emit(canceledBroadcast);
+
+    expect(screen.getByRole("button", { name: /^Add AI features to local pages/ })).toBeEnabled();
+    expect(screen.getByRole("button", { name: /^Re-index semantic search/ })).toBeEnabled();
+  });
+
+  it("clears the terminal state when Dismiss is clicked", async () => {
+    const { subscribe, emit } = makeSubscribe();
+    const { user } = renderOptions({ ...bulkProps(), subscribe });
+
+    await startEnrichBatch(user);
+    await emit(canceledBroadcast);
+    await user.click(screen.getByRole("button", { name: "Dismiss" }));
+
+    expect(screen.queryByText(/^Canceled\./)).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Dismiss" })).not.toBeInTheDocument();
+  });
+
+  it("replaces the terminal state when a new batch starts", async () => {
+    const { subscribe, emit } = makeSubscribe();
+    const { user } = renderOptions({ ...bulkProps(), subscribe });
+
+    await startEnrichBatch(user);
+    await emit(canceledBroadcast);
+    expect(screen.getByText(/^Canceled\./)).toBeInTheDocument();
+
+    await user.click(screen.getByRole("button", { name: "Add AI features to local pages (3)" }));
+    await user.click(screen.getByRole("button", { name: "Add AI features" }));
+
+    expect(screen.queryByText(/^Canceled\./)).not.toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Cancel" })).toBeInTheDocument();
+  });
+
+  it("keeps a visible completed terminal state after natural completion", async () => {
+    const { subscribe, emit } = makeSubscribe();
+    const { user } = renderOptions({ ...bulkProps(), subscribe });
+
+    await startEnrichBatch(user);
+    await emit({
+      type: "bulk.progress",
+      payload: { kind: "enrich", done: 3, total: 3, failed: 0, remaining: 0 },
+    });
+
+    expect(screen.getByText("Completed. Processed 3 of 3 pages. 0 failed.")).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Dismiss" })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: /^Add AI features to local pages/ })).toBeEnabled();
+  });
+
+  it("uses the same terminal display when cancellation is driven by Local-only mode", async () => {
+    const { subscribe, emit } = makeSubscribe();
+    const { user } = renderOptions({ ...bulkProps(), subscribe });
+
+    await startEnrichBatch(user);
+    await emit({
+      type: "bulk.progress",
+      payload: { kind: "enrich", done: 1, total: 3, failed: 0, remaining: 2 },
+    });
+    expect(screen.getByText(/Completed 1 of 3.*Remaining 2/)).toBeInTheDocument();
+
+    // Revoking consent makes the runner stop itself; no Cancel click happened.
+    await emit(canceledBroadcast);
+
+    expect(
+      screen.getByText("Canceled. Processed 1 of 3 pages. 2 were not processed. 0 failed."),
+    ).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Dismiss" })).toBeInTheDocument();
+  });
+});
+
 it("disables semantic re-index when no pages are missing embeddings", async () => {
   renderOptions({
     loadStatus: vi.fn().mockResolvedValue({ hasApiKey: true }),

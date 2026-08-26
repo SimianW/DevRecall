@@ -170,6 +170,25 @@ const MODE_LABELS: Record<EffectiveMode, string> = {
   hybrid: "Hybrid",
 };
 
+/**
+ * A broadcast is terminal once cancellation was requested, every page was
+ * processed, or nothing remains. The panel must keep rendering this final
+ * payload until the user dismisses it or starts another batch.
+ */
+function isBulkProgressTerminal(progress: BulkProgress): boolean {
+  return Boolean(progress.canceled || progress.remaining === 0 || progress.done >= progress.total);
+}
+
+function formatBulkTerminalText(progress: BulkProgress): string {
+  const outcome = progress.canceled ? "Canceled" : "Completed";
+  const pages = progress.total === 1 ? "page" : "pages";
+  const notProcessed =
+    progress.canceled && progress.remaining > 0
+      ? ` ${progress.remaining} ${progress.remaining === 1 ? "was" : "were"} not processed.`
+      : "";
+  return `${outcome}. Processed ${progress.done} of ${progress.total} ${pages}.${notProcessed} ${progress.failed} failed.`;
+}
+
 export function Options({
   loadStatus = defaultLoadStatus,
   saveApiKey = defaultSaveApiKey,
@@ -261,11 +280,8 @@ export function Options({
     const unsubscribe = subscribe((message) => {
       if (message.type === "bulk.progress" && message.payload.kind === bulkOp) {
         setBulkProgress(message.payload);
-        if (
-          message.payload.canceled ||
-          message.payload.remaining === 0 ||
-          message.payload.done >= message.payload.total
-        ) {
+        // Keep the final payload visible: it renders as the terminal state.
+        if (isBulkProgressTerminal(message.payload)) {
           setBulkOp(null);
           setCancelingBulk(false);
           refreshCounts();
@@ -402,14 +418,17 @@ export function Options({
     setCancelingBulk(true);
     setBulkError(null);
     try {
+      // The ack only means cancellation was requested. The runner sends the
+      // canceled broadcast after the in-flight page finishes; clear state there.
       await cancelBulk();
-      setBulkOp(null);
-      setBulkProgress(null);
     } catch (err) {
       setBulkError(err instanceof Error ? err.message : "Could not cancel the operation");
-    } finally {
       setCancelingBulk(false);
     }
+  };
+
+  const handleDismissBulk = () => {
+    setBulkProgress(null);
   };
 
   const handleExportData = async () => {
@@ -441,6 +460,8 @@ export function Options({
   };
 
   const bulkBusy = bulkOp != null;
+  const bulkTerminal = bulkProgress != null && isBulkProgressTerminal(bulkProgress);
+  const bulkTerminalText = bulkProgress != null ? formatBulkTerminalText(bulkProgress) : "";
   const enrichCount = keywordReadyCount ?? 0;
   const semanticCount = storageStats?.pagesMissingEmbeddings ?? 0;
   const modeLabel = effectiveMode == null ? "Loading..." : MODE_LABELS[effectiveMode];
@@ -664,21 +685,34 @@ export function Options({
             </button>
           </div>
 
-          {bulkOp && bulkProgress && (
+          {bulkProgress && (
             <div className="mt-3 rounded-md border border-default/80 bg-foreground/[0.025] p-3">
               <p className="text-xs text-foreground/65" aria-live="polite">
-                Completed {bulkProgress.done} of {bulkProgress.total}. Current{" "}
-                {Math.min(bulkProgress.done + 1, bulkProgress.total)}. Remaining{" "}
-                {bulkProgress.remaining}. Failed {bulkProgress.failed}.
+                {bulkTerminal
+                  ? bulkTerminalText
+                  : `Completed ${bulkProgress.done} of ${bulkProgress.total}. Current ${Math.min(
+                      bulkProgress.done + 1,
+                      bulkProgress.total,
+                    )}. Remaining ${bulkProgress.remaining}. Failed ${bulkProgress.failed}.`}
               </p>
-              <button
-                type="button"
-                onClick={handleCancelBulk}
-                disabled={cancelingBulk}
-                className="mt-2 text-xs font-medium text-red-700 hover:underline disabled:text-foreground/35 dark:text-red-300"
-              >
-                {cancelingBulk ? "Canceling..." : "Cancel"}
-              </button>
+              {bulkTerminal ? (
+                <button
+                  type="button"
+                  onClick={handleDismissBulk}
+                  className="mt-2 text-xs font-medium text-foreground/80 hover:underline"
+                >
+                  Dismiss
+                </button>
+              ) : (
+                <button
+                  type="button"
+                  onClick={handleCancelBulk}
+                  disabled={cancelingBulk}
+                  className="mt-2 text-xs font-medium text-red-700 hover:underline disabled:text-foreground/35 dark:text-red-300"
+                >
+                  {cancelingBulk ? "Canceling..." : "Cancel"}
+                </button>
+              )}
             </div>
           )}
           {!keySaved && (

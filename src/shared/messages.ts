@@ -2,7 +2,7 @@ import type { EffectiveMode, SearchMode, StoredMode } from "./modes";
 import type { ExtractedPage, PageHit, PageListItem, PageStatus } from "./types";
 
 export const APP_NAME = "DevRecall";
-export const APP_VERSION = "0.5.7.19";
+export const APP_VERSION = "0.5.7.20";
 
 export type PersistentStorageState = "unknown" | "granted" | "denied";
 
