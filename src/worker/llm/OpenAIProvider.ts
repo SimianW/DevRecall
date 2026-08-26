@@ -10,6 +10,15 @@ export type PageTaggingResult = {
   intent: Intent;
 };
 
+export type MaySendOpenAIRequest = () => Promise<boolean> | boolean;
+
+export class OpenAIRequestAuthorizationError extends Error {
+  constructor() {
+    super("OpenAI request authorization was revoked");
+    this.name = "OpenAIRequestAuthorizationError";
+  }
+}
+
 export type PageTagger = {
   summarizeAndTag(
     fullText: string,
@@ -17,13 +26,18 @@ export type PageTagger = {
     url: string,
     apiKey: string,
     localContentType: ContentType,
+    maySend?: MaySendOpenAIRequest,
   ): Promise<PageTaggingResult>;
 };
 
 export type Embedder = {
   readonly embeddingModel: string;
-  embed(text: string, apiKey: string): Promise<Float32Array>;
-  embedBatch(texts: string[], apiKey: string): Promise<Float32Array[]>;
+  embed(text: string, apiKey: string, maySend?: MaySendOpenAIRequest): Promise<Float32Array>;
+  embedBatch(
+    texts: string[],
+    apiKey: string,
+    maySend?: MaySendOpenAIRequest,
+  ): Promise<Float32Array[]>;
 };
 
 const OPENAI_CHAT_URL = "https://api.openai.com/v1/chat/completions";
@@ -79,6 +93,7 @@ export class OpenAIProvider implements PageTagger, Embedder {
     url: string,
     apiKey: string,
     localContentType: ContentType,
+    maySend?: MaySendOpenAIRequest,
   ): Promise<PageTaggingResult> {
     const truncatedText = fullText.slice(0, MAX_TEXT_LENGTH);
     const userPrompt = `Page title: ${title}\nPage URL: ${url}\n\nPage content:\n${truncatedText}`;
@@ -101,31 +116,43 @@ export class OpenAIProvider implements PageTagger, Embedder {
       temperature: 0.2,
     });
 
-    const responseBody = await this.fetchWithRetry(OPENAI_CHAT_URL, apiKey, body);
+    const responseBody = await this.fetchWithRetry(OPENAI_CHAT_URL, apiKey, body, maySend);
 
     return parseTaggingResponse(responseBody, localContentType);
   }
 
-  async embedBatch(texts: string[], apiKey: string): Promise<Float32Array[]> {
+  async embedBatch(
+    texts: string[],
+    apiKey: string,
+    maySend?: MaySendOpenAIRequest,
+  ): Promise<Float32Array[]> {
     if (texts.length === 0) {
       return [];
     }
 
     const body = JSON.stringify({ model: EMBEDDING_MODEL, input: texts });
-    const responseBody = await this.fetchWithRetry(OPENAI_EMBEDDINGS_URL, apiKey, body);
+    const responseBody = await this.fetchWithRetry(OPENAI_EMBEDDINGS_URL, apiKey, body, maySend);
 
     return parseEmbeddingResponse(responseBody, texts.length);
   }
 
-  async embed(text: string, apiKey: string): Promise<Float32Array> {
-    const [vector] = await this.embedBatch([text], apiKey);
+  async embed(text: string, apiKey: string, maySend?: MaySendOpenAIRequest): Promise<Float32Array> {
+    const [vector] = await this.embedBatch([text], apiKey, maySend);
     return vector;
   }
 
-  private async fetchWithRetry(url: string, apiKey: string, body: string): Promise<unknown> {
+  private async fetchWithRetry(
+    url: string,
+    apiKey: string,
+    body: string,
+    maySend?: MaySendOpenAIRequest,
+  ): Promise<unknown> {
     const maxAttempts = this.retryDelays.length + 1;
 
     for (let attempt = 0; attempt < maxAttempts; attempt++) {
+      if (maySend && !(await maySend())) {
+        throw new OpenAIRequestAuthorizationError();
+      }
       const response = await fetch(url, {
         method: "POST",
         headers: {
@@ -241,7 +268,6 @@ export async function testOpenAIConnection(
         model: MODEL,
         messages: [{ role: "user", content: "hi" }],
         reasoning_effort: "none",
-        max_completion_tokens: 1,
       }),
     });
 

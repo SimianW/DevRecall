@@ -1,6 +1,6 @@
 {
   "name": "devrecall",
-  "version": "0.5.7.17",
+  "version": "0.5.7.19",
   "private": true,
   "type": "module",
   "description": "Local-first Chrome extension for recalling technical browsing sessions.",

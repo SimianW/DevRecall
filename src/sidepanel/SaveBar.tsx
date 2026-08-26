@@ -153,6 +153,12 @@ export function SaveBar({
   } else if (urlStatus.saved && urlStatus.status === "pending") {
     buttonLabel = "Processing…";
     disabled = true;
+  } else if (urlStatus.saved && urlStatus.status === "keyword_ready") {
+    buttonLabel = `Saved locally ✓ ${formatRelativeTime(urlStatus.savedAt)}`;
+    disabled = true;
+  } else if (urlStatus.saved && urlStatus.status === "enriching") {
+    buttonLabel = "Adding AI features…";
+    disabled = true;
   } else if (urlStatus.saved && urlStatus.status === "ready") {
     buttonLabel = `Saved ✓ ${formatRelativeTime(urlStatus.savedAt)}`;
     disabled = true;

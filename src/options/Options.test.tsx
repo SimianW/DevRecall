@@ -1,9 +1,13 @@
 import { act, render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
-import { describe, expect, it, vi } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 
 import type { WorkerBroadcast } from "../shared/messages";
 import { Options } from "./Options";
+
+afterEach(() => {
+  vi.unstubAllGlobals();
+});
 
 // NOTE: dark mode is media-based (tailwind darkMode: "media"). jsdom cannot
 // compute colors or toggle a root `.dark` class, so visual contrast cannot be
@@ -196,9 +200,11 @@ describe("confirmed bulk AI operations", () => {
 
   it("shows the exact enrichment count before starting", async () => {
     const startBulkEnrich = vi.fn().mockResolvedValue({ total: 3 });
+    const prepareBulkEnrich = vi.fn().mockResolvedValue({ batchId: "batch-1", count: 3 });
     const { user } = renderOptions({
       loadStatus: vi.fn().mockResolvedValue(keyedStatus),
       loadKeywordReadyCount: vi.fn().mockResolvedValue(3),
+      prepareBulkEnrich,
       startBulkEnrich,
     });
 
@@ -208,14 +214,42 @@ describe("confirmed bulk AI operations", () => {
     expect(startBulkEnrich).not.toHaveBeenCalled();
     expect(screen.getByText(/Send 3 pages to OpenAI\?/)).toHaveTextContent("full text");
     await user.click(screen.getByRole("button", { name: "Add AI features" }));
-    expect(startBulkEnrich).toHaveBeenCalledOnce();
+    expect(startBulkEnrich).toHaveBeenCalledWith("batch-1");
+  });
+
+  it("uses an IndexedDB-compatible limit when counting local pages", async () => {
+    const sendMessage = vi.fn().mockImplementation((request: { type: string }) => {
+      if (request.type === "page.list") {
+        return Promise.resolve({
+          type: "page.listed",
+          payload: { pages: [{ status: "keyword_ready" }] },
+        });
+      }
+      return Promise.resolve(undefined);
+    });
+    vi.stubGlobal("chrome", { runtime: { sendMessage } });
+
+    renderOptions({
+      loadStatus: vi.fn().mockResolvedValue(keyedStatus),
+      loadKeywordReadyCount: undefined,
+    });
+
+    expect(
+      await screen.findByRole("button", { name: "Add AI features to local pages (1)" }),
+    ).toBeEnabled();
+    expect(sendMessage).toHaveBeenCalledWith({
+      type: "page.list",
+      payload: { limit: 2 ** 32 - 1 },
+    });
   });
 
   it("cancels a running bulk operation", async () => {
     const cancelBulk = vi.fn().mockResolvedValue(undefined);
+    const prepareBulkEnrich = vi.fn().mockResolvedValue({ batchId: "batch-2", count: 2 });
     const { user } = renderOptions({
       loadStatus: vi.fn().mockResolvedValue(keyedStatus),
       loadKeywordReadyCount: vi.fn().mockResolvedValue(2),
+      prepareBulkEnrich,
       startBulkEnrich: vi.fn().mockResolvedValue({ total: 2 }),
       cancelBulk,
     });
@@ -302,6 +336,7 @@ it("calls deleteAll when user confirms deletion", async () => {
 it("confirms semantic re-index and shows live progress", async () => {
   const { subscribe, emit } = makeSubscribe();
   const startReindexSemantic = vi.fn().mockResolvedValue({ total: 2 });
+  const prepareReindexSemantic = vi.fn().mockResolvedValue({ batchId: "semantic-1", count: 2 });
 
   renderOptions({
     loadStatus: vi.fn().mockResolvedValue({ hasApiKey: true }),
@@ -309,6 +344,7 @@ it("confirms semantic re-index and shows live progress", async () => {
       .fn()
       .mockResolvedValue({ pageCount: 2, totalTextBytes: 100, pagesMissingEmbeddings: 2 }),
     startReindexSemantic,
+    prepareReindexSemantic,
     subscribe,
   });
 
@@ -319,7 +355,7 @@ it("confirms semantic re-index and shows live progress", async () => {
   expect(startReindexSemantic).not.toHaveBeenCalled();
   expect(screen.getByText(/Re-index 2 pages\?/)).toBeInTheDocument();
   await user.click(screen.getByRole("button", { name: "Re-index semantic search" }));
-  expect(startReindexSemantic).toHaveBeenCalled();
+  expect(startReindexSemantic).toHaveBeenCalledWith("semantic-1");
   await emit({
     type: "bulk.progress",
     payload: { kind: "semantic", done: 1, total: 2, failed: 0, remaining: 1 },

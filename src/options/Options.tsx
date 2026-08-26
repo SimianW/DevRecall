@@ -15,6 +15,9 @@ type TestResult = { success: boolean; message: string };
 type StorageStats = { pageCount: number; totalTextBytes: number; pagesMissingEmbeddings: number };
 type BulkOp = "enrich" | "semantic";
 type BulkProgress = Extract<WorkerBroadcast, { type: "bulk.progress" }>["payload"];
+type PreparedBatch = { batchId: string; count: number };
+
+const MAX_INDEXED_DB_QUERY_LIMIT = 2 ** 32 - 1;
 
 type OptionsProps = {
   loadStatus?: () => Promise<StatusResult>;
@@ -25,8 +28,10 @@ type OptionsProps = {
   setMode?: (mode: StoredMode) => Promise<ModeResult | null>;
   loadStorageStats?: () => Promise<StorageStats>;
   loadKeywordReadyCount?: () => Promise<number>;
-  startBulkEnrich?: () => Promise<{ total: number }>;
-  startReindexSemantic?: () => Promise<{ total: number }>;
+  prepareBulkEnrich?: () => Promise<PreparedBatch>;
+  prepareReindexSemantic?: () => Promise<PreparedBatch>;
+  startBulkEnrich?: (batchId: string) => Promise<{ total: number }>;
+  startReindexSemantic?: (batchId: string) => Promise<{ total: number }>;
   cancelBulk?: () => Promise<void>;
   subscribe?: (handler: (message: WorkerBroadcast) => void) => () => void;
   exportData?: () => Promise<string>;
@@ -84,23 +89,53 @@ const defaultLoadStorageStats = async (): Promise<StorageStats> => {
  */
 const defaultLoadKeywordReadyCount = async (): Promise<number> => {
   const response = await sendRequest(
-    { type: "page.list", payload: { limit: Number.MAX_SAFE_INTEGER } },
+    { type: "page.list", payload: { limit: MAX_INDEXED_DB_QUERY_LIMIT } },
     "page.listed",
   );
   return (response?.payload.pages ?? []).filter((page) => page.status === "keyword_ready").length;
 };
 
-const defaultStartBulkEnrich = async (): Promise<{ total: number }> => {
+/**
+ * Ask the worker to freeze the candidate IDs for bulk enrichment. The returned
+ * count and batch ID describe the exact set used after confirmation.
+ */
+const defaultPrepareBulkEnrich = async (): Promise<PreparedBatch> => {
   const response = await sendRequest(
-    { type: "library.bulkEnrich", payload: {} },
+    { type: "library.prepareBulkEnrich", payload: {} },
+    "library.bulkEnrichPrepared",
+  );
+  if (!response) {
+    throw new Error("Could not prepare bulk enrichment");
+  }
+  return response.payload;
+};
+
+/**
+ * Ask the worker to freeze the candidate IDs for semantic re-indexing. The
+ * returned count and batch ID describe the exact set used after confirmation.
+ */
+const defaultPrepareReindexSemantic = async (): Promise<PreparedBatch> => {
+  const response = await sendRequest(
+    { type: "library.prepareReindexSemantic", payload: {} },
+    "library.reindexSemanticPrepared",
+  );
+  if (!response) {
+    throw new Error("Could not prepare semantic re-index");
+  }
+  return response.payload;
+};
+
+const defaultStartBulkEnrich = async (batchId: string): Promise<{ total: number }> => {
+  const response = await sendRequest(
+    { type: "library.bulkEnrich", payload: { batchId } },
     "library.bulkEnrichStarted",
   );
   return response?.payload ?? { total: 0 };
 };
 
-const defaultStartReindexSemantic = async (): Promise<{ total: number }> => {
+const defaultStartReindexSemantic = async (batchId: string): Promise<{ total: number }> => {
   const response = await sendRequest(
-    { type: "library.reindexSemantic", payload: {} },
+    { type: "library.reindexSemantic", payload: { batchId } },
     "library.reindexSemanticStarted",
   );
   return response?.payload ?? { total: 0 };
@@ -144,6 +179,8 @@ export function Options({
   setMode = defaultSetMode,
   loadStorageStats = defaultLoadStorageStats,
   loadKeywordReadyCount = defaultLoadKeywordReadyCount,
+  prepareBulkEnrich = defaultPrepareBulkEnrich,
+  prepareReindexSemantic = defaultPrepareReindexSemantic,
   startBulkEnrich = defaultStartBulkEnrich,
   startReindexSemantic = defaultStartReindexSemantic,
   cancelBulk = defaultCancelBulk,
@@ -161,6 +198,10 @@ export function Options({
   const [effectiveMode, setEffectiveMode] = useState<EffectiveMode | null>(null);
   const [storageStats, setStorageStats] = useState<StorageStats | null>(null);
   const [keywordReadyCount, setKeywordReadyCount] = useState<number | null>(null);
+  const [preparedBulkEnrich, setPreparedBulkEnrich] = useState<PreparedBatch | null>(null);
+  const [preparedReindexSemantic, setPreparedReindexSemantic] = useState<PreparedBatch | null>(
+    null,
+  );
   const [bulkOp, setBulkOp] = useState<BulkOp | null>(null);
   const [bulkProgress, setBulkProgress] = useState<BulkProgress | null>(null);
   const [bulkError, setBulkError] = useState<string | null>(null);
@@ -300,18 +341,21 @@ export function Options({
   };
 
   const handleStartBulkEnrich = async () => {
+    if (!preparedBulkEnrich) return;
+    const preparation = preparedBulkEnrich;
     setShowEnrichConfirm(false);
+    setPreparedBulkEnrich(null);
     setBulkError(null);
     setBulkOp("enrich");
     setBulkProgress({
       kind: "enrich",
       done: 0,
-      total: keywordReadyCount ?? 0,
+      total: preparation.count,
       failed: 0,
-      remaining: keywordReadyCount ?? 0,
+      remaining: preparation.count,
     });
     try {
-      const { total } = await startBulkEnrich();
+      const { total } = await startBulkEnrich(preparation.batchId);
       setBulkProgress({ kind: "enrich", done: 0, total, failed: 0, remaining: total });
       if (total === 0) {
         setBulkOp(null);
@@ -326,18 +370,21 @@ export function Options({
   };
 
   const handleStartReindexSemantic = async () => {
+    if (!preparedReindexSemantic) return;
+    const preparation = preparedReindexSemantic;
     setShowSemanticConfirm(false);
+    setPreparedReindexSemantic(null);
     setBulkError(null);
     setBulkOp("semantic");
     setBulkProgress({
       kind: "semantic",
       done: 0,
-      total: storageStats?.pagesMissingEmbeddings ?? 0,
+      total: preparation.count,
       failed: 0,
-      remaining: storageStats?.pagesMissingEmbeddings ?? 0,
+      remaining: preparation.count,
     });
     try {
-      const { total } = await startReindexSemantic();
+      const { total } = await startReindexSemantic(preparation.batchId);
       setBulkProgress({ kind: "semantic", done: 0, total, failed: 0, remaining: total });
       if (total === 0) {
         setBulkOp(null);
@@ -577,7 +624,17 @@ export function Options({
           <div className="mt-3 flex flex-wrap gap-3">
             <button
               type="button"
-              onClick={() => setShowEnrichConfirm(true)}
+              onClick={async () => {
+                setBulkError(null);
+                try {
+                  setPreparedBulkEnrich(await prepareBulkEnrich());
+                  setShowEnrichConfirm(true);
+                } catch (error) {
+                  setBulkError(
+                    error instanceof Error ? error.message : "Could not prepare bulk enrichment",
+                  );
+                }
+              }}
               disabled={!keySaved || bulkBusy || enrichCount === 0}
               className="rounded-md bg-foreground/5 px-3 py-2 text-sm font-medium text-foreground/80 transition-colors hover:bg-foreground/10 disabled:bg-foreground/5 disabled:text-foreground/40 disabled:hover:bg-foreground/5"
             >
@@ -587,7 +644,17 @@ export function Options({
             </button>
             <button
               type="button"
-              onClick={() => setShowSemanticConfirm(true)}
+              onClick={async () => {
+                setBulkError(null);
+                try {
+                  setPreparedReindexSemantic(await prepareReindexSemantic());
+                  setShowSemanticConfirm(true);
+                } catch (error) {
+                  setBulkError(
+                    error instanceof Error ? error.message : "Could not prepare semantic re-index",
+                  );
+                }
+              }}
               disabled={!keySaved || bulkBusy || semanticCount === 0}
               className="rounded-md bg-foreground/5 px-3 py-2 text-sm font-medium text-foreground/80 transition-colors hover:bg-foreground/10 disabled:bg-foreground/5 disabled:text-foreground/40 disabled:hover:bg-foreground/5"
             >
@@ -628,12 +695,13 @@ export function Options({
             again.
           </p>
 
-          {showEnrichConfirm && (
+          {showEnrichConfirm && preparedBulkEnrich && (
             <div className="mt-4 rounded-md border border-amber-500/30 bg-amber-500/10 p-4">
               <p className="text-sm text-amber-900 dark:text-amber-200">
-                Send {enrichCount} {enrichCount === 1 ? "page" : "pages"} to OpenAI? The full text
-                of {enrichCount === 1 ? "this page" : "each page"} will be sent to OpenAI to
-                generate summaries, tags, and embeddings. Your pages stay saved in this browser
+                Send {preparedBulkEnrich.count} {preparedBulkEnrich.count === 1 ? "page" : "pages"}{" "}
+                to OpenAI? The full text of{" "}
+                {preparedBulkEnrich.count === 1 ? "this page" : "each page"} will be sent to OpenAI
+                to generate summaries, tags, and embeddings. Your pages stay saved in this browser
                 either way.
               </p>
               <div className="mt-3 flex gap-3">
@@ -646,7 +714,10 @@ export function Options({
                 </button>
                 <button
                   type="button"
-                  onClick={() => setShowEnrichConfirm(false)}
+                  onClick={() => {
+                    setShowEnrichConfirm(false);
+                    setPreparedBulkEnrich(null);
+                  }}
                   className="rounded-md bg-foreground/5 px-3 py-2 text-sm font-medium text-foreground/80 transition-colors hover:bg-foreground/10"
                 >
                   Cancel
@@ -655,12 +726,13 @@ export function Options({
             </div>
           )}
 
-          {showSemanticConfirm && (
+          {showSemanticConfirm && preparedReindexSemantic && (
             <div className="mt-4 rounded-md border border-amber-500/30 bg-amber-500/10 p-4">
               <p className="text-sm text-amber-900 dark:text-amber-200">
-                Re-index {semanticCount} {semanticCount === 1 ? "page" : "pages"}? Relevant text
-                chunks will be sent to OpenAI to repair semantic search. Existing summaries, tags,
-                technologies, platforms, and content types will stay unchanged.
+                Re-index {preparedReindexSemantic.count}{" "}
+                {preparedReindexSemantic.count === 1 ? "page" : "pages"}? Relevant text chunks will
+                be sent to OpenAI to repair semantic search. Existing summaries, tags, technologies,
+                platforms, and content types will stay unchanged.
               </p>
               <div className="mt-3 flex gap-3">
                 <button
@@ -672,7 +744,10 @@ export function Options({
                 </button>
                 <button
                   type="button"
-                  onClick={() => setShowSemanticConfirm(false)}
+                  onClick={() => {
+                    setShowSemanticConfirm(false);
+                    setPreparedReindexSemantic(null);
+                  }}
                   className="rounded-md bg-foreground/5 px-3 py-2 text-sm font-medium text-foreground/80 transition-colors hover:bg-foreground/10"
                 >
                   Cancel

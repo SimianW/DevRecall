@@ -60,6 +60,34 @@ describe("SaveBar", () => {
     expect(await screen.findByRole("button", { name: /processing/i })).toBeDisabled();
   });
 
+  it("shows keyword-ready pages as saved locally and prevents another save", async () => {
+    const saveTab = vi.fn().mockResolvedValue(undefined);
+    const loadUrlStatus = vi.fn().mockResolvedValue({
+      saved: true,
+      status: "keyword_ready",
+      savedAt: Date.now() - 120_000,
+    });
+    render(<SaveBar {...makeProps({ loadUrlStatus, saveTab })} />);
+
+    const button = await screen.findByRole("button", { name: /saved locally.*2m ago/i });
+    expect(button).toBeDisabled();
+    expect(saveTab).not.toHaveBeenCalled();
+  });
+
+  it("shows enriching pages as adding AI features and prevents another save", async () => {
+    const saveTab = vi.fn().mockResolvedValue(undefined);
+    const loadUrlStatus = vi.fn().mockResolvedValue({
+      saved: true,
+      status: "enriching",
+      savedAt: Date.now(),
+    });
+    render(<SaveBar {...makeProps({ loadUrlStatus, saveTab })} />);
+
+    const button = await screen.findByRole("button", { name: "Adding AI features…" });
+    expect(button).toBeDisabled();
+    expect(saveTab).not.toHaveBeenCalled();
+  });
+
   it("shows Saved with relative time when ready", async () => {
     const loadUrlStatus = vi
       .fn()

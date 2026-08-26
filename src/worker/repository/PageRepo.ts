@@ -11,37 +11,6 @@ import { db, type DevRecallDatabase } from "./db";
 export class PageRepo {
   constructor(private readonly database: DevRecallDatabase = db) {}
 
-  async upsertCapturedPage(input: PageCaptureInput): Promise<PageRecord> {
-    const normalized = await normalizeUrl(input.url);
-    const existing = await this.database.pages.where("urlHash").equals(normalized.urlHash).first();
-    const now = Date.now();
-    const classification = classifyPage(normalized.url, normalized.domain);
-
-    const page: PageRecord = {
-      id: existing?.id ?? ulid(),
-      url: normalized.url,
-      urlHash: normalized.urlHash,
-      title: input.title,
-      domain: normalized.domain,
-      ...classification,
-      summary: "",
-      topics: [],
-      technologies: [],
-      intent: "reference",
-      fullText: input.fullText,
-      savedAt: existing?.savedAt ?? now,
-      visitedAt: now,
-      readingTimeMs: input.readingTimeMs,
-      saveMode: input.saveMode,
-      status: "pending",
-      schemaVersion: 1,
-    };
-
-    await this.database.pages.put(page);
-
-    return page;
-  }
-
   /**
    * Saves the captured page and its keyword chunks as one local commit. The
    * transaction writes the intermediate `pending` state before the chunks, but
@@ -111,7 +80,7 @@ export class PageRepo {
         const failed: PageRecord = {
           ...attemptedPage,
           status: "failed",
-          enrichmentError: message,
+          localSaveError: message,
         };
         try {
           await this.database.pages.put(failed);
@@ -137,6 +106,7 @@ export class PageRepo {
       }
 
       const pending: PageRecord = { ...page, status: "pending" };
+      delete pending.localSaveError;
       delete pending.enrichmentError;
       await this.database.pages.put(pending);
       await this.database.chunks.where("pageId").equals(id).delete();
@@ -296,6 +266,7 @@ export function toPageListItem(page: PageRecord): PageListItem {
     technologies: page.technologies,
     savedAt: page.savedAt,
     status: page.status,
+    ...(page.localSaveError !== undefined ? { localSaveError: page.localSaveError } : {}),
     ...(page.enrichmentError !== undefined ? { enrichmentError: page.enrichmentError } : {}),
   };
 }

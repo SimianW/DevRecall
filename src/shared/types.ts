@@ -35,6 +35,8 @@ export type PageRecord = {
   readingTimeMs: number;
   saveMode: SaveMode;
   status: PageStatus;
+  /** Local extraction, chunking, or persistence failure. Only `failed` pages use this. */
+  localSaveError?: string;
   /** Last enrichment failure. Affected pages return to `keyword_ready`. */
   enrichmentError?: string;
   schemaVersion: 1;
@@ -53,6 +55,7 @@ export type PageListItem = Pick<
   | "technologies"
   | "savedAt"
   | "status"
+  | "localSaveError"
   | "enrichmentError"
 >;
 

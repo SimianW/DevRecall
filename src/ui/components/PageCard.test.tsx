@@ -131,6 +131,16 @@ describe("PageCard AI action", () => {
 });
 
 describe("PageCard library actions", () => {
+  it("shows the local save error for a failed page", async () => {
+    const user = userEvent.setup();
+    const page = makePage({ status: "failed", localSaveError: "IndexedDB quota exceeded" });
+    render(<PageCard page={page} />);
+
+    await user.click(screen.getByRole("button", { name: /Horizontal Pod Autoscaling/ }));
+
+    expect(screen.getByText("IndexedDB quota exceeded")).toBeInTheDocument();
+  });
+
   it("wires retry for a local save failure and delete when expanded", async () => {
     const user = userEvent.setup();
     const onRetry = vi.fn();

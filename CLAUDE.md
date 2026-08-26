@@ -120,6 +120,7 @@ Content Script → Service Worker ← Side Panel / Options
 - `contentType`: what the content is, classified locally and optionally refined during enrichment
 - `summary`, `topics`, `technologies`, `intent`: empty until LLM processing completes
 - `status`: `pending` | `keyword_ready` | `enriching` | `ready` | `failed`
+- `localSaveError`: last local persistence failure; the page is `failed`
 - `enrichmentError`: last OpenAI failure; the page remains `keyword_ready`
 - `savedAt`, `visitedAt`, `readingTimeMs`, `saveMode`: metadata
 - `schemaVersion: 1`: record format version
@@ -179,8 +180,10 @@ type DevRecallRequest =
   | { type: "settings.getStatus" }
   | { type: "settings.setApiKey"; payload: { apiKey: string } }
   | { type: "settings.setMode"; payload: { mode: StoredMode } }
-  | { type: "library.bulkEnrich"; payload: Record<string, never> }
-  | { type: "library.reindexSemantic"; payload: Record<string, never> }
+  | { type: "library.prepareBulkEnrich"; payload: Record<string, never> }
+  | { type: "library.bulkEnrich"; payload: { batchId: string } }
+  | { type: "library.prepareReindexSemantic"; payload: Record<string, never> }
+  | { type: "library.reindexSemantic"; payload: { batchId: string } }
   | { type: "library.cancelBulk"; payload: Record<string, never> }
   | ...
 

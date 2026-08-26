@@ -3,8 +3,10 @@ import type { ChunkRecord, ExtractedPage, PageCaptureInput, PageRecord } from ".
 import { chunkText } from "../../lib/chunking";
 import { chunkTokens } from "../../lib/tokenChunking";
 import {
+  OpenAIRequestAuthorizationError,
   OpenAIProvider,
   type Embedder,
+  type MaySendOpenAIRequest,
   type PageTagger as OpenAIPageTagger,
 } from "../llm/OpenAIProvider";
 import { ChunkRepo, type EmbeddedChunkInput } from "../repository/ChunkRepo";
@@ -179,7 +181,17 @@ export class CaptureService {
     }
   }
 
-  async reindexSemanticPage(pageId: string, apiKey: string): Promise<PageRecord> {
+  /**
+   * Rebuilds embeddings for a page without re-running enrichment.
+   *
+   * The optional `mayProceed` callback is called BEFORE the embedding request
+   * to provide send-time authorization, ensuring Local-only changes are respected.
+   */
+  async reindexSemanticPage(
+    pageId: string,
+    apiKey: string,
+    mayProceed?: MaySendOpenAIRequest,
+  ): Promise<PageRecord> {
     const page = await this.reader.getById(pageId);
 
     if (!page) {
@@ -189,7 +201,12 @@ export class CaptureService {
       throw new Error(`Page ${pageId} is not ready for semantic re-indexing`);
     }
 
-    const embedded = await this.embedChunks(page.fullText, apiKey);
+    // Send-time authorization check before embedding request
+    if (mayProceed && !(await mayProceed())) {
+      throw new OpenAIRequestAuthorizationError();
+    }
+
+    const embedded = await this.embedChunks(page.fullText, apiKey, mayProceed);
     await this.chunkWriter.commitProcessedPage(
       pageId,
       embedded,
@@ -201,19 +218,52 @@ export class CaptureService {
     return page;
   }
 
-  async processPage(pageId: string, apiKey: string): Promise<PageRecord> {
+  /**
+   * Processes a page through the full enrichment pipeline.
+   *
+   * The optional `mayProceed` callback is called AFTER claimEnrichment but BEFORE
+   * any OpenAI requests. This allows checking the effective mode at send-time,
+   * closing the privacy race where Local-only could be enabled after the claim
+   * but before the network request.
+   *
+   * If `mayProceed` returns false, the page is restored to `keyword_ready` and no
+   * OpenAI requests are made.
+   */
+  async processPage(
+    pageId: string,
+    apiKey: string,
+    mayProceed?: MaySendOpenAIRequest,
+  ): Promise<PageRecord> {
     const page = await this.reader.claimEnrichment(pageId);
 
-    try {
-      const result = await this.tagger.summarizeAndTag(
-        page.fullText,
-        page.title,
-        page.url,
-        apiKey,
-        page.contentType,
-      );
+    // Send-time authorization check: after claim, before OpenAI requests
+    if (mayProceed && !(await mayProceed())) {
+      return this.restoreKeywordReady(page);
+    }
 
-      const embedded = await this.embedChunks(page.fullText, apiKey);
+    try {
+      const result = mayProceed
+        ? await this.tagger.summarizeAndTag(
+            page.fullText,
+            page.title,
+            page.url,
+            apiKey,
+            page.contentType,
+            mayProceed,
+          )
+        : await this.tagger.summarizeAndTag(
+            page.fullText,
+            page.title,
+            page.url,
+            apiKey,
+            page.contentType,
+          );
+
+      if (mayProceed && !(await mayProceed())) {
+        return this.restoreKeywordReady(page);
+      }
+
+      const embedded = await this.embedChunks(page.fullText, apiKey, mayProceed);
 
       await this.chunkWriter.commitProcessedPage(
         pageId,
@@ -229,6 +279,10 @@ export class CaptureService {
 
       return { ...page, ...result, status: "ready", enrichmentError: undefined };
     } catch (error) {
+      if (error instanceof OpenAIRequestAuthorizationError) {
+        return this.restoreKeywordReady(page);
+      }
+
       const enrichmentError = error instanceof Error ? error.message : "Unknown error";
 
       await this.reader.updatePage(pageId, {
@@ -240,12 +294,24 @@ export class CaptureService {
     }
   }
 
-  private async embedChunks(fullText: string, apiKey: string): Promise<EmbeddedChunkInput[]> {
+  private async restoreKeywordReady(page: PageRecord): Promise<PageRecord> {
+    await this.reader.updatePage(page.id, {
+      status: "keyword_ready",
+      enrichmentError: undefined,
+    });
+    return { ...page, status: "keyword_ready", enrichmentError: undefined };
+  }
+
+  private async embedChunks(
+    fullText: string,
+    apiKey: string,
+    mayProceed?: MaySendOpenAIRequest,
+  ): Promise<EmbeddedChunkInput[]> {
     const tokenChunks = chunkTokens(fullText);
-    const vectors = await this.embedder.embedBatch(
-      tokenChunks.map((chunk) => chunk.text),
-      apiKey,
-    );
+    const texts = tokenChunks.map((chunk) => chunk.text);
+    const vectors = mayProceed
+      ? await this.embedder.embedBatch(texts, apiKey, mayProceed)
+      : await this.embedder.embedBatch(texts, apiKey);
     if (vectors.length !== tokenChunks.length) {
       throw new Error(
         `Embedding count mismatch: expected ${tokenChunks.length}, got ${vectors.length}`,

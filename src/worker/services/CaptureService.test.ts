@@ -19,6 +19,7 @@ import {
   type PageTagger,
   type PageWriter,
 } from "./CaptureService";
+import { OpenAIRequestAuthorizationError } from "../llm/OpenAIProvider";
 
 const extracted: ExtractedPage = {
   url: "https://kubernetes.io/docs/tasks/run-application/horizontal-pod-autoscale/",
@@ -149,6 +150,85 @@ describe("CaptureService", () => {
     expect(reader.updatePage).not.toHaveBeenCalled();
     expect(result.status).toBe("ready");
     expect(result.summary).toBe(taggingResult.summary);
+  });
+
+  it("restores keyword_ready without an enrichment error when authorization is revoked", async () => {
+    const reader = mockReader({ ...pendingPage, status: "keyword_ready" });
+    const tagger: PageTagger = { summarizeAndTag: vi.fn().mockResolvedValue(taggingResult) };
+    const embedder = mockEmbedder();
+
+    const result = await new CaptureService(
+      { commitCapturedPage: vi.fn() },
+      { extract: vi.fn() },
+      reader,
+      tagger,
+      mockChunkWriter(),
+      embedder,
+    ).processPage(pendingPage.id, "sk-test", async () => false);
+
+    expect(tagger.summarizeAndTag).not.toHaveBeenCalled();
+    expect(embedder.embedBatch).not.toHaveBeenCalled();
+    expect(reader.updatePage).toHaveBeenCalledWith(pendingPage.id, {
+      status: "keyword_ready",
+      enrichmentError: undefined,
+    });
+    expect(result).toMatchObject({ status: "keyword_ready", enrichmentError: undefined });
+  });
+
+  it("stops before embedding when authorization is revoked after tagging", async () => {
+    const reader = mockReader({ ...pendingPage, status: "keyword_ready" });
+    const tagger: PageTagger = { summarizeAndTag: vi.fn().mockResolvedValue(taggingResult) };
+    const embedder = mockEmbedder();
+    const maySend = vi.fn().mockResolvedValueOnce(true).mockResolvedValue(false);
+
+    const result = await new CaptureService(
+      { commitCapturedPage: vi.fn() },
+      { extract: vi.fn() },
+      reader,
+      tagger,
+      mockChunkWriter(),
+      embedder,
+    ).processPage(pendingPage.id, "sk-test", maySend);
+
+    expect(tagger.summarizeAndTag).toHaveBeenCalledOnce();
+    expect(embedder.embedBatch).not.toHaveBeenCalled();
+    expect(reader.updatePage).toHaveBeenCalledWith(pendingPage.id, {
+      status: "keyword_ready",
+      enrichmentError: undefined,
+    });
+    expect(result).toMatchObject({ status: "keyword_ready", enrichmentError: undefined });
+  });
+
+  it("treats provider-side authorization revocation as cancellation", async () => {
+    const reader = mockReader({ ...pendingPage, status: "keyword_ready" });
+    const tagger: PageTagger = {
+      summarizeAndTag: vi.fn(async (_text, _title, _url, _key, _contentType, maySend) => {
+        if (!maySend || !(await maySend()) || !(await maySend())) {
+          throw new OpenAIRequestAuthorizationError();
+        }
+        return taggingResult;
+      }),
+    };
+    const maySend = vi
+      .fn()
+      .mockResolvedValueOnce(true)
+      .mockResolvedValueOnce(true)
+      .mockResolvedValue(false);
+
+    const result = await new CaptureService(
+      { commitCapturedPage: vi.fn() },
+      { extract: vi.fn() },
+      reader,
+      tagger,
+      mockChunkWriter(),
+      mockEmbedder(),
+    ).processPage(pendingPage.id, "sk-test", maySend);
+
+    expect(reader.updatePage).toHaveBeenCalledWith(pendingPage.id, {
+      status: "keyword_ready",
+      enrichmentError: undefined,
+    });
+    expect(result).toMatchObject({ status: "keyword_ready", enrichmentError: undefined });
   });
 
   it("returns a page to keyword_ready when tagging throws, before embedding", async () => {
@@ -289,10 +369,10 @@ describe("CaptureService", () => {
     const failed = {
       ...pendingPage,
       status: "failed" as const,
-      enrichmentError: "local write failed",
+      localSaveError: "local write failed",
     };
     const keywordReady: PageRecord = { ...failed, status: "keyword_ready" };
-    delete keywordReady.enrichmentError;
+    delete keywordReady.localSaveError;
     const writer: PageWriter = {
       commitCapturedPage: vi.fn(),
       retryFailedPage: vi.fn().mockResolvedValue(keywordReady),

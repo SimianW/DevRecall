@@ -77,10 +77,15 @@ export class BulkTaskRunner implements BulkTaskRunnerPort {
         input.onProgress(this.progress(input, done, failed, pageId));
         try {
           await input.runPage(pageId);
+          done += 1;
         } catch {
+          if (this.activeToken !== token || this.cancelRequested) {
+            input.onProgress({ ...this.progress(input, done, failed), canceled: true });
+            return;
+          }
           failed += 1;
+          done += 1;
         }
-        done += 1;
         if (this.activeToken !== token || this.cancelRequested) {
           input.onProgress({ ...this.progress(input, done, failed), canceled: true });
           return;

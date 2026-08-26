@@ -2,7 +2,7 @@ import type { EffectiveMode, SearchMode, StoredMode } from "./modes";
 import type { ExtractedPage, PageHit, PageListItem, PageStatus } from "./types";
 
 export const APP_NAME = "DevRecall";
-export const APP_VERSION = "0.5.7.17";
+export const APP_VERSION = "0.5.7.19";
 
 export type PersistentStorageState = "unknown" | "granted" | "denied";
 
@@ -29,8 +29,10 @@ export type DevRecallRequest =
   | { type: "page.retry"; payload: { id: string } }
   | { type: "page.addAiFeatures"; payload: { pageId: string } }
   | { type: "library.reindex" }
-  | { type: "library.bulkEnrich"; payload: Record<string, never> }
-  | { type: "library.reindexSemantic"; payload: Record<string, never> }
+  | { type: "library.prepareBulkEnrich"; payload: Record<string, never> }
+  | { type: "library.bulkEnrich"; payload: { batchId: string } }
+  | { type: "library.prepareReindexSemantic"; payload: Record<string, never> }
+  | { type: "library.reindexSemantic"; payload: { batchId: string } }
   | { type: "library.cancelBulk"; payload: Record<string, never> }
   | { type: "data.export" }
   | { type: "data.deleteAll" }
@@ -104,6 +106,7 @@ export type DevRecallResponse =
             saved: true;
             status: PageStatus;
             savedAt: number;
+            localSaveError?: string;
             enrichmentError?: string;
           };
     }
@@ -118,7 +121,9 @@ export type DevRecallResponse =
   | { type: "page.retryStarted"; payload: { page: PageListItem } }
   | { type: "page.aiFeaturesStarted"; payload: { page: PageListItem } }
   | { type: "library.reindexStarted"; payload: { total: number } }
+  | { type: "library.bulkEnrichPrepared"; payload: { batchId: string; count: number } }
   | { type: "library.bulkEnrichStarted"; payload: { total: number } }
+  | { type: "library.reindexSemanticPrepared"; payload: { batchId: string; count: number } }
   | { type: "library.reindexSemanticStarted"; payload: { total: number } }
   | { type: "library.bulkCanceled" }
   | { type: "data.exported"; payload: { json: string } }

@@ -25,6 +25,7 @@ export type SearchInput = {
    * the embedder. Hybrid runs both retrieval arms when the key is still usable.
    */
   effectiveMode: EffectiveMode;
+  resolveEffectiveMode?: () => Promise<EffectiveMode>;
 };
 
 export type SearchOutcome = {
@@ -104,11 +105,16 @@ export class RetrievalService {
       return cached;
     }
 
-    const outcome = await this.computeSearch(trimmed, topK, input.effectiveMode);
+    const outcome = await this.computeSearch(
+      trimmed,
+      topK,
+      input.effectiveMode,
+      input.resolveEffectiveMode,
+    );
 
-    // A fallback describes a transient failure. Caching it would prevent the
-    // next search from observing a restored key or embedding service.
-    if (outcome.searchMode !== "keyword_fallback") {
+    // Cache only the mode this request was authorized to run. A fallback or a
+    // Hybrid request revoked to Local-only must be recomputed after recovery.
+    if (outcome.searchMode === input.effectiveMode) {
       this.queryCache.set(cacheKey, outcome);
       if (this.queryCache.size > MAX_QUERY_CACHE) {
         const oldest = this.queryCache.keys().next().value;
@@ -148,6 +154,7 @@ export class RetrievalService {
     trimmed: string,
     topK: number,
     effectiveMode: EffectiveMode,
+    resolveEffectiveMode?: () => Promise<EffectiveMode>,
   ): Promise<SearchOutcome> {
     const { chunks: allChunks, pages } = await this.loadCorpus();
 
@@ -174,28 +181,46 @@ export class RetrievalService {
     const vectorScore = new Map<string, number>();
     const vectorRanking: string[] = [];
     let degraded = false;
+    let searchMode: SearchMode = effectiveMode;
     if (effectiveMode === "hybrid") {
       try {
-        const apiKey = await this.apiKeyStore.getApiKey();
-        if (!apiKey) {
-          // Mode was resolved against a key that has since been revoked.
-          degraded = true;
+        const latestMode = resolveEffectiveMode ? await resolveEffectiveMode() : effectiveMode;
+        if (latestMode === "local") {
+          searchMode = "local";
         } else {
-          const queryVector = await this.embedder.embed(trimmed, apiKey);
-          for (const hit of cosineTopK(queryVector, allChunks, VECTOR_TOP_K)) {
-            if (hit.score < MIN_VECTOR_SCORE) break; // results are sorted desc, can break early
-            const id = allChunks[hit.index].id;
-            vectorRanking.push(id);
-            vectorScore.set(id, hit.score);
+          const apiKey = await this.apiKeyStore.getApiKey();
+          if (!apiKey) {
+            // Mode was resolved against a key that has since been revoked.
+            degraded = true;
+          } else {
+            const maySend = resolveEffectiveMode
+              ? async () => (await resolveEffectiveMode()) === "hybrid"
+              : undefined;
+            const queryVector = maySend
+              ? await this.embedder.embed(trimmed, apiKey, maySend)
+              : await this.embedder.embed(trimmed, apiKey);
+            for (const hit of cosineTopK(queryVector, allChunks, VECTOR_TOP_K)) {
+              if (hit.score < MIN_VECTOR_SCORE) break; // results are sorted desc, can break early
+              const id = allChunks[hit.index].id;
+              vectorRanking.push(id);
+              vectorScore.set(id, hit.score);
+            }
           }
         }
       } catch {
-        // Embedding failure degrades to keyword-only; the error is not surfaced.
-        degraded = true;
+        const latestMode = resolveEffectiveMode ? await resolveEffectiveMode() : effectiveMode;
+        if (latestMode === "local") {
+          searchMode = "local";
+        } else {
+          // Embedding failures degrade to the local keyword results.
+          degraded = true;
+        }
       }
     }
 
-    const searchMode: SearchMode = degraded ? "keyword_fallback" : effectiveMode;
+    if (degraded) {
+      searchMode = "keyword_fallback";
+    }
 
     const fused = reciprocalRankFusion(keywordRanking, vectorRanking);
 

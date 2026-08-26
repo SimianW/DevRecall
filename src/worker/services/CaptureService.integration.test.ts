@@ -490,8 +490,9 @@ describe("CaptureService integration — local-first capture flow", () => {
     expect(all).toHaveLength(1);
     expect(all[0]).toMatchObject({
       status: "failed",
-      enrichmentError: expect.stringContaining("quota"),
+      localSaveError: expect.stringContaining("quota"),
     });
+    expect(all[0]?.enrichmentError).toBeUndefined();
 
     // No keyword index was written, no enrichment attempted.
     expect(await h.chunkRepo.allChunks()).toHaveLength(0);
@@ -510,7 +511,7 @@ describe("CaptureService integration — local-first capture flow", () => {
       ready: await seedPage(h, "ready", "https://docs.example.com/ready"),
     };
     const failedSeed = await seedPage(h, "failed", fixturePage.url, {
-      enrichmentError: "previous crash",
+      localSaveError: "previous local failure",
     });
 
     // All four live statuses read as "saved" with their status echoed.
@@ -528,7 +529,14 @@ describe("CaptureService integration — local-first capture flow", () => {
       type: "page.statusForUrl",
       payload: { url: failedSeed.url },
     });
-    expect(failedStatus).toMatchObject({ type: "page.urlStatus", payload: { saved: false } });
+    expect(failedStatus).toMatchObject({
+      type: "page.urlStatus",
+      payload: {
+        saved: true,
+        status: "failed",
+        localSaveError: "previous local failure",
+      },
+    });
 
     // Saving the failed URL re-runs the full local pipeline on the same
     // record (urlHash dedup) instead of skipping it as "already saved".

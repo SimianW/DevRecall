@@ -19,8 +19,16 @@ import type { ModeStore } from "./settings/ModeStore";
 export type CapturePort = {
   save(tabId: number, saveMode?: "manual" | "auto"): Promise<PageRecord>;
   retryLocalPage(pageId: string): Promise<PageRecord>;
-  processPage(pageId: string, apiKey: string): Promise<PageRecord>;
-  reindexSemanticPage(pageId: string, apiKey: string): Promise<PageRecord>;
+  processPage(
+    pageId: string,
+    apiKey: string,
+    mayProceed?: () => Promise<boolean> | boolean,
+  ): Promise<PageRecord>;
+  reindexSemanticPage(
+    pageId: string,
+    apiKey: string,
+    mayProceed?: () => Promise<boolean> | boolean,
+  ): Promise<PageRecord>;
   recoverStaleEnriching(): Promise<number>;
 };
 
@@ -61,6 +69,40 @@ export type HandlerDeps = {
 const automaticPrivacyRevision = new WeakMap<HandlerDeps, number>();
 const bulkConsentRevision = new WeakMap<HandlerDeps, number>();
 const explicitPages = new WeakMap<HandlerDeps, Set<string>>();
+type PreparedBatchKind = "enrich" | "semantic";
+type PreparedBatch = { kind: PreparedBatchKind; pageIds: string[] };
+const preparedBatches = new WeakMap<HandlerDeps, Map<string, PreparedBatch>>();
+
+function prepareBatch(
+  deps: HandlerDeps,
+  kind: PreparedBatchKind,
+  pageIds: string[],
+): { batchId: string; count: number } {
+  const batches = preparedBatches.get(deps) ?? new Map<string, PreparedBatch>();
+  for (const [batchId, batch] of batches) {
+    if (batch.kind === kind) {
+      batches.delete(batchId);
+    }
+  }
+  const batchId = crypto.randomUUID();
+  batches.set(batchId, { kind, pageIds: [...pageIds] });
+  preparedBatches.set(deps, batches);
+  return { batchId, count: pageIds.length };
+}
+
+function takePreparedBatch(
+  deps: HandlerDeps,
+  kind: PreparedBatchKind,
+  batchId: string,
+): string[] | null {
+  const batches = preparedBatches.get(deps);
+  const batch = batches?.get(batchId);
+  if (!batch || batch.kind !== kind) {
+    return null;
+  }
+  batches?.delete(batchId);
+  return [...batch.pageIds];
+}
 
 function revisionFor(revisions: WeakMap<HandlerDeps, number>, deps: HandlerDeps): number {
   return revisions.get(deps) ?? 0;
@@ -116,7 +158,15 @@ export function processPageInBackground(deps: HandlerDeps, pageId: string): void
     ) {
       return;
     }
-    const processed = await deps.captureService.processPage(pageId, apiKey);
+    // Send-time mode check: if Local-only was enabled after the initial check,
+    // the callback will return false and no OpenAI request will be made.
+    const processed = await deps.captureService.processPage(pageId, apiKey, async () => {
+      const mode = await currentMode(deps);
+      return (
+        privacyRevision === revisionFor(automaticPrivacyRevision, deps) &&
+        mode.effectiveMode === "hybrid"
+      );
+    });
     broadcastPage(deps, processed);
   })().catch((error) => {
     console.error("[DevRecall] background processing error:", error);
@@ -176,10 +226,18 @@ function startBulkOperation(
         throw new Error("Bulk consent expired");
       }
 
+      // Explicit confirmation is valid in either search mode, but canceling the
+      // batch or removing the key revokes authorization before the next request.
+      const maySend = async () => {
+        const currentApiKey = await deps.apiKeyStore.getApiKey();
+        return (
+          consentRevision === revisionFor(bulkConsentRevision, deps) && usableApiKey(currentApiKey)
+        );
+      };
       const processed =
         kind === "enrich"
-          ? await deps.captureService.processPage(pageId, apiKey)
-          : await deps.captureService.reindexSemanticPage(pageId, apiKey);
+          ? await deps.captureService.processPage(pageId, apiKey, maySend)
+          : await deps.captureService.reindexSemanticPage(pageId, apiKey, maySend);
       broadcastPage(deps, processed);
 
       if (kind === "enrich" && processed.status !== "ready") {
@@ -305,7 +363,7 @@ export async function handleRequest(
     case "page.statusForUrl": {
       const { urlHash } = await normalizeUrl(request.payload.url);
       const page = await deps.pageRepo.getByUrlHash(urlHash);
-      if (!page || page.status === "failed") {
+      if (!page) {
         return { type: "page.urlStatus", payload: { saved: false } };
       }
       return {
@@ -314,17 +372,25 @@ export async function handleRequest(
           saved: true,
           status: page.status,
           savedAt: page.savedAt,
+          ...(page.localSaveError ? { localSaveError: page.localSaveError } : {}),
           ...(page.enrichmentError ? { enrichmentError: page.enrichmentError } : {}),
         },
       };
     }
 
     case "search.run": {
+      const privacyRevision = revisionFor(automaticPrivacyRevision, deps);
       const { effectiveMode } = await currentMode(deps);
       const outcome = await deps.retrievalService.search({
         query: request.payload.query,
         topK: request.payload.topK,
         effectiveMode,
+        resolveEffectiveMode: async () => {
+          if (privacyRevision !== revisionFor(automaticPrivacyRevision, deps)) {
+            return "local";
+          }
+          return (await currentMode(deps)).effectiveMode;
+        },
       });
       return { type: "search.results", payload: outcome };
     }
@@ -388,17 +454,35 @@ export async function handleRequest(
         : { type: "page.aiFeaturesStarted", payload: { page: enriching } };
     }
 
-    case "library.bulkEnrich": {
+    case "library.prepareBulkEnrich": {
       const apiKey = await deps.apiKeyStore.getApiKey();
       if (!usableApiKey(apiKey)) {
         return { type: "error", payload: { message: "No API key set" } };
       }
       const pageIds = await deps.pageRepo.pageIdsKeywordReady();
+      return {
+        type: "library.bulkEnrichPrepared",
+        payload: prepareBatch(deps, "enrich", pageIds),
+      };
+    }
+
+    case "library.bulkEnrich": {
+      const apiKey = await deps.apiKeyStore.getApiKey();
+      if (!usableApiKey(apiKey)) {
+        return { type: "error", payload: { message: "No API key set" } };
+      }
+      const pageIds = takePreparedBatch(deps, "enrich", request.payload.batchId);
+      if (!pageIds) {
+        return {
+          type: "error",
+          payload: { message: "Bulk confirmation expired. Review the current page count again." },
+        };
+      }
       startBulkOperation(deps, "enrich", pageIds);
       return { type: "library.bulkEnrichStarted", payload: { total: pageIds.length } };
     }
 
-    case "library.reindexSemantic": {
+    case "library.prepareReindexSemantic": {
       const apiKey = await deps.apiKeyStore.getApiKey();
       if (!usableApiKey(apiKey)) {
         return { type: "error", payload: { message: "No API key set" } };
@@ -407,6 +491,24 @@ export async function handleRequest(
         deps.semanticIndex.embeddingModel,
         deps.semanticIndex.indexVersion,
       );
+      return {
+        type: "library.reindexSemanticPrepared",
+        payload: prepareBatch(deps, "semantic", pageIds),
+      };
+    }
+
+    case "library.reindexSemantic": {
+      const apiKey = await deps.apiKeyStore.getApiKey();
+      if (!usableApiKey(apiKey)) {
+        return { type: "error", payload: { message: "No API key set" } };
+      }
+      const pageIds = takePreparedBatch(deps, "semantic", request.payload.batchId);
+      if (!pageIds) {
+        return {
+          type: "error",
+          payload: { message: "Bulk confirmation expired. Review the current page count again." },
+        };
+      }
       startBulkOperation(deps, "semantic", pageIds);
       return { type: "library.reindexSemanticStarted", payload: { total: pageIds.length } };
     }

@@ -151,8 +151,8 @@ export function PageCard({
             </DetailGroup>
           )}
 
-          {page.status === "failed" && page.enrichmentError && (
-            <p className="text-xs text-red-700 dark:text-red-300">{page.enrichmentError}</p>
+          {page.status === "failed" && page.localSaveError && (
+            <p className="text-xs text-red-700 dark:text-red-300">{page.localSaveError}</p>
           )}
 
           {page.topics.length > 0 && (

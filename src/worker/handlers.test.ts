@@ -55,6 +55,25 @@ const searchHit: PageHit = {
   matchReason: "keyword",
 };
 
+async function prepareBulkEnrich(deps: HandlerDeps): Promise<string> {
+  const response = await handleRequest({ type: "library.prepareBulkEnrich", payload: {} }, deps);
+  if (response.type !== "library.bulkEnrichPrepared") {
+    throw new Error(`Could not prepare bulk enrichment: ${response.type}`);
+  }
+  return response.payload.batchId;
+}
+
+async function prepareSemanticReindex(deps: HandlerDeps): Promise<string> {
+  const response = await handleRequest(
+    { type: "library.prepareReindexSemantic", payload: {} },
+    deps,
+  );
+  if (response.type !== "library.reindexSemanticPrepared") {
+    throw new Error(`Could not prepare semantic re-index: ${response.type}`);
+  }
+  return response.payload.batchId;
+}
+
 describe("worker request handler", () => {
   it("reports stored and effective mode without overwriting a missing-key preference", async () => {
     const deps = makeDeps({ apiKey: null, storedMode: "hybrid" });
@@ -88,14 +107,19 @@ describe("worker request handler", () => {
     const deps = makeDeps({ apiKey: "sk-test", storedMode: "local" });
     deps.pageRepo.pageIdsKeywordReady = vi.fn().mockResolvedValue(["a", "b"]);
 
-    await handleRequest({ type: "library.bulkEnrich", payload: {} }, deps);
+    const firstBatchId = await prepareBulkEnrich(deps);
+    await handleRequest({ type: "library.bulkEnrich", payload: { batchId: firstBatchId } }, deps);
     const firstRun = vi.mocked(deps.bulkRunner.begin).mock.calls[0][0];
     await expect(firstRun.shouldContinue()).resolves.toBe(true);
 
     await handleRequest({ type: "settings.setMode", payload: { mode: "local" } }, deps);
     await expect(firstRun.shouldContinue()).resolves.toBe(false);
 
-    await handleRequest({ type: "library.bulkEnrich", payload: {} }, deps);
+    const reconfirmedBatchId = await prepareBulkEnrich(deps);
+    await handleRequest(
+      { type: "library.bulkEnrich", payload: { batchId: reconfirmedBatchId } },
+      deps,
+    );
     const reconfirmedRun = vi.mocked(deps.bulkRunner.begin).mock.calls[1][0];
     await expect(reconfirmedRun.shouldContinue()).resolves.toBe(true);
   });
@@ -114,7 +138,11 @@ describe("worker request handler", () => {
     const deps = makeDeps({ apiKey: "sk-test", storedMode: "local" });
     deps.pageRepo.pageIdsKeywordReady = vi.fn().mockResolvedValue(["a"]);
 
-    await handleRequest({ type: "library.bulkEnrich", payload: {} }, deps);
+    const beforeRemovalBatchId = await prepareBulkEnrich(deps);
+    await handleRequest(
+      { type: "library.bulkEnrich", payload: { batchId: beforeRemovalBatchId } },
+      deps,
+    );
     const beforeKeyRemoval = vi.mocked(deps.bulkRunner.begin).mock.calls[0][0];
     await expect(beforeKeyRemoval.shouldContinue()).resolves.toBe(true);
 
@@ -122,7 +150,11 @@ describe("worker request handler", () => {
     await expect(beforeKeyRemoval.shouldContinue()).resolves.toBe(false);
 
     vi.mocked(deps.apiKeyStore.getApiKey).mockResolvedValue("sk-restored");
-    await handleRequest({ type: "library.bulkEnrich", payload: {} }, deps);
+    const beforeCancelBatchId = await prepareBulkEnrich(deps);
+    await handleRequest(
+      { type: "library.bulkEnrich", payload: { batchId: beforeCancelBatchId } },
+      deps,
+    );
     const beforeCancel = vi.mocked(deps.bulkRunner.begin).mock.calls[1][0];
     await expect(beforeCancel.shouldContinue()).resolves.toBe(true);
 
@@ -212,7 +244,11 @@ describe("worker request handler", () => {
     await handleRequest({ type: "page.save", payload: { tabId: 7 } }, deps);
 
     await vi.waitFor(() =>
-      expect(deps.captureService.processPage).toHaveBeenCalledWith(keywordReadyPage.id, "sk-test"),
+      expect(deps.captureService.processPage).toHaveBeenCalledWith(
+        keywordReadyPage.id,
+        "sk-test",
+        expect.any(Function),
+      ),
     );
   });
 
@@ -233,19 +269,68 @@ describe("worker request handler", () => {
       query: "indexed db",
       topK: 5,
       effectiveMode: "hybrid",
+      resolveEffectiveMode: expect.any(Function),
     });
   });
 
-  it("treats a failed local capture as unsaved", async () => {
+  it("revokes an active search before a Local-only mode write finishes", async () => {
+    const deps = makeDeps({ apiKey: "sk-test", storedMode: "hybrid" });
+    let finishSearch: (() => void) | undefined;
+    deps.retrievalService.search = vi.fn().mockImplementation(
+      () =>
+        new Promise((resolve) => {
+          finishSearch = () => resolve({ results: [], searchMode: "local" });
+        }),
+    );
+
+    const searchRequest = handleRequest(
+      { type: "search.run", payload: { query: "indexed db" } },
+      deps,
+    );
+    await vi.waitFor(() => expect(deps.retrievalService.search).toHaveBeenCalledOnce());
+
+    let finishModeWrite: (() => void) | undefined;
+    vi.mocked(deps.modeStore.setStoredMode).mockImplementationOnce(
+      () =>
+        new Promise((resolve) => {
+          finishModeWrite = resolve;
+        }),
+    );
+    const modeRequest = handleRequest(
+      { type: "settings.setMode", payload: { mode: "local" } },
+      deps,
+    );
+
+    const input = vi.mocked(deps.retrievalService.search).mock.calls[0][0];
+    if (!input.resolveEffectiveMode) {
+      throw new Error("expected a send-time mode resolver");
+    }
+    await expect(input.resolveEffectiveMode()).resolves.toBe("local");
+
+    finishModeWrite?.();
+    finishSearch?.();
+    await Promise.all([modeRequest, searchRequest]);
+  });
+
+  it("reports a persisted local capture failure for the current URL", async () => {
     const deps = makeDeps();
     deps.pageRepo.getByUrlHash = vi.fn().mockResolvedValue({
       ...keywordReadyPage,
       status: "failed",
+      localSaveError: "IndexedDB quota exceeded",
     });
 
     await expect(
       handleRequest({ type: "page.statusForUrl", payload: { url: keywordReadyPage.url } }, deps),
-    ).resolves.toEqual({ type: "page.urlStatus", payload: { saved: false } });
+    ).resolves.toEqual({
+      type: "page.urlStatus",
+      payload: {
+        saved: true,
+        status: "failed",
+        savedAt: keywordReadyPage.savedAt,
+        localSaveError: "IndexedDB quota exceeded",
+      },
+    });
   });
 
   it("allows explicit per-page enrichment in Local-only", async () => {
@@ -294,7 +379,7 @@ describe("worker request handler", () => {
     deps.pageRepo.getById = vi.fn().mockResolvedValue({
       ...keywordReadyPage,
       status: "failed",
-      enrichmentError: "local write failed",
+      localSaveError: "local write failed",
     });
 
     await expect(
@@ -313,13 +398,17 @@ describe("worker request handler", () => {
     deps.pageRepo.getById = vi.fn().mockResolvedValue({
       ...keywordReadyPage,
       status: "failed",
-      enrichmentError: "local write failed",
+      localSaveError: "local write failed",
     });
 
     await handleRequest({ type: "page.retry", payload: { id: keywordReadyPage.id } }, deps);
 
     await vi.waitFor(() =>
-      expect(deps.captureService.processPage).toHaveBeenCalledWith(keywordReadyPage.id, "sk-test"),
+      expect(deps.captureService.processPage).toHaveBeenCalledWith(
+        keywordReadyPage.id,
+        "sk-test",
+        expect.any(Function),
+      ),
     );
   });
 
@@ -352,10 +441,11 @@ describe("worker request handler", () => {
   it("starts confirmed bulk enrichment with exactly the eligible pages", async () => {
     const deps = makeDeps({ apiKey: "sk-test", storedMode: "local" });
     deps.pageRepo.pageIdsKeywordReady = vi.fn().mockResolvedValue(["a", "b"]);
+    const batchId = await prepareBulkEnrich(deps);
 
-    await expect(handleRequest({ type: "library.bulkEnrich", payload: {} }, deps)).resolves.toEqual(
-      { type: "library.bulkEnrichStarted", payload: { total: 2 } },
-    );
+    await expect(
+      handleRequest({ type: "library.bulkEnrich", payload: { batchId } }, deps),
+    ).resolves.toEqual({ type: "library.bulkEnrichStarted", payload: { total: 2 } });
 
     const input = vi.mocked(deps.bulkRunner.begin).mock.calls[0][0];
     expect(input.kind).toBe("enrich");
@@ -363,25 +453,73 @@ describe("worker request handler", () => {
     expect(await input.shouldContinue()).toBe(true);
   });
 
+  it("starts bulk enrichment from the exact worker snapshot shown for confirmation", async () => {
+    const deps = makeDeps({ apiKey: "sk-test", storedMode: "local" });
+    deps.pageRepo.pageIdsKeywordReady = vi
+      .fn()
+      .mockResolvedValueOnce(["a", "b"])
+      .mockResolvedValueOnce(["a", "b", "new-after-confirmation"]);
+
+    const prepared = await handleRequest({ type: "library.prepareBulkEnrich", payload: {} }, deps);
+    expect(prepared).toMatchObject({
+      type: "library.bulkEnrichPrepared",
+      payload: { count: 2, batchId: expect.any(String) },
+    });
+    if (prepared.type !== "library.bulkEnrichPrepared") {
+      throw new Error("Expected a prepared bulk snapshot");
+    }
+
+    await expect(
+      handleRequest(
+        { type: "library.bulkEnrich", payload: { batchId: prepared.payload.batchId } },
+        deps,
+      ),
+    ).resolves.toEqual({ type: "library.bulkEnrichStarted", payload: { total: 2 } });
+
+    expect(vi.mocked(deps.bulkRunner.begin).mock.calls[0][0].pageIds).toEqual(["a", "b"]);
+    expect(deps.pageRepo.pageIdsKeywordReady).toHaveBeenCalledOnce();
+  });
+
   it("uses the key checked by the per-page consent gate", async () => {
     const deps = makeDeps({ apiKey: "sk-current", storedMode: "local" });
     deps.pageRepo.pageIdsKeywordReady = vi.fn().mockResolvedValue(["a"]);
+    const batchId = await prepareBulkEnrich(deps);
 
-    await handleRequest({ type: "library.bulkEnrich", payload: {} }, deps);
+    await handleRequest({ type: "library.bulkEnrich", payload: { batchId } }, deps);
     const input = vi.mocked(deps.bulkRunner.begin).mock.calls[0][0];
 
     await expect(input.shouldContinue()).resolves.toBe(true);
     await input.runPage("a");
 
-    expect(deps.captureService.processPage).toHaveBeenCalledWith("a", "sk-current");
+    expect(deps.captureService.processPage).toHaveBeenCalledWith(
+      "a",
+      "sk-current",
+      expect.any(Function),
+    );
+  });
+
+  it("keeps a confirmed bulk page authorized while Local-only remains selected", async () => {
+    const deps = makeDeps({ apiKey: "sk-current", storedMode: "local" });
+    deps.pageRepo.pageIdsKeywordReady = vi.fn().mockResolvedValue(["a"]);
+    const batchId = await prepareBulkEnrich(deps);
+
+    await handleRequest({ type: "library.bulkEnrich", payload: { batchId } }, deps);
+    const input = vi.mocked(deps.bulkRunner.begin).mock.calls[0][0];
+
+    await expect(input.shouldContinue()).resolves.toBe(true);
+    await input.runPage("a");
+    const maySend = vi.mocked(deps.captureService.processPage).mock.calls[0][2];
+
+    await expect(maySend?.()).resolves.toBe(true);
   });
 
   it("starts semantic re-index separately with version-aware candidates", async () => {
     const deps = makeDeps({ apiKey: "sk-test" });
     deps.pageRepo.pageIdsNeedingSemanticIndex = vi.fn().mockResolvedValue(["ready-1"]);
+    const batchId = await prepareSemanticReindex(deps);
 
     await expect(
-      handleRequest({ type: "library.reindexSemantic", payload: {} }, deps),
+      handleRequest({ type: "library.reindexSemantic", payload: { batchId } }, deps),
     ).resolves.toEqual({ type: "library.reindexSemanticStarted", payload: { total: 1 } });
     expect(deps.pageRepo.pageIdsNeedingSemanticIndex).toHaveBeenCalledWith("model-v1", 1);
     expect(vi.mocked(deps.bulkRunner.begin).mock.calls[0][0].kind).toBe("semantic");
@@ -390,14 +528,19 @@ describe("worker request handler", () => {
   it("semantic re-index calls only the embedding repair path", async () => {
     const deps = makeDeps({ apiKey: "sk-test", storedMode: "local" });
     deps.pageRepo.pageIdsNeedingSemanticIndex = vi.fn().mockResolvedValue(["ready-1"]);
+    const batchId = await prepareSemanticReindex(deps);
 
-    await handleRequest({ type: "library.reindexSemantic", payload: {} }, deps);
+    await handleRequest({ type: "library.reindexSemantic", payload: { batchId } }, deps);
     const input = vi.mocked(deps.bulkRunner.begin).mock.calls[0][0];
 
     await expect(input.shouldContinue()).resolves.toBe(true);
     await input.runPage("ready-1");
 
-    expect(deps.captureService.reindexSemanticPage).toHaveBeenCalledWith("ready-1", "sk-test");
+    expect(deps.captureService.reindexSemanticPage).toHaveBeenCalledWith(
+      "ready-1",
+      "sk-test",
+      expect.any(Function),
+    );
     expect(deps.captureService.processPage).not.toHaveBeenCalled();
   });
 

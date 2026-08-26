@@ -86,6 +86,30 @@ describe("BulkTaskRunner", () => {
     expect(runPage).not.toHaveBeenCalled();
   });
 
+  it("does not count a page as failed when cancellation revokes it before sending", async () => {
+    const runner = new BulkTaskRunner();
+    const progress: BulkTaskProgress[] = [];
+
+    runner.begin({
+      kind: "enrich",
+      pageIds: ["a", "b"],
+      shouldContinue: async () => true,
+      runPage: async () => {
+        runner.cancel();
+        throw new Error("OpenAI request authorization was revoked");
+      },
+      onProgress: (value) => progress.push(value),
+    });
+
+    await vi.waitFor(() => expect(runner.isRunning()).toBe(false));
+    expect(progress.at(-1)).toMatchObject({
+      done: 0,
+      failed: 0,
+      remaining: 2,
+      canceled: true,
+    });
+  });
+
   it("rechecks permission immediately before each queued page", async () => {
     const runner = new BulkTaskRunner();
     const runPage = vi.fn().mockResolvedValue(undefined);

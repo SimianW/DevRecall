@@ -3,6 +3,9 @@ dist/
 coverage/
 .DS_Store
 *.log
+.env
+.env.*
+!.env.example
 .worktrees/
 .superpowers/
 Todo.md

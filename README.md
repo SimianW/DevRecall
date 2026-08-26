@@ -39,7 +39,7 @@ pnpm build
 
 Options has two stored preferences:
 
-- **Local-only** uses BM25 and never contacts OpenAI automatically, even when a key is saved.
+- **Local-only** uses BM25 and never contacts OpenAI automatically, even when a key is saved. Pages stay in this browser. DevRecall uses keyword search and does not automatically contact OpenAI. Content is sent to OpenAI only when you explicitly choose Add AI features for one or more saved pages.
 - **Hybrid** combines BM25 and vector similarity through RRF when a usable key is available.
 
 The stored preference and effective mode are separate. If Hybrid is stored but no usable key exists, the effective mode becomes Local-only without overwriting the Hybrid preference. Adding a key restores Hybrid on the next operation. If semantic query embedding fails during a Hybrid search, that search returns BM25 results as a keyword fallback.
@@ -67,6 +67,8 @@ Repeated saves deduplicate `pending`, `keyword_ready`, `enriching`, and `ready` 
 A `keyword_ready` page has an **Add AI features** action. With a saved key, this explicitly sends that page's text to OpenAI for a summary, topics, technologies, content type refinement, and embeddings. This action is available in Local-only mode because the click is explicit consent. A failed enrichment can be retried from the same card.
 
 Options can apply the same action to every eligible local page. DevRecall shows a confirmation first, then processes pages sequentially. The progress panel reports completed, failed, and remaining pages. You can cancel between pages. Removing the key, switching to Local-only, worker shutdown, or pressing **Cancel** prevents queued paid work from continuing; the worker never replays the queue automatically.
+
+**Active processing behavior:** Turning on Local-only lets the request already sent finish, then stops all queued and automatic OpenAI requests. Unprocessed pages remain `keyword_ready`.
 
 ### Auto-save
 

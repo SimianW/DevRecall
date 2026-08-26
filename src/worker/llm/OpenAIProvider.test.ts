@@ -138,6 +138,19 @@ describe("OpenAIProvider", () => {
     expect(fetch).toHaveBeenCalledTimes(2);
   });
 
+  it("does not retry after request authorization is revoked", async () => {
+    globalThis.fetch = vi.fn().mockResolvedValue({ ok: false, status: 429 });
+    const maySend = vi.fn().mockResolvedValueOnce(true).mockResolvedValue(false);
+    const provider = new OpenAIProvider([0]);
+
+    await expect(
+      provider.summarizeAndTag("text", "title", "url", "sk-test", ContentType.Page, maySend),
+    ).rejects.toThrow("OpenAI request authorization was revoked");
+
+    expect(fetch).toHaveBeenCalledOnce();
+    expect(maySend).toHaveBeenCalledTimes(2);
+  });
+
   it("uses the local seed when the model returns an invalid content type", async () => {
     globalThis.fetch = vi.fn().mockResolvedValue({
       ok: true,
@@ -309,7 +322,6 @@ describe("testOpenAIConnection", () => {
     expect(JSON.parse(options?.body as string)).toMatchObject({
       model: "gpt-5.6-luna",
       reasoning_effort: "none",
-      max_completion_tokens: 1,
     });
   });
 

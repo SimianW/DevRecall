@@ -6,6 +6,11 @@ import { PageRepo } from "./PageRepo";
 
 import { deriveExcerpt } from "../../lib/excerpt";
 import { ContentType, Platform } from "../../shared/enums";
+import type { PageCaptureInput } from "../../shared/types";
+
+function saveFixture(repo: PageRepo, input: PageCaptureInput) {
+  return repo.commitCapturedPage(input, [input.fullText]);
+}
 
 describe("PageRepo", () => {
   let database: DevRecallDatabase;
@@ -16,64 +21,6 @@ describe("PageRepo", () => {
     repo = new PageRepo(database);
     await database.delete();
     await database.open();
-  });
-
-  it("stores a manually captured page with M2 defaults", async () => {
-    const page = await repo.upsertCapturedPage({
-      url: "https://kubernetes.io/docs/tasks/run-application/horizontal-pod-autoscale/?utm_source=demo#walkthrough",
-      title: "Horizontal Pod Autoscaling",
-      fullText: "The HorizontalPodAutoscaler automatically updates workload resources.",
-      readingTimeMs: 42_000,
-      saveMode: "manual",
-    });
-
-    expect(page).toMatchObject({
-      url: "https://kubernetes.io/docs/tasks/run-application/horizontal-pod-autoscale/",
-      title: "Horizontal Pod Autoscaling",
-      domain: "kubernetes.io",
-      platform: Platform.Web,
-      contentType: ContentType.Documentation,
-      summary: "",
-      topics: [],
-      technologies: [],
-      intent: "reference",
-      fullText: "The HorizontalPodAutoscaler automatically updates workload resources.",
-      readingTimeMs: 42_000,
-      saveMode: "manual",
-      status: "pending",
-      schemaVersion: 1,
-    });
-    expect(page.id).toMatch(/^[0-9A-HJKMNP-TV-Z]{26}$/);
-    expect(page.urlHash).toMatch(/^[a-f0-9]{64}$/);
-    expect(page.savedAt).toBeGreaterThan(0);
-    expect(page.visitedAt).toBeGreaterThanOrEqual(page.savedAt);
-  });
-
-  it("updates an existing URL in place instead of creating duplicates", async () => {
-    const first = await repo.upsertCapturedPage({
-      url: "https://react.dev/reference/react/useMemo?utm_campaign=first",
-      title: "useMemo old title",
-      fullText: "Old content",
-      readingTimeMs: 1000,
-      saveMode: "manual",
-    });
-
-    const second = await repo.upsertCapturedPage({
-      url: "https://react.dev/reference/react/useMemo",
-      title: "useMemo",
-      fullText: "New content",
-      readingTimeMs: 2000,
-      saveMode: "manual",
-    });
-
-    const pages = await repo.listPages({ limit: 10 });
-
-    expect(second.id).toBe(first.id);
-    expect(second.title).toBe("useMemo");
-    expect(second.fullText).toBe("New content");
-    expect(second.savedAt).toBe(first.savedAt);
-    expect(second.visitedAt).toBeGreaterThanOrEqual(first.visitedAt);
-    expect(pages).toHaveLength(1);
   });
 
   it("commits a captured page and its keyword chunks before returning keyword_ready", async () => {
@@ -127,8 +74,9 @@ describe("PageRepo", () => {
     const [failed] = await database.pages.toArray();
     expect(failed).toMatchObject({
       status: "failed",
-      enrichmentError: "IndexedDB quota exceeded",
+      localSaveError: "IndexedDB quota exceeded",
     });
+    expect(failed.enrichmentError).toBeUndefined();
   });
 
   it("never marks a page keyword_ready when chunking produced no searchable chunks", async () => {
@@ -176,7 +124,7 @@ describe("PageRepo", () => {
 
     await repo.updatePage(original.id, {
       status: "failed",
-      enrichmentError: "previous failure",
+      localSaveError: "previous failure",
     });
     const retried = await repo.commitCapturedPage(
       { ...input, title: "Retried", fullText: "fresh body" },
@@ -188,7 +136,7 @@ describe("PageRepo", () => {
       title: "Retried",
       status: "keyword_ready",
     });
-    expect(retried.enrichmentError).toBeUndefined();
+    expect(retried.localSaveError).toBeUndefined();
     expect((await new ChunkRepo(database).allChunks()).map((chunk) => chunk.text)).toEqual([
       "fresh body",
     ]);
@@ -208,13 +156,13 @@ describe("PageRepo", () => {
     );
     await repo.updatePage(original.id, {
       status: "failed",
-      enrichmentError: "local write failed",
+      localSaveError: "local write failed",
     });
 
     const retried = await repo.retryFailedPage(original.id, ["rebuilt one", "rebuilt two"]);
 
     expect(retried).toMatchObject({ id: original.id, status: "keyword_ready" });
-    expect(retried.enrichmentError).toBeUndefined();
+    expect(retried.localSaveError).toBeUndefined();
     const chunks = (await new ChunkRepo(database).allChunks()).sort(
       (left, right) => left.ordinal - right.ordinal,
     );
@@ -296,7 +244,7 @@ describe("PageRepo", () => {
   });
 
   it("lists pages newest first without fullText", async () => {
-    const older = await repo.upsertCapturedPage({
+    const older = await saveFixture(repo, {
       url: "https://developer.mozilla.org/en-US/docs/Web/API/IndexedDB_API",
       title: "IndexedDB API",
       fullText: "IndexedDB stores structured data.",
@@ -305,7 +253,7 @@ describe("PageRepo", () => {
     });
     await repo.updatePage(older.id, { savedAt: 1 });
 
-    const newer = await repo.upsertCapturedPage({
+    const newer = await saveFixture(repo, {
       url: "https://stackoverflow.com/questions/1/example",
       title: "Example Stack Overflow answer",
       fullText: "A useful debugging note.",
@@ -324,7 +272,7 @@ describe("PageRepo", () => {
   });
 
   it("retrieves a page by id", async () => {
-    const page = await repo.upsertCapturedPage({
+    const page = await saveFixture(repo, {
       url: "https://react.dev/reference/react/useState",
       title: "useState",
       fullText: "Returns a stateful value.",
@@ -344,7 +292,7 @@ describe("PageRepo", () => {
   });
 
   it("updates a page with partial data", async () => {
-    const page = await repo.upsertCapturedPage({
+    const page = await saveFixture(repo, {
       url: "https://react.dev/reference/react/useEffect",
       title: "useEffect",
       fullText: "Lets you synchronize a component.",
@@ -376,7 +324,7 @@ describe("PageRepo", () => {
   });
 
   it("looks up a page by url hash", async () => {
-    const page = await repo.upsertCapturedPage({
+    const page = await saveFixture(repo, {
       url: "https://github.com/alvinunreal/oh-my-opencode-slim",
       title: "oh-my-opencode-slim",
       fullText: "A slim variant.",
@@ -396,7 +344,7 @@ describe("PageRepo", () => {
   it("deletes a page and its chunks in one transaction", async () => {
     const chunkRepo = new ChunkRepo(database);
 
-    const saved = await repo.upsertCapturedPage({
+    const saved = await saveFixture(repo, {
       url: "https://example.test/delete-me",
       title: "Delete me",
       fullText: "body",
@@ -414,14 +362,14 @@ describe("PageRepo", () => {
   it("deleteAll clears all pages and chunks atomically", async () => {
     const chunkRepo = new ChunkRepo(database);
 
-    const p1 = await repo.upsertCapturedPage({
+    const p1 = await saveFixture(repo, {
       url: "https://example.test/page-one",
       title: "Page One",
       fullText: "body one",
       readingTimeMs: 0,
       saveMode: "manual",
     });
-    const p2 = await repo.upsertCapturedPage({
+    const p2 = await saveFixture(repo, {
       url: "https://example.test/page-two",
       title: "Page Two",
       fullText: "body two",
@@ -442,7 +390,7 @@ describe("PageRepo", () => {
 
   it("exportAll returns all pages ordered by savedAt ascending", async () => {
     // Insert pages with explicit savedAt ordering by controlling time
-    const p1 = await repo.upsertCapturedPage({
+    const p1 = await saveFixture(repo, {
       url: "https://example.test/alpha",
       title: "Alpha",
       fullText: "first",
@@ -452,7 +400,7 @@ describe("PageRepo", () => {
     // Force distinct savedAt values by updating manually
     await repo.updatePage(p1.id, { savedAt: 1000 });
 
-    const p2 = await repo.upsertCapturedPage({
+    const p2 = await saveFixture(repo, {
       url: "https://example.test/beta",
       title: "Beta",
       fullText: "second",
@@ -461,7 +409,7 @@ describe("PageRepo", () => {
     });
     await repo.updatePage(p2.id, { savedAt: 3000 });
 
-    const p3 = await repo.upsertCapturedPage({
+    const p3 = await saveFixture(repo, {
       url: "https://example.test/gamma",
       title: "Gamma",
       fullText: "third",
@@ -480,7 +428,7 @@ describe("PageRepo", () => {
   it("lists ready pages missing embeddings and counts them in stats", async () => {
     const chunkRepo = new ChunkRepo(database);
 
-    const m4 = await repo.upsertCapturedPage({
+    const m4 = await saveFixture(repo, {
       url: "https://example.test/m4",
       title: "M4 page",
       fullText: "body",
@@ -490,7 +438,7 @@ describe("PageRepo", () => {
     await repo.updatePage(m4.id, { status: "ready" });
     await chunkRepo.replaceChunksForPage(m4.id, ["word chunk, no vector"]);
 
-    const m5 = await repo.upsertCapturedPage({
+    const m5 = await saveFixture(repo, {
       url: "https://example.test/m5",
       title: "M5 page",
       fullText: "body",
@@ -642,7 +590,7 @@ describe("PageRepo", () => {
 
     it("listPages derives excerpt from fullText without persisting it", async () => {
       const fullText = `${"useMemo caches expensive results ".repeat(20)}tail`;
-      const saved = await repo.upsertCapturedPage({
+      const saved = await saveFixture(repo, {
         url: "https://react.dev/reference/react/useMemo",
         title: "useMemo",
         fullText,

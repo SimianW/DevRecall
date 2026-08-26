@@ -176,6 +176,20 @@ describe("RetrievalService search modes", () => {
     expect(outcome.results[0].matchReason).toBe("keyword");
   });
 
+  it("uses Local-only when the mode changes before query embedding is sent", async () => {
+    const embedder = fakeEmbedder({ autoscaler: [1, 0] });
+
+    const outcome = await makeService(vectorChunks, embedder).search({
+      query: "autoscaler",
+      effectiveMode: "hybrid",
+      resolveEffectiveMode: vi.fn().mockResolvedValue("local"),
+    });
+
+    expect(outcome.searchMode).toBe("local");
+    expect(embedder.embed).not.toHaveBeenCalled();
+    expect(outcome.results[0].matchReason).toBe("keyword");
+  });
+
   it.each(["local", "hybrid"] as const)(
     "returns an empty result for a blank query and echoes the requested mode (%s)",
     async (effectiveMode) => {
@@ -326,6 +340,28 @@ describe("RetrievalService caching", () => {
     expect(second.searchMode).toBe("hybrid");
     expect(second).not.toBe(first);
     expect(embedder.embed).toHaveBeenCalledTimes(2);
+  });
+
+  it("does not cache a privacy-revoked result as Hybrid", async () => {
+    const embedder = fakeEmbedder({ autoscaler: [1, 0] });
+    const service = makeService(vectorChunks, embedder);
+    const resolveEffectiveMode = vi.fn().mockResolvedValueOnce("local").mockResolvedValue("hybrid");
+
+    const revoked = await service.search({
+      query: "autoscaler",
+      effectiveMode: "hybrid",
+      resolveEffectiveMode,
+    });
+    const restored = await service.search({
+      query: "autoscaler",
+      effectiveMode: "hybrid",
+      resolveEffectiveMode,
+    });
+
+    expect(revoked.searchMode).toBe("local");
+    expect(restored.searchMode).toBe("hybrid");
+    expect(restored).not.toBe(revoked);
+    expect(embedder.embed).toHaveBeenCalledOnce();
   });
 
   it("reads the latest key before every uncached hybrid attempt", async () => {
