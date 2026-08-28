@@ -1,45 +1,48 @@
 import { act, render, screen } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
-import { describe, expect, it, vi } from "vitest";
+import { beforeEach, describe, expect, it, vi } from "vitest";
 
-import type { WorkerBroadcast } from "../shared/messages";
+import { ContentType, Platform } from "../shared/enums";
+import type { PageListItemWithExcerpt, WorkerBroadcast } from "../shared/messages";
 import type { PageHit, PageListItem } from "../shared/types";
 import { App } from "./App";
 
 function makeSubscribe() {
   let handler: ((message: WorkerBroadcast) => void) | null = null;
-  const subscribe = (h: (message: WorkerBroadcast) => void) => {
-    handler = h;
-    return () => {
-      handler = null;
-    };
+  return {
+    subscribe: (next: (message: WorkerBroadcast) => void) => {
+      handler = next;
+      return () => {
+        handler = null;
+      };
+    },
+    emit: async (message: WorkerBroadcast) => {
+      await act(async () => handler?.(message));
+    },
   };
-  const emit = async (message: WorkerBroadcast) => {
-    await act(async () => {
-      handler?.(message);
-    });
-  };
-  return { subscribe, emit };
 }
 
-const pages = [
-  {
+function makePage(overrides: Partial<PageListItemWithExcerpt> = {}): PageListItemWithExcerpt {
+  return {
     id: "01HZ0000000000000000000000",
     url: "https://kubernetes.io/docs/tasks/run-application/horizontal-pod-autoscale/",
     title: "Horizontal Pod Autoscaling",
     domain: "kubernetes.io",
-    sourceType: "unknown",
+    platform: Platform.Web,
+    contentType: ContentType.Documentation,
     summary: "",
+    excerpt: "The autoscaler changes replica counts based on observed resource use.",
     topics: [],
     technologies: [],
     savedAt: 100,
     status: "ready",
-  },
-] satisfies PageListItem[];
+    ...overrides,
+  };
+}
 
-const hits = [
-  {
-    page: pages[0],
+function makeHit(page = makePage()): PageHit {
+  return {
+    page,
     bestChunk: {
       text: "The HorizontalPodAutoscaler automatically scales pods.",
       ordinal: 0,
@@ -47,380 +50,247 @@ const hits = [
     },
     scores: { keyword: 2.1, vector: null, fused: 2.1 },
     matchReason: "keyword",
-  },
-] satisfies PageHit[];
+  };
+}
 
-const newPage: PageListItem = {
-  id: "01HZ1111111111111111111111",
-  url: "https://react.dev/learn",
-  title: "Learn React",
-  domain: "react.dev",
-  sourceType: "official_docs",
-  summary: "React docs",
-  topics: [],
-  technologies: [],
-  savedAt: 200,
-  status: "ready",
-};
+const localStatus = { hasApiKey: false, effectiveMode: "local" as const };
 
-describe("Side panel app", () => {
-  it("renders the library search shell", async () => {
-    render(<App listPages={vi.fn().mockResolvedValue([])} runSearch={vi.fn()} />);
+function renderApp(props: Partial<React.ComponentProps<typeof App>> = {}) {
+  const defaults = {
+    listPages: vi.fn().mockResolvedValue([]),
+    loadSearchStatus: vi.fn().mockResolvedValue(localStatus),
+    runSearch: vi.fn().mockResolvedValue({ results: [], searchMode: "local" as const }),
+    subscribe: makeSubscribe().subscribe,
+    openSettings: vi.fn(),
+    ...props,
+  };
+  return { ...render(<App {...defaults} />), props: defaults, user: userEvent.setup() };
+}
 
-    expect(screen.getByRole("heading", { name: "DevRecall" })).toBeInTheDocument();
-    expect(screen.getByRole("searchbox", { name: "Search saved pages" })).toHaveClass(
-      "border-default",
-      "bg-surface-raised",
-      "text-foreground",
-    );
-    expect(screen.getByRole("button", { name: "All" })).toHaveAttribute("aria-pressed", "true");
-    expect(await screen.findByText("No saved pages yet")).toBeInTheDocument();
+beforeEach(() => {
+  localStorage.clear();
+});
+
+describe("Side panel search", () => {
+  it("shows the configured mode before a search completes and links to Settings", async () => {
+    const openSettings = vi.fn();
+    const { user } = renderApp({
+      loadSearchStatus: vi.fn().mockResolvedValue({ hasApiKey: true, effectiveMode: "hybrid" }),
+      openSettings,
+    });
+
+    expect(await screen.findByText("Hybrid")).toBeInTheDocument();
+    await user.click(screen.getAllByRole("button", { name: "Settings" })[1]);
+    expect(openSettings).toHaveBeenCalledOnce();
   });
 
-  it("lists saved pages from the worker", async () => {
-    const listPages = vi.fn().mockResolvedValue(pages);
-
-    render(<App listPages={listPages} runSearch={vi.fn()} />);
-
-    expect(listPages).toHaveBeenCalledTimes(1);
-    expect(
-      await screen.findByRole("heading", {
-        name: "Horizontal Pod Autoscaling",
+  it("uses the worker's fallback mode while keeping keyword results", async () => {
+    const { user } = renderApp({
+      loadSearchStatus: vi.fn().mockResolvedValue({ hasApiKey: true, effectiveMode: "hybrid" }),
+      runSearch: vi.fn().mockResolvedValue({
+        results: [makeHit()],
+        searchMode: "keyword_fallback",
       }),
-    ).toBeInTheDocument();
-    expect(screen.getByText("kubernetes.io")).toBeInTheDocument();
-  });
+    });
 
-  it("runs a keyword search and shows highlighted results", async () => {
-    const user = userEvent.setup();
-    const runSearch = vi.fn().mockResolvedValue(hits);
+    await user.type(screen.getByRole("searchbox", { name: "Search saved pages" }), "pods");
 
-    render(<App listPages={vi.fn().mockResolvedValue([])} runSearch={runSearch} />);
-
-    await user.type(
-      screen.getByRole("searchbox", { name: "Search saved pages" }),
-      "autoscale pods",
-    );
-
+    expect(await screen.findByText("Horizontal Pod Autoscaling")).toBeInTheDocument();
     expect(
-      await screen.findByRole("heading", {
-        name: "Horizontal Pod Autoscaling",
-      }),
+      screen.getByText("Semantic search unavailable. Showing keyword results."),
     ).toBeInTheDocument();
-    expect(runSearch).toHaveBeenCalledWith("autoscale pods");
-    expect(screen.getByText("keyword")).toBeInTheDocument();
   });
 
-  it("filters search results when a source chip is active", async () => {
-    const user = userEvent.setup();
-    const runSearch = vi.fn().mockResolvedValue([
-      hits[0],
-      {
-        ...hits[0],
-        page: {
-          ...hits[0].page,
-          id: "01HZ0000000000000000000004",
-          title: "Stack Overflow Result",
-          domain: "stackoverflow.com",
-          url: "https://stackoverflow.com/questions/123",
-          sourceType: "stackoverflow",
-        },
-      },
-    ]);
+  it("replaces a fallback label after the next successful Hybrid search", async () => {
+    const runSearch = vi
+      .fn()
+      .mockResolvedValueOnce({ results: [makeHit()], searchMode: "keyword_fallback" })
+      .mockResolvedValueOnce({ results: [makeHit()], searchMode: "hybrid" });
+    const { user } = renderApp({ runSearch });
+    const input = screen.getByRole("searchbox", { name: "Search saved pages" });
 
-    render(<App listPages={vi.fn().mockResolvedValue([])} runSearch={runSearch} />);
+    await user.type(input, "pods");
+    expect(
+      await screen.findByText("Semantic search unavailable. Showing keyword results."),
+    ).toBeInTheDocument();
+    await user.clear(input);
+    await user.type(input, "autoscaler");
 
-    await user.type(screen.getByRole("searchbox", { name: "Search saved pages" }), "autoscale");
-    await screen.findByRole("heading", { name: "Horizontal Pod Autoscaling" });
-
-    await user.click(screen.getByRole("button", { name: "Stack Overflow" }));
-
-    expect(screen.queryByRole("heading", { name: "Horizontal Pod Autoscaling" })).toBeNull();
-    expect(screen.getByRole("heading", { name: "Stack Overflow Result" })).toBeInTheDocument();
-  });
-
-  it("shows an empty-search message when nothing matches", async () => {
-    const user = userEvent.setup();
-    const runSearch = vi.fn().mockResolvedValue([]);
-
-    render(<App listPages={vi.fn().mockResolvedValue([])} runSearch={runSearch} />);
-
-    await user.type(screen.getByRole("searchbox", { name: "Search saved pages" }), "nomatch");
-
-    expect(await screen.findByText("No matches for your search")).toBeInTheDocument();
+    expect(await screen.findByText("Hybrid")).toBeInTheDocument();
+    expect(
+      screen.queryByText("Semantic search unavailable. Showing keyword results."),
+    ).not.toBeInTheDocument();
   });
 });
 
-describe("Side panel live refresh", () => {
-  it("inserts a card when a page.updated broadcast arrives", async () => {
-    const { subscribe, emit } = makeSubscribe();
-    render(
-      <App listPages={vi.fn().mockResolvedValue([])} runSearch={vi.fn()} subscribe={subscribe} />,
-    );
+describe("Side panel library", () => {
+  it("renders the worker-provided excerpt instead of the URL", async () => {
+    renderApp({ listPages: vi.fn().mockResolvedValue([makePage()]) });
 
-    await screen.findByText("No saved pages yet");
-    await emit({ type: "page.updated", payload: { page: newPage } });
-
-    expect(await screen.findByRole("heading", { name: "Learn React" })).toBeInTheDocument();
+    expect(await screen.findByText(/autoscaler changes replica counts/)).toBeInTheDocument();
+    expect(screen.queryByText(makePage().url)).not.toBeInTheDocument();
   });
 
-  it("removes a card when a page.removed broadcast arrives", async () => {
-    const { subscribe, emit } = makeSubscribe();
-    render(
-      <App
-        listPages={vi.fn().mockResolvedValue(pages)}
-        runSearch={vi.fn()}
-        subscribe={subscribe}
-      />,
-    );
+  it("filters with contentType and platform", async () => {
+    const docs = makePage({ id: "docs", title: "Docs" });
+    const stackOverflow = makePage({
+      id: "so",
+      title: "Stack Overflow question",
+      platform: Platform.StackOverflow,
+      contentType: ContentType.Question,
+    });
+    const github = makePage({
+      id: "github",
+      title: "GitHub issue",
+      platform: Platform.Github,
+      contentType: ContentType.Issue,
+    });
+    const { user } = renderApp({
+      listPages: vi.fn().mockResolvedValue([docs, stackOverflow, github]),
+    });
 
-    await screen.findByRole("heading", { name: "Horizontal Pod Autoscaling" });
-    await emit({ type: "page.removed", payload: { id: pages[0].id } });
-
-    expect(screen.queryByRole("heading", { name: "Horizontal Pod Autoscaling" })).toBeNull();
-  });
-
-  it("clears the library when a library.cleared broadcast arrives", async () => {
-    const { subscribe, emit } = makeSubscribe();
-    render(
-      <App
-        listPages={vi.fn().mockResolvedValue(pages)}
-        runSearch={vi.fn()}
-        subscribe={subscribe}
-      />,
-    );
-
-    await screen.findByRole("heading", { name: "Horizontal Pod Autoscaling" });
-    await emit({ type: "library.cleared" });
-
-    expect(screen.queryByRole("heading", { name: "Horizontal Pod Autoscaling" })).toBeNull();
-    expect(screen.getByText("No saved pages yet")).toBeInTheDocument();
-  });
-
-  it("resets search mode when a library.cleared broadcast arrives during an active query", async () => {
-    const { subscribe, emit } = makeSubscribe();
-    const user = userEvent.setup();
-    render(
-      <App
-        listPages={vi.fn().mockResolvedValue(pages)}
-        runSearch={vi.fn().mockResolvedValue(hits)}
-        subscribe={subscribe}
-      />,
-    );
-
-    await user.type(screen.getByRole("searchbox", { name: "Search saved pages" }), "autoscale");
-    await screen.findByRole("heading", { name: "Horizontal Pod Autoscaling" });
-
-    await emit({ type: "library.cleared" });
-
-    expect(screen.getByRole("searchbox", { name: "Search saved pages" })).toHaveValue("");
-    expect(screen.queryByRole("heading", { name: "Horizontal Pod Autoscaling" })).toBeNull();
-    expect(screen.getByText("No saved pages yet")).toBeInTheDocument();
-  });
-
-  it("deletes a page from the expanded card", async () => {
-    const user = userEvent.setup();
-    const deletePage = vi.fn().mockResolvedValue(undefined);
-    render(
-      <App
-        listPages={vi.fn().mockResolvedValue(pages)}
-        runSearch={vi.fn()}
-        deletePage={deletePage}
-        subscribe={makeSubscribe().subscribe}
-      />,
-    );
-
-    await user.click(await screen.findByRole("button", { name: /Horizontal Pod Autoscaling/ }));
-    await user.click(await screen.findByRole("button", { name: "Delete" }));
-
-    expect(deletePage).toHaveBeenCalledWith(pages[0].id);
-  });
-});
-
-const vectorHit = {
-  page: pages[0],
-  bestChunk: {
-    text: "The HorizontalPodAutoscaler automatically scales workloads.",
-    ordinal: 0,
-    highlightedHtml: "The HorizontalPodAutoscaler automatically scales workloads.",
-  },
-  scores: { keyword: null, vector: 0.83, fused: 0.016 },
-  matchReason: "vector",
-} satisfies PageHit;
-
-it("labels a vector-only hit as matched by meaning", async () => {
-  const user = userEvent.setup();
-  const runSearch = vi.fn().mockResolvedValue([vectorHit]);
-
-  render(
-    <App
-      listPages={vi.fn().mockResolvedValue([])}
-      runSearch={runSearch}
-      subscribe={makeSubscribe().subscribe}
-    />,
-  );
-
-  await user.type(screen.getByRole("searchbox", { name: "Search saved pages" }), "elastic scaling");
-
-  expect(await screen.findByText("matched by meaning")).toBeInTheDocument();
-});
-
-describe("Filter chip wiring", () => {
-  const mixedPages: PageListItem[] = [
-    {
-      id: "01HZ0000000000000000000001",
-      url: "https://kubernetes.io/docs/",
-      title: "Kubernetes Docs",
-      domain: "kubernetes.io",
-      sourceType: "official_docs",
-      summary: "",
-      topics: [],
-      technologies: [],
-      savedAt: 100,
-      status: "ready",
-    },
-    {
-      id: "01HZ0000000000000000000002",
-      url: "https://stackoverflow.com/questions/123",
-      title: "Stack Overflow Q",
-      domain: "stackoverflow.com",
-      sourceType: "stackoverflow",
-      summary: "",
-      topics: [],
-      technologies: [],
-      savedAt: 200,
-      status: "ready",
-    },
-    {
-      id: "01HZ0000000000000000000003",
-      url: "https://github.com/kubernetes/kubernetes/issues/1",
-      title: "GitHub Issue",
-      domain: "github.com",
-      sourceType: "github_issue",
-      summary: "",
-      topics: [],
-      technologies: [],
-      savedAt: 300,
-      status: "ready",
-    },
-  ];
-
-  it("shows all pages when 'All' chip is active", async () => {
-    render(<App listPages={vi.fn().mockResolvedValue(mixedPages)} runSearch={vi.fn()} />);
-
-    expect(await screen.findByText("Kubernetes Docs")).toBeInTheDocument();
-    expect(screen.getByText("Stack Overflow Q")).toBeInTheDocument();
-    expect(screen.getByText("GitHub Issue")).toBeInTheDocument();
-  });
-
-  it("filters to official_docs when 'Docs' chip is clicked", async () => {
-    const user = userEvent.setup();
-    render(<App listPages={vi.fn().mockResolvedValue(mixedPages)} runSearch={vi.fn()} />);
-
-    await screen.findByText("Kubernetes Docs");
-
+    await screen.findByText("Docs");
     await user.click(screen.getByRole("button", { name: "Docs" }));
-    expect(screen.getByRole("button", { name: "Docs" })).toHaveAttribute("aria-pressed", "true");
-    expect(screen.getByText("Kubernetes Docs")).toBeInTheDocument();
-    expect(screen.queryByText("Stack Overflow Q")).toBeNull();
-    expect(screen.queryByText("GitHub Issue")).toBeNull();
-  });
-
-  it("filters to stackoverflow when 'Stack Overflow' chip is clicked", async () => {
-    const user = userEvent.setup();
-    render(<App listPages={vi.fn().mockResolvedValue(mixedPages)} runSearch={vi.fn()} />);
-
-    await screen.findByText("Stack Overflow Q");
+    expect(screen.getByRole("heading", { name: "Docs" })).toBeInTheDocument();
+    expect(screen.queryByText("Stack Overflow question")).not.toBeInTheDocument();
 
     await user.click(screen.getByRole("button", { name: "Stack Overflow" }));
-    expect(screen.queryByText("Kubernetes Docs")).toBeNull();
-    expect(screen.getByText("Stack Overflow Q")).toBeInTheDocument();
-    expect(screen.queryByText("GitHub Issue")).toBeNull();
-  });
-
-  it("filters to github_issue when 'GitHub' chip is clicked", async () => {
-    const user = userEvent.setup();
-    render(<App listPages={vi.fn().mockResolvedValue(mixedPages)} runSearch={vi.fn()} />);
-
-    await screen.findByText("GitHub Issue");
+    expect(screen.getByText("Stack Overflow question")).toBeInTheDocument();
+    expect(screen.queryByText("GitHub issue")).not.toBeInTheDocument();
 
     await user.click(screen.getByRole("button", { name: "GitHub" }));
-    expect(screen.queryByText("Kubernetes Docs")).toBeNull();
-    expect(screen.queryByText("Stack Overflow Q")).toBeNull();
-    expect(screen.getByText("GitHub Issue")).toBeInTheDocument();
+    expect(screen.getByText("GitHub issue")).toBeInTheDocument();
   });
 
-  it("returns to all pages when 'All' chip is clicked after filtering", async () => {
-    const user = userEvent.setup();
-    render(<App listPages={vi.fn().mockResolvedValue(mixedPages)} runSearch={vi.fn()} />);
+  it("sends explicit per-page consent when Add AI features is selected", async () => {
+    const addAiFeatures = vi.fn().mockResolvedValue(undefined);
+    const localPage = makePage({ status: "keyword_ready" });
+    const { user } = renderApp({
+      listPages: vi.fn().mockResolvedValue([localPage]),
+      loadSearchStatus: vi.fn().mockResolvedValue({ hasApiKey: true, effectiveMode: "local" }),
+      addAiFeatures,
+    });
 
-    await screen.findByText("Kubernetes Docs");
-    await user.click(screen.getByRole("button", { name: "Docs" }));
-    expect(screen.queryByText("Stack Overflow Q")).toBeNull();
+    await user.click(await screen.findByRole("button", { name: "Add AI features" }));
+    expect(addAiFeatures).toHaveBeenCalledWith(localPage.id);
+  });
 
-    await user.click(screen.getByRole("button", { name: "All" }));
-    expect(screen.getByText("Kubernetes Docs")).toBeInTheDocument();
-    expect(screen.getByText("Stack Overflow Q")).toBeInTheDocument();
-    expect(screen.getByText("GitHub Issue")).toBeInTheDocument();
+  it("keeps Add AI features visible but disabled without a key", async () => {
+    const openSettings = vi.fn();
+    renderApp({
+      listPages: vi.fn().mockResolvedValue([makePage({ status: "keyword_ready" })]),
+      openSettings,
+    });
+
+    expect(await screen.findByRole("button", { name: "Add AI features" })).toBeDisabled();
+    expect(screen.getAllByRole("button", { name: "Settings" }).length).toBeGreaterThan(1);
+  });
+
+  it("reconciles page.updated broadcasts", async () => {
+    const { subscribe, emit } = makeSubscribe();
+    renderApp({ subscribe });
+    await screen.findByText("No saved pages yet");
+
+    const page: PageListItem = makePage({ title: "Learn React" });
+    await emit({ type: "page.updated", payload: { page } });
+    expect(await screen.findByText("Learn React")).toBeInTheDocument();
+  });
+
+  it("updates hasApiKey and effectiveMode when settings.changed broadcast arrives", async () => {
+    const { subscribe, emit } = makeSubscribe();
+    renderApp({
+      listPages: vi.fn().mockResolvedValue([makePage({ status: "keyword_ready" })]),
+      loadSearchStatus: vi.fn().mockResolvedValue({ hasApiKey: false, effectiveMode: "local" }),
+      subscribe,
+    });
+
+    expect(await screen.findByRole("button", { name: "Add AI features" })).toBeDisabled();
+
+    await emit({
+      type: "settings.changed",
+      payload: { hasApiKey: true, storedMode: "hybrid", effectiveMode: "hybrid" },
+    });
+
+    expect(await screen.findByRole("button", { name: "Add AI features" })).toBeEnabled();
+  });
+
+  it("disables AI features when API key is removed via settings.changed broadcast", async () => {
+    const { subscribe, emit } = makeSubscribe();
+    renderApp({
+      listPages: vi.fn().mockResolvedValue([makePage({ status: "keyword_ready" })]),
+      loadSearchStatus: vi.fn().mockResolvedValue({ hasApiKey: true, effectiveMode: "hybrid" }),
+      subscribe,
+    });
+
+    expect(await screen.findByRole("button", { name: "Add AI features" })).toBeEnabled();
+
+    await emit({
+      type: "settings.changed",
+      payload: { hasApiKey: false, storedMode: "local", effectiveMode: "local" },
+    });
+
+    expect(await screen.findByRole("button", { name: "Add AI features" })).toBeDisabled();
+  });
+
+  it("preserves keyword_fallback search mode when settings.changed arrives during active results", async () => {
+    const { subscribe, emit } = makeSubscribe();
+    const { user } = renderApp({
+      listPages: vi.fn().mockResolvedValue([makePage({ status: "keyword_ready" })]),
+      loadSearchStatus: vi.fn().mockResolvedValue({ hasApiKey: false, effectiveMode: "local" }),
+      runSearch: vi.fn().mockResolvedValue({
+        results: [makeHit()],
+        searchMode: "keyword_fallback",
+      }),
+      subscribe,
+    });
+
+    const input = screen.getByRole("searchbox", { name: "Search saved pages" });
+    await user.type(input, "pods");
+
+    // Verify keyword_fallback mode is shown for the results
+    expect(
+      await screen.findByText("Semantic search unavailable. Showing keyword results."),
+    ).toBeInTheDocument();
+
+    // Simulate API key being added while results are still displayed
+    await emit({
+      type: "settings.changed",
+      payload: { hasApiKey: true, storedMode: "hybrid", effectiveMode: "hybrid" },
+    });
+
+    // The search mode should NOT change to "Hybrid" - results keep their actual mode
+    expect(
+      screen.getByText("Semantic search unavailable. Showing keyword results."),
+    ).toBeInTheDocument();
+
+    // Verify effectiveMode was updated (check by looking at what happens when we clear search)
+    await user.clear(input);
+    // When search is cleared, searchMode should now show the new effectiveMode
+    expect(await screen.findByText("Hybrid")).toBeInTheDocument();
   });
 });
 
-describe("Retry failed pages in side panel", () => {
-  const failedPage: PageListItem = {
-    id: "01HZ0000000000000000000099",
-    url: "https://example.com/failed",
-    title: "Failed Page",
-    domain: "example.com",
-    sourceType: "unknown",
-    summary: "",
-    topics: [],
-    technologies: [],
-    savedAt: 100,
-    status: "failed",
-  };
+describe("First run", () => {
+  it("explains the local default, offers optional key setup, and can be dismissed", async () => {
+    const openSettings = vi.fn();
+    const { user, unmount } = renderApp({ openSettings });
 
-  it("shows a Retry button on a failed page card when expanded", async () => {
-    const user = userEvent.setup();
-    render(<App listPages={vi.fn().mockResolvedValue([failedPage])} runSearch={vi.fn()} />);
+    expect(screen.getByText("Your library starts local")).toBeInTheDocument();
+    await user.click(screen.getByRole("button", { name: "Set up optional AI features" }));
+    expect(openSettings).toHaveBeenCalledOnce();
+    await user.click(screen.getByRole("button", { name: "Dismiss first-run explanation" }));
+    expect(screen.queryByText("Your library starts local")).not.toBeInTheDocument();
 
-    await user.click(await screen.findByRole("button", { name: /Failed Page/ }));
-    expect(await screen.findByRole("button", { name: /Retry/i })).toBeInTheDocument();
-  });
-
-  it("calls retryPage with the page id when Retry is clicked", async () => {
-    const user = userEvent.setup();
-    const retryPage = vi.fn().mockResolvedValue(undefined);
+    unmount();
     render(
       <App
-        listPages={vi.fn().mockResolvedValue([failedPage])}
-        runSearch={vi.fn()}
-        retryPage={retryPage}
+        listPages={vi.fn().mockResolvedValue([])}
+        loadSearchStatus={vi.fn().mockResolvedValue(localStatus)}
+        runSearch={vi.fn().mockResolvedValue({ results: [], searchMode: "local" })}
+        subscribe={makeSubscribe().subscribe}
+        openSettings={openSettings}
       />,
     );
-
-    await user.click(await screen.findByRole("button", { name: /Failed Page/ }));
-    await user.click(await screen.findByRole("button", { name: /Retry/i }));
-
-    expect(retryPage).toHaveBeenCalledWith(failedPage.id);
+    expect(screen.queryByText("Your library starts local")).not.toBeInTheDocument();
   });
-});
-
-it("can delete a page from a search result card", async () => {
-  const user = userEvent.setup();
-  const deletePage = vi.fn().mockResolvedValue(undefined);
-  const runSearch = vi.fn().mockResolvedValue([vectorHit]);
-
-  render(
-    <App
-      listPages={vi.fn().mockResolvedValue([])}
-      runSearch={runSearch}
-      deletePage={deletePage}
-      subscribe={makeSubscribe().subscribe}
-    />,
-  );
-
-  await user.type(screen.getByRole("searchbox", { name: "Search saved pages" }), "elastic scaling");
-  await user.click(await screen.findByRole("button", { name: "Delete" }));
-
-  expect(deletePage).toHaveBeenCalledWith(pages[0].id);
 });

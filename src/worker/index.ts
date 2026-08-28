@@ -1,8 +1,8 @@
 import type { DevRecallRequest, DevRecallResponse, WorkerBroadcast } from "../shared/messages";
 import { OpenAIProvider, testOpenAIConnection } from "./llm/OpenAIProvider";
 import { ChunkRepo } from "./repository/ChunkRepo";
-import { PageRepo, toPageListItem } from "./repository/PageRepo";
-import { CaptureService } from "./services/CaptureService";
+import { PageRepo, toPageListItemWithExcerpt } from "./repository/PageRepo";
+import { CaptureService, SEMANTIC_INDEX_VERSION } from "./services/CaptureService";
 import {
   AutoSaveService,
   chromeAlarmPort,
@@ -10,8 +10,10 @@ import {
   chromeTabPort,
 } from "./services/AutoSaveService";
 import { RetrievalService } from "./services/RetrievalService";
+import { BulkTaskRunner } from "./services/BulkTaskRunner";
 import { ChromeApiKeyStore } from "./settings/ApiKeyStore";
 import { ChromeAutoSaveSettingStore } from "./settings/AutoSaveSettingStore";
+import { ChromeModeStore } from "./settings/ModeStore";
 import { handleMessage, processPageInBackground, type HandlerDeps } from "./handlers";
 
 function broadcast(message: WorkerBroadcast): void {
@@ -28,15 +30,30 @@ const chunkRepo = new ChunkRepo();
 const openai = new OpenAIProvider();
 const captureService = new CaptureService(pageRepo, undefined, pageRepo, openai, chunkRepo, openai);
 const autoSaveSettings = new ChromeAutoSaveSettingStore();
+const apiKeyStore = new ChromeApiKeyStore();
+const modeStore = new ChromeModeStore();
+const bulkRunner = new BulkTaskRunner();
 const defaultDeps: HandlerDeps = {
   captureService,
   pageRepo,
-  apiKeyStore: new ChromeApiKeyStore(),
+  apiKeyStore,
+  modeStore,
   testConnection: testOpenAIConnection,
-  retrievalService: new RetrievalService(chunkRepo, pageRepo, openai),
+  retrievalService: new RetrievalService(chunkRepo, pageRepo, openai, apiKeyStore),
+  bulkRunner,
+  semanticIndex: {
+    embeddingModel: openai.embeddingModel,
+    indexVersion: SEMANTIC_INDEX_VERSION,
+  },
   broadcast,
   autoSaveSettings,
 };
+
+// A killed worker may leave a paid request's completion unknown. Recover the
+// local record, but never replay that request automatically.
+void captureService.recoverStaleEnriching().catch((error) => {
+  console.error("[DevRecall] stale enrichment recovery failed:", error);
+});
 
 // ---------------------------------------------------------------------------
 // Auto-save: alarm-driven dwell timer for allowlisted domains.
@@ -51,7 +68,7 @@ const autoSaveService = new AutoSaveService(
     saveAuto: async (tabId: number) => {
       const page = await captureService.save(tabId, "auto");
       defaultDeps.retrievalService.invalidate();
-      broadcast({ type: "page.updated", payload: { page: toPageListItem(page) } });
+      broadcast({ type: "page.updated", payload: { page: toPageListItemWithExcerpt(page) } });
       processPageInBackground(defaultDeps, page.id);
       return page;
     },

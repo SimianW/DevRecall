@@ -1,17 +1,19 @@
-export type SourceType =
-  | "official_docs"
-  | "github_issue"
-  | "stackoverflow"
-  | "blog"
-  | "paper"
-  | "course_material"
-  | "unknown";
+import type { ContentType, Platform } from "./enums";
 
 export type Intent = "learning" | "debugging" | "reference" | "implementation" | "comparison";
 
 export type SaveMode = "manual" | "auto";
 
-export type PageStatus = "pending" | "ready" | "failed";
+/**
+ * Page lifecycle in the keyword-first pipeline:
+ *
+ * - "pending"       — captured, not yet chunked / BM25-indexed
+ * - "keyword_ready" — chunked and keyword-searchable; not yet enriched
+ * - "enriching"     — LLM enrichment (summary/tags/embeddings) in flight
+ * - "ready"         — fully enriched; hybrid-searchable
+ * - "failed"        — local persistence failed before the page became searchable
+ */
+export type PageStatus = "pending" | "keyword_ready" | "enriching" | "ready" | "failed";
 
 export type PageRecord = {
   id: string;
@@ -19,7 +21,10 @@ export type PageRecord = {
   urlHash: string;
   title: string;
   domain: string;
-  sourceType: SourceType;
+  /** Where the content lives (github, stackoverflow, mdn, ...). */
+  platform: Platform;
+  /** What the content is (documentation, issue, question, ...). */
+  contentType: ContentType;
   summary: string;
   topics: string[];
   technologies: string[];
@@ -30,7 +35,10 @@ export type PageRecord = {
   readingTimeMs: number;
   saveMode: SaveMode;
   status: PageStatus;
-  errorReason?: string;
+  /** Local extraction, chunking, or persistence failure. Only `failed` pages use this. */
+  localSaveError?: string;
+  /** Last enrichment failure. Affected pages return to `keyword_ready`. */
+  enrichmentError?: string;
   schemaVersion: 1;
 };
 
@@ -40,13 +48,15 @@ export type PageListItem = Pick<
   | "url"
   | "title"
   | "domain"
-  | "sourceType"
+  | "platform"
+  | "contentType"
   | "summary"
   | "topics"
   | "technologies"
   | "savedAt"
   | "status"
-  | "errorReason"
+  | "localSaveError"
+  | "enrichmentError"
 >;
 
 export type ExtractedPage = {
@@ -62,7 +72,7 @@ export type PageCaptureInput = ExtractedPage & {
 
 export type TaggingResult = {
   summary: string;
-  sourceType: SourceType;
+  contentType: ContentType;
   topics: string[];
   technologies: string[];
   intent: Intent;
@@ -75,6 +85,7 @@ export type ChunkRecord = {
   text: string; // word-window until processPage re-chunks it to token-based
   embedding?: Float32Array; // 1536 dims, L2-normalized at insert; absent until embedded
   embeddingModel?: string; // e.g. "openai:text-embedding-3-small"; absent until embedded
+  indexVersion?: number; // retrieval index format version; absent until embedded
   tokenCount?: number; // tiktoken count; metadata only, not used by retrieval scoring
   schemaVersion: 1;
 };

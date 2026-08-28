@@ -2,6 +2,7 @@ import { render, screen } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { describe, expect, it, vi } from "vitest";
 
+import { ContentType, Platform } from "../../shared/enums";
 import type { PageHit, SearchMatchReason } from "../../shared/types";
 import { SearchResultCard } from "./SearchResultCard";
 
@@ -18,7 +19,8 @@ function makeHit(overrides: Partial<PageHit> = {}): PageHit {
       url: "https://react.dev/learn",
       title: "Learn React",
       domain: "react.dev",
-      sourceType: "official_docs",
+      platform: Platform.Web,
+      contentType: ContentType.Documentation,
       summary: "The official React learning path.",
       topics: ["react"],
       technologies: ["Vite"],

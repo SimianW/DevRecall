@@ -35,6 +35,12 @@ describe("ChromeApiKeyStore", () => {
     await expect(store.getApiKey()).resolves.toBe("sk-test123");
   });
 
+  it("treats an empty stored value as a removed key", async () => {
+    mockGet.mockResolvedValue({ openai_api_key: "   " });
+
+    await expect(new ChromeApiKeyStore().getApiKey()).resolves.toBeNull();
+  });
+
   it("stores an API key", async () => {
     const store = new ChromeApiKeyStore();
 

@@ -13,7 +13,8 @@ export class ChromeApiKeyStore implements ApiKeyStore {
 
     const result = await chrome.storage.local.get(STORAGE_KEY);
 
-    return (result[STORAGE_KEY] as string) ?? null;
+    const value = result[STORAGE_KEY];
+    return typeof value === "string" && value.trim().length > 0 ? value : null;
   }
 
   async setApiKey(apiKey: string): Promise<void> {

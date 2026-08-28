@@ -1,5 +1,23 @@
-import type { Intent, SourceType, TaggingResult } from "../../shared/types";
 import { normalize } from "../../lib/vector";
+import { CONTENT_TYPE_VALUES, ContentType, isContentType } from "../../shared/enums";
+import type { Intent } from "../../shared/types";
+
+export type PageTaggingResult = {
+  summary: string;
+  contentType: ContentType;
+  topics: string[];
+  technologies: string[];
+  intent: Intent;
+};
+
+export type MaySendOpenAIRequest = () => Promise<boolean> | boolean;
+
+export class OpenAIRequestAuthorizationError extends Error {
+  constructor() {
+    super("OpenAI request authorization was revoked");
+    this.name = "OpenAIRequestAuthorizationError";
+  }
+}
 
 export type PageTagger = {
   summarizeAndTag(
@@ -7,32 +25,28 @@ export type PageTagger = {
     title: string,
     url: string,
     apiKey: string,
-  ): Promise<TaggingResult>;
+    localContentType: ContentType,
+    maySend?: MaySendOpenAIRequest,
+  ): Promise<PageTaggingResult>;
 };
 
 export type Embedder = {
   readonly embeddingModel: string;
-  embed(text: string, apiKey: string): Promise<Float32Array>;
-  embedBatch(texts: string[], apiKey: string): Promise<Float32Array[]>;
+  embed(text: string, apiKey: string, maySend?: MaySendOpenAIRequest): Promise<Float32Array>;
+  embedBatch(
+    texts: string[],
+    apiKey: string,
+    maySend?: MaySendOpenAIRequest,
+  ): Promise<Float32Array[]>;
 };
 
 const OPENAI_CHAT_URL = "https://api.openai.com/v1/chat/completions";
 const OPENAI_EMBEDDINGS_URL = "https://api.openai.com/v1/embeddings";
 const EMBEDDING_MODEL = "text-embedding-3-small";
 export const EMBEDDING_MODEL_ID = "openai:text-embedding-3-small";
-const MODEL = "gpt-4o-mini";
+const MODEL = "gpt-5.6-luna";
 const MAX_TEXT_LENGTH = 8000;
 const DEFAULT_RETRY_DELAYS = [1000, 2000, 4000];
-
-const VALID_SOURCE_TYPES: ReadonlySet<string> = new Set<SourceType>([
-  "official_docs",
-  "github_issue",
-  "stackoverflow",
-  "blog",
-  "paper",
-  "course_material",
-  "unknown",
-]);
 
 const VALID_INTENTS: ReadonlySet<string> = new Set<Intent>([
   "learning",
@@ -45,12 +59,28 @@ const VALID_INTENTS: ReadonlySet<string> = new Set<Intent>([
 const SYSTEM_PROMPT = `You are a technical document classifier for a developer's browsing history. Analyze the web page and return a JSON object with these exact fields:
 
 - "summary" (string): 1-3 concise sentences summarizing the page content for a developer.
-- "sourceType" (string): One of "official_docs", "github_issue", "stackoverflow", "blog", "paper", "course_material", "unknown".
+- "contentType" (string): The kind of content on the page.
 - "topics" (string[]): 2-5 lowercase topic tags.
 - "technologies" (string[]): Specific technologies or libraries mentioned.
 - "intent" (string): One of "learning", "debugging", "reference", "implementation", "comparison".
 
-Return ONLY the JSON object.`;
+Return only the fields defined by the response schema.`;
+
+const TAGGING_RESPONSE_SCHEMA = {
+  type: "object",
+  properties: {
+    summary: { type: "string" },
+    contentType: { type: "string", enum: CONTENT_TYPE_VALUES },
+    topics: { type: "array", items: { type: "string" } },
+    technologies: { type: "array", items: { type: "string" } },
+    intent: {
+      type: "string",
+      enum: ["learning", "debugging", "reference", "implementation", "comparison"],
+    },
+  },
+  required: ["summary", "contentType", "topics", "technologies", "intent"],
+  additionalProperties: false,
+} as const;
 
 export class OpenAIProvider implements PageTagger, Embedder {
   readonly embeddingModel = EMBEDDING_MODEL_ID;
@@ -62,45 +92,67 @@ export class OpenAIProvider implements PageTagger, Embedder {
     title: string,
     url: string,
     apiKey: string,
-  ): Promise<TaggingResult> {
+    localContentType: ContentType,
+    maySend?: MaySendOpenAIRequest,
+  ): Promise<PageTaggingResult> {
     const truncatedText = fullText.slice(0, MAX_TEXT_LENGTH);
     const userPrompt = `Page title: ${title}\nPage URL: ${url}\n\nPage content:\n${truncatedText}`;
 
     const body = JSON.stringify({
       model: MODEL,
       messages: [
-        { role: "system", content: SYSTEM_PROMPT },
+        { role: "developer", content: SYSTEM_PROMPT },
         { role: "user", content: userPrompt },
       ],
-      response_format: { type: "json_object" },
+      reasoning_effort: "none",
+      response_format: {
+        type: "json_schema",
+        json_schema: {
+          name: "devrecall_page_enrichment",
+          strict: true,
+          schema: TAGGING_RESPONSE_SCHEMA,
+        },
+      },
       temperature: 0.2,
     });
 
-    const responseBody = await this.fetchWithRetry(OPENAI_CHAT_URL, apiKey, body);
+    const responseBody = await this.fetchWithRetry(OPENAI_CHAT_URL, apiKey, body, maySend);
 
-    return parseTaggingResponse(responseBody);
+    return parseTaggingResponse(responseBody, localContentType);
   }
 
-  async embedBatch(texts: string[], apiKey: string): Promise<Float32Array[]> {
+  async embedBatch(
+    texts: string[],
+    apiKey: string,
+    maySend?: MaySendOpenAIRequest,
+  ): Promise<Float32Array[]> {
     if (texts.length === 0) {
       return [];
     }
 
     const body = JSON.stringify({ model: EMBEDDING_MODEL, input: texts });
-    const responseBody = await this.fetchWithRetry(OPENAI_EMBEDDINGS_URL, apiKey, body);
+    const responseBody = await this.fetchWithRetry(OPENAI_EMBEDDINGS_URL, apiKey, body, maySend);
 
     return parseEmbeddingResponse(responseBody, texts.length);
   }
 
-  async embed(text: string, apiKey: string): Promise<Float32Array> {
-    const [vector] = await this.embedBatch([text], apiKey);
+  async embed(text: string, apiKey: string, maySend?: MaySendOpenAIRequest): Promise<Float32Array> {
+    const [vector] = await this.embedBatch([text], apiKey, maySend);
     return vector;
   }
 
-  private async fetchWithRetry(url: string, apiKey: string, body: string): Promise<unknown> {
+  private async fetchWithRetry(
+    url: string,
+    apiKey: string,
+    body: string,
+    maySend?: MaySendOpenAIRequest,
+  ): Promise<unknown> {
     const maxAttempts = this.retryDelays.length + 1;
 
     for (let attempt = 0; attempt < maxAttempts; attempt++) {
+      if (maySend && !(await maySend())) {
+        throw new OpenAIRequestAuthorizationError();
+      }
       const response = await fetch(url, {
         method: "POST",
         headers: {
@@ -130,31 +182,53 @@ export class OpenAIProvider implements PageTagger, Embedder {
   }
 }
 
-function parseTaggingResponse(body: unknown): TaggingResult {
+function fallbackTaggingResult(localContentType: ContentType): PageTaggingResult {
+  return {
+    summary: "",
+    contentType: localContentType,
+    topics: [],
+    technologies: [],
+    intent: "reference",
+  };
+}
+
+function parseTaggingResponse(body: unknown, localContentType: ContentType): PageTaggingResult {
   const data = body as {
-    choices?: Array<{ message?: { content?: string } }>;
+    choices?: Array<{ message?: { content?: string; refusal?: string | null } }>;
   };
 
-  const content = data.choices?.[0]?.message?.content;
+  const message = data.choices?.[0]?.message;
+  const content = message?.content;
 
-  if (!content) {
-    throw new Error("No content in OpenAI response");
+  if (message?.refusal || typeof content !== "string" || content.length === 0) {
+    return fallbackTaggingResult(localContentType);
   }
 
-  const parsed = JSON.parse(content) as Record<string, unknown>;
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(content);
+  } catch {
+    return fallbackTaggingResult(localContentType);
+  }
+
+  if (typeof parsed !== "object" || parsed === null || Array.isArray(parsed)) {
+    return fallbackTaggingResult(localContentType);
+  }
+
+  const fields = parsed as Record<string, unknown>;
 
   return {
-    summary: typeof parsed.summary === "string" ? parsed.summary : "",
-    sourceType: VALID_SOURCE_TYPES.has(parsed.sourceType as string)
-      ? (parsed.sourceType as SourceType)
-      : "unknown",
-    topics: Array.isArray(parsed.topics)
-      ? parsed.topics.filter((t): t is string => typeof t === "string")
+    summary: typeof fields.summary === "string" ? fields.summary : "",
+    contentType: isContentType(fields.contentType) ? fields.contentType : localContentType,
+    topics: Array.isArray(fields.topics)
+      ? fields.topics.filter((topic): topic is string => typeof topic === "string")
       : [],
-    technologies: Array.isArray(parsed.technologies)
-      ? parsed.technologies.filter((t): t is string => typeof t === "string")
+    technologies: Array.isArray(fields.technologies)
+      ? fields.technologies.filter(
+          (technology): technology is string => typeof technology === "string",
+        )
       : [],
-    intent: VALID_INTENTS.has(parsed.intent as string) ? (parsed.intent as Intent) : "reference",
+    intent: VALID_INTENTS.has(fields.intent as string) ? (fields.intent as Intent) : "reference",
   };
 }
 
@@ -193,7 +267,7 @@ export async function testOpenAIConnection(
       body: JSON.stringify({
         model: MODEL,
         messages: [{ role: "user", content: "hi" }],
-        max_tokens: 1,
+        reasoning_effort: "none",
       }),
     });
 

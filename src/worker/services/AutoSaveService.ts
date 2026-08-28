@@ -218,10 +218,11 @@ export class AutoSaveService {
       return;
     }
 
-    // Dedup check: skip pages that are already saved and 'ready'.
+    // Any non-failed record already represents this capture. Pending work and
+    // local-only pages must not be duplicated by a later alarm.
     const { urlHash } = await normalizeUrl(entry.url);
     const existing = await this.dedupe.getByUrlHash(urlHash);
-    if (existing?.status === "ready") {
+    if (existing && ["pending", "keyword_ready", "enriching", "ready"].includes(existing.status)) {
       await this.session.remove(alarmName(tabId));
       return;
     }

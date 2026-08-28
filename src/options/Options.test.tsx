@@ -1,9 +1,13 @@
 import { act, render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
-import { describe, expect, it, vi } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 
 import type { WorkerBroadcast } from "../shared/messages";
 import { Options } from "./Options";
+
+afterEach(() => {
+  vi.unstubAllGlobals();
+});
 
 // NOTE: dark mode is media-based (tailwind darkMode: "media"). jsdom cannot
 // compute colors or toggle a root `.dark` class, so visual contrast cannot be
@@ -30,7 +34,12 @@ function makeSubscribe() {
 
 const renderOptions = (props: Partial<React.ComponentProps<typeof Options>> = {}) => {
   const defaultProps = {
-    loadStatus: vi.fn().mockResolvedValue({ hasApiKey: false }),
+    loadStatus: vi.fn().mockResolvedValue({
+      hasApiKey: false,
+      storedMode: "hybrid" as const,
+      effectiveMode: "local" as const,
+    }),
+    loadMode: vi.fn().mockResolvedValue({ storedMode: "hybrid", effectiveMode: "local" }),
     saveApiKey: vi.fn().mockResolvedValue(undefined),
     testConnection: vi.fn().mockResolvedValue({ success: true, message: "Connection successful" }),
     ...props,
@@ -116,7 +125,292 @@ describe("Options", () => {
   });
 });
 
-it("disables re-index when no pages are missing embeddings", async () => {
+describe("Local-only settings", () => {
+  it("shows Local-only enabled and locked without a key", async () => {
+    renderOptions();
+
+    const toggle = await screen.findByRole("checkbox", { name: "Local-only mode" });
+    expect(toggle).toBeChecked();
+    expect(toggle).toBeDisabled();
+    expect(screen.getByTestId("search-mode-indicator")).toHaveTextContent("Local-only");
+    expect(screen.getAllByText("Add an API key to use AI features.").length).toBeGreaterThan(0);
+  });
+
+  it("lets a user with a key switch from Local-only to Hybrid", async () => {
+    const setMode = vi.fn().mockResolvedValue({ storedMode: "hybrid", effectiveMode: "hybrid" });
+    const { user } = renderOptions({
+      loadStatus: vi.fn().mockResolvedValue({
+        hasApiKey: true,
+        storedMode: "local",
+        effectiveMode: "local",
+      }),
+      loadMode: vi.fn().mockResolvedValue({ storedMode: "local", effectiveMode: "local" }),
+      setMode,
+    });
+
+    const toggle = await screen.findByRole("checkbox", { name: "Local-only mode" });
+    await waitFor(() => expect(toggle).toBeEnabled());
+    expect(toggle).toBeChecked();
+    await user.click(toggle);
+
+    expect(setMode).toHaveBeenCalledWith("hybrid");
+    await waitFor(() =>
+      expect(screen.getByTestId("search-mode-indicator")).toHaveTextContent("Hybrid"),
+    );
+  });
+
+  it("removes only the key and explains that saved data remains", async () => {
+    const removeApiKey = vi.fn().mockResolvedValue(undefined);
+    const setMode = vi.fn();
+    const { user } = renderOptions({
+      loadStatus: vi.fn().mockResolvedValue({
+        hasApiKey: true,
+        storedMode: "hybrid",
+        effectiveMode: "hybrid",
+      }),
+      loadMode: vi.fn().mockResolvedValue({ storedMode: "hybrid", effectiveMode: "hybrid" }),
+      removeApiKey,
+      setMode,
+    });
+
+    await user.click(await screen.findByRole("button", { name: "Remove API key" }));
+    expect(screen.getByText(/saved pages and their metadata.*preserved/i)).toBeInTheDocument();
+    await user.click(screen.getByRole("button", { name: "Remove key" }));
+
+    expect(removeApiKey).toHaveBeenCalledOnce();
+    expect(setMode).not.toHaveBeenCalled();
+  });
+
+  it("uses the required local privacy explanation", () => {
+    renderOptions();
+    expect(
+      screen.getByText(
+        "Pages stay in this browser. DevRecall uses keyword search and does not automatically contact OpenAI. Content is sent to OpenAI only when you explicitly choose Add AI features for one or more saved pages.",
+      ),
+    ).toBeInTheDocument();
+  });
+});
+
+describe("confirmed bulk AI operations", () => {
+  const keyedStatus = {
+    hasApiKey: true,
+    storedMode: "local" as const,
+    effectiveMode: "local" as const,
+  };
+
+  it("shows the exact enrichment count before starting", async () => {
+    const startBulkEnrich = vi.fn().mockResolvedValue({ total: 3 });
+    const prepareBulkEnrich = vi.fn().mockResolvedValue({ batchId: "batch-1", count: 3 });
+    const { user } = renderOptions({
+      loadStatus: vi.fn().mockResolvedValue(keyedStatus),
+      loadKeywordReadyCount: vi.fn().mockResolvedValue(3),
+      prepareBulkEnrich,
+      startBulkEnrich,
+    });
+
+    await user.click(
+      await screen.findByRole("button", { name: "Add AI features to local pages (3)" }),
+    );
+    expect(startBulkEnrich).not.toHaveBeenCalled();
+    expect(screen.getByText(/Send 3 pages to OpenAI\?/)).toHaveTextContent("full text");
+    await user.click(screen.getByRole("button", { name: "Add AI features" }));
+    expect(startBulkEnrich).toHaveBeenCalledWith("batch-1");
+  });
+
+  it("uses an IndexedDB-compatible limit when counting local pages", async () => {
+    const sendMessage = vi.fn().mockImplementation((request: { type: string }) => {
+      if (request.type === "page.list") {
+        return Promise.resolve({
+          type: "page.listed",
+          payload: { pages: [{ status: "keyword_ready" }] },
+        });
+      }
+      return Promise.resolve(undefined);
+    });
+    vi.stubGlobal("chrome", { runtime: { sendMessage } });
+
+    renderOptions({
+      loadStatus: vi.fn().mockResolvedValue(keyedStatus),
+      loadKeywordReadyCount: undefined,
+    });
+
+    expect(
+      await screen.findByRole("button", { name: "Add AI features to local pages (1)" }),
+    ).toBeEnabled();
+    expect(sendMessage).toHaveBeenCalledWith({
+      type: "page.list",
+      payload: { limit: 2 ** 32 - 1 },
+    });
+  });
+
+  it("cancels a running bulk operation", async () => {
+    const cancelBulk = vi.fn().mockResolvedValue(undefined);
+    const prepareBulkEnrich = vi.fn().mockResolvedValue({ batchId: "batch-2", count: 2 });
+    const { user } = renderOptions({
+      loadStatus: vi.fn().mockResolvedValue(keyedStatus),
+      loadKeywordReadyCount: vi.fn().mockResolvedValue(2),
+      prepareBulkEnrich,
+      startBulkEnrich: vi.fn().mockResolvedValue({ total: 2 }),
+      cancelBulk,
+    });
+
+    await user.click(
+      await screen.findByRole("button", { name: "Add AI features to local pages (2)" }),
+    );
+    await user.click(screen.getByRole("button", { name: "Add AI features" }));
+    await user.click(await screen.findByRole("button", { name: "Cancel" }));
+    expect(cancelBulk).toHaveBeenCalledOnce();
+  });
+});
+
+describe("bulk operation cancel and terminal states", () => {
+  const keyedStatus = {
+    hasApiKey: true,
+    storedMode: "local" as const,
+    effectiveMode: "local" as const,
+  };
+  const storageStats = { pageCount: 3, totalTextBytes: 100, pagesMissingEmbeddings: 2 };
+
+  const bulkProps = () => ({
+    loadStatus: vi.fn().mockResolvedValue(keyedStatus),
+    loadKeywordReadyCount: vi.fn().mockResolvedValue(3),
+    loadStorageStats: vi.fn().mockResolvedValue(storageStats),
+    prepareBulkEnrich: vi.fn().mockResolvedValue({ batchId: "batch-t", count: 3 }),
+    startBulkEnrich: vi.fn().mockResolvedValue({ total: 3 }),
+  });
+
+  const canceledBroadcast = {
+    type: "bulk.progress" as const,
+    payload: {
+      kind: "enrich" as const,
+      done: 1,
+      total: 3,
+      failed: 0,
+      remaining: 2,
+      canceled: true,
+    },
+  };
+
+  async function startEnrichBatch(user: ReturnType<typeof userEvent.setup>) {
+    await user.click(
+      await screen.findByRole("button", { name: "Add AI features to local pages (3)" }),
+    );
+    await user.click(screen.getByRole("button", { name: "Add AI features" }));
+  }
+
+  it("keeps showing Canceling... after the cancel RPC resolves", async () => {
+    let resolveCancel!: () => void;
+    const cancelBulk = vi.fn().mockImplementation(
+      () =>
+        new Promise<void>((resolve) => {
+          resolveCancel = resolve;
+        }),
+    );
+    const { subscribe } = makeSubscribe();
+    const { user } = renderOptions({ ...bulkProps(), cancelBulk, subscribe });
+
+    await startEnrichBatch(user);
+    await user.click(await screen.findByRole("button", { name: "Cancel" }));
+    expect(screen.getByRole("button", { name: "Canceling..." })).toBeDisabled();
+
+    resolveCancel();
+    await act(async () => {});
+
+    expect(cancelBulk).toHaveBeenCalledOnce();
+    expect(screen.getByRole("button", { name: "Canceling..." })).toBeInTheDocument();
+    expect(screen.queryByText(/^Canceled\./)).not.toBeInTheDocument();
+  });
+
+  it("shows a persistent canceled terminal state with Dismiss after the canceled broadcast", async () => {
+    const { subscribe, emit } = makeSubscribe();
+    const { user } = renderOptions({ ...bulkProps(), subscribe });
+
+    await startEnrichBatch(user);
+    await emit(canceledBroadcast);
+
+    expect(
+      screen.getByText("Canceled. Processed 1 of 3 pages. 2 were not processed. 0 failed."),
+    ).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Dismiss" })).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Cancel" })).not.toBeInTheDocument();
+  });
+
+  it("re-enables the batch buttons once the terminal state appears", async () => {
+    const { subscribe, emit } = makeSubscribe();
+    const { user } = renderOptions({ ...bulkProps(), subscribe });
+
+    await startEnrichBatch(user);
+    expect(screen.getByRole("button", { name: /^Re-index semantic search/ })).toBeDisabled();
+    await emit(canceledBroadcast);
+
+    expect(screen.getByRole("button", { name: /^Add AI features to local pages/ })).toBeEnabled();
+    expect(screen.getByRole("button", { name: /^Re-index semantic search/ })).toBeEnabled();
+  });
+
+  it("clears the terminal state when Dismiss is clicked", async () => {
+    const { subscribe, emit } = makeSubscribe();
+    const { user } = renderOptions({ ...bulkProps(), subscribe });
+
+    await startEnrichBatch(user);
+    await emit(canceledBroadcast);
+    await user.click(screen.getByRole("button", { name: "Dismiss" }));
+
+    expect(screen.queryByText(/^Canceled\./)).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Dismiss" })).not.toBeInTheDocument();
+  });
+
+  it("replaces the terminal state when a new batch starts", async () => {
+    const { subscribe, emit } = makeSubscribe();
+    const { user } = renderOptions({ ...bulkProps(), subscribe });
+
+    await startEnrichBatch(user);
+    await emit(canceledBroadcast);
+    expect(screen.getByText(/^Canceled\./)).toBeInTheDocument();
+
+    await user.click(screen.getByRole("button", { name: "Add AI features to local pages (3)" }));
+    await user.click(screen.getByRole("button", { name: "Add AI features" }));
+
+    expect(screen.queryByText(/^Canceled\./)).not.toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Cancel" })).toBeInTheDocument();
+  });
+
+  it("keeps a visible completed terminal state after natural completion", async () => {
+    const { subscribe, emit } = makeSubscribe();
+    const { user } = renderOptions({ ...bulkProps(), subscribe });
+
+    await startEnrichBatch(user);
+    await emit({
+      type: "bulk.progress",
+      payload: { kind: "enrich", done: 3, total: 3, failed: 0, remaining: 0 },
+    });
+
+    expect(screen.getByText("Completed. Processed 3 of 3 pages. 0 failed.")).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Dismiss" })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: /^Add AI features to local pages/ })).toBeEnabled();
+  });
+
+  it("uses the same terminal display when cancellation is driven by Local-only mode", async () => {
+    const { subscribe, emit } = makeSubscribe();
+    const { user } = renderOptions({ ...bulkProps(), subscribe });
+
+    await startEnrichBatch(user);
+    await emit({
+      type: "bulk.progress",
+      payload: { kind: "enrich", done: 1, total: 3, failed: 0, remaining: 2 },
+    });
+    expect(screen.getByText(/Completed 1 of 3.*Remaining 2/)).toBeInTheDocument();
+
+    // Revoking consent makes the runner stop itself; no Cancel click happened.
+    await emit(canceledBroadcast);
+
+    expect(
+      screen.getByText("Canceled. Processed 1 of 3 pages. 2 were not processed. 0 failed."),
+    ).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Dismiss" })).toBeInTheDocument();
+  });
+});
+
+it("disables semantic re-index when no pages are missing embeddings", async () => {
   renderOptions({
     loadStatus: vi.fn().mockResolvedValue({ hasApiKey: true }),
     loadStorageStats: vi
@@ -124,7 +418,7 @@ it("disables re-index when no pages are missing embeddings", async () => {
       .mockResolvedValue({ pageCount: 3, totalTextBytes: 100, pagesMissingEmbeddings: 0 }),
   });
 
-  const button = await screen.findByRole("button", { name: /Re-index library/ });
+  const button = await screen.findByRole("button", { name: /Re-index semantic search/ });
   expect(button).toBeDisabled();
 });
 
@@ -186,26 +480,34 @@ it("calls deleteAll when user confirms deletion", async () => {
   expect(deleteAll).toHaveBeenCalledOnce();
 });
 
-it("starts a re-index and shows live progress", async () => {
+it("confirms semantic re-index and shows live progress", async () => {
   const { subscribe, emit } = makeSubscribe();
-  const startReindex = vi.fn().mockResolvedValue({ total: 2 });
+  const startReindexSemantic = vi.fn().mockResolvedValue({ total: 2 });
+  const prepareReindexSemantic = vi.fn().mockResolvedValue({ batchId: "semantic-1", count: 2 });
 
   renderOptions({
     loadStatus: vi.fn().mockResolvedValue({ hasApiKey: true }),
     loadStorageStats: vi
       .fn()
       .mockResolvedValue({ pageCount: 2, totalTextBytes: 100, pagesMissingEmbeddings: 2 }),
-    startReindex,
+    startReindexSemantic,
+    prepareReindexSemantic,
     subscribe,
   });
 
   const user = userEvent.setup();
-  const button = await screen.findByRole("button", { name: /Re-index library \(2\)/ });
+  const button = await screen.findByRole("button", { name: /Re-index semantic search \(2\)/ });
   await user.click(button);
 
-  expect(startReindex).toHaveBeenCalled();
-  await emit({ type: "library.reindexProgress", payload: { done: 1, total: 2 } });
-  expect(await screen.findByText(/Re-indexing 1\s*\/\s*2/)).toBeInTheDocument();
+  expect(startReindexSemantic).not.toHaveBeenCalled();
+  expect(screen.getByText(/Re-index 2 pages\?/)).toBeInTheDocument();
+  await user.click(screen.getByRole("button", { name: "Re-index semantic search" }));
+  expect(startReindexSemantic).toHaveBeenCalledWith("semantic-1");
+  await emit({
+    type: "bulk.progress",
+    payload: { kind: "semantic", done: 1, total: 2, failed: 0, remaining: 1 },
+  });
+  expect(await screen.findByText(/Completed 1 of 2.*Remaining 1/)).toBeInTheDocument();
 });
 
 // ── Error handling for data management actions ───────────────────────────────
@@ -285,7 +587,7 @@ it("lists the allowlisted domains", async () => {
 // ── Status-text dark: variant assertions ─────────────────────────────────────
 
 describe("Options status-text dark: variants", () => {
-  it("'Set an API key to re-index' warning carries dark:text-amber-300", async () => {
+  it("the API-key warning uses the required copy and dark-mode class", async () => {
     renderOptions({
       loadStatus: vi.fn().mockResolvedValue({ hasApiKey: false }),
       loadStorageStats: vi
@@ -293,7 +595,7 @@ describe("Options status-text dark: variants", () => {
         .mockResolvedValue({ pageCount: 5, totalTextBytes: 1024, pagesMissingEmbeddings: 2 }),
     });
 
-    const warning = await screen.findByText("Set an API key to re-index.");
+    const warning = (await screen.findAllByText("Add an API key to use AI features."))[0];
     expect(warning).toHaveClass("dark:text-amber-300");
   });
 
