@@ -392,6 +392,79 @@ describe("RetrievalService caching", () => {
 });
 
 describe("RetrievalService keyword arm", () => {
+  it.each(["local", "hybrid"] as const)(
+    "recalls a saved page in %s mode when only its title contains the query",
+    async (effectiveMode) => {
+      const local58Page = page("local58", "A Local58 retrospective", "bilibili.com");
+      const pageRecords = new Map([[local58Page.id, local58Page]]);
+      const chunks = [
+        chunk("local58-body", local58Page.id, 0, "video player scripts without useful metadata"),
+      ];
+
+      const outcome = await makeService(chunks, fakeEmbedder({}), "sk-test", pageRecords).search({
+        query: "local58",
+        effectiveMode,
+      });
+
+      expect(outcome.results.map((hit) => hit.page.id)).toEqual([local58Page.id]);
+      expect(outcome.results[0]).toMatchObject({
+        metadataMatches: {
+          titleHighlightedHtml: "A <mark>Local58</mark> retrospective",
+          summaryHighlightedHtml: null,
+        },
+      });
+    },
+  );
+
+  it.each(["local", "hybrid"] as const)(
+    "recalls a saved page in %s mode when only its summary contains the query",
+    async (effectiveMode) => {
+      const local58Page = {
+        ...page("local58-summary", "An analog horror retrospective", "bilibili.com"),
+        summary: "How Local58 changed online horror.",
+      };
+      const pageRecords = new Map([[local58Page.id, local58Page]]);
+      const chunks = [
+        chunk("local58-summary-body", local58Page.id, 0, "video player scripts and controls"),
+      ];
+
+      const outcome = await makeService(chunks, fakeEmbedder({}), "sk-test", pageRecords).search({
+        query: "local58",
+        effectiveMode,
+      });
+
+      expect(outcome.results).toHaveLength(1);
+      expect(outcome.results[0]).toMatchObject({
+        page: { id: local58Page.id },
+        metadataMatches: {
+          titleHighlightedHtml: null,
+          summaryHighlightedHtml: "How <mark>Local58</mark> changed online horror.",
+        },
+      });
+    },
+  );
+
+  it("combines a metadata keyword hit and content-chunk vector hit for the same page", async () => {
+    const local58Page = page("local58-both", "A Local58 retrospective", "bilibili.com");
+    const pageRecords = new Map([[local58Page.id, local58Page]]);
+    const chunks = [
+      chunk("local58-vector-body", local58Page.id, 0, "video player scripts and controls", [1, 0]),
+    ];
+
+    const outcome = await makeService(
+      chunks,
+      fakeEmbedder({ local58: [1, 0] }),
+      "sk-test",
+      pageRecords,
+    ).search({ query: "local58", effectiveMode: "hybrid" });
+
+    expect(outcome.results[0]).toMatchObject({
+      page: { id: local58Page.id },
+      matchReason: "both",
+      scores: { keyword: expect.any(Number), vector: expect.any(Number) },
+    });
+  });
+
   it("returns the best-matching page with a highlighted chunk", async () => {
     const outcome = await makeService().search({ query: "autoscale pods", effectiveMode: "local" });
 
@@ -465,5 +538,86 @@ describe("RetrievalService keyword arm", () => {
     expect(outcome.results[0].matchReason).toBe("keyword");
     expect(outcome.results[0].scores.vector).toBeNull();
     expect(embedder.embed).toHaveBeenCalled();
+  });
+});
+
+describe("RetrievalService page candidate limits", () => {
+  it("limits keyword candidates after collapsing matching documents to pages", async () => {
+    const repeatedPage = page("repeated", "Repeated body matches", "docs.example");
+    const metadataPage = page("metadata", `Local58 ${"background ".repeat(100)}`, "video.example");
+    const pageRecords = new Map([
+      [repeatedPage.id, repeatedPage],
+      [metadataPage.id, metadataPage],
+    ]);
+    const chunks = [
+      ...Array.from({ length: 55 }, (_, ordinal) =>
+        chunk(`repeated-${ordinal}`, repeatedPage.id, ordinal, "local58 local58 local58"),
+      ),
+      chunk("metadata-body", metadataPage.id, 0, "video player scripts and controls"),
+    ];
+
+    const outcome = await makeService(chunks, fakeEmbedder({}), "sk-test", pageRecords).search({
+      query: "local58",
+      effectiveMode: "local",
+    });
+
+    expect(outcome.results.map((hit) => hit.page.id)).toEqual([repeatedPage.id, metadataPage.id]);
+  });
+
+  it("limits vector candidates after collapsing matching chunks to pages", async () => {
+    const repeatedPage = page("repeated-vector", "Repeated vectors", "docs.example");
+    const secondPage = page("second-vector", "Second vector page", "video.example");
+    const pageRecords = new Map([
+      [repeatedPage.id, repeatedPage],
+      [secondPage.id, secondPage],
+    ]);
+    const chunks = [
+      ...Array.from({ length: 55 }, (_, ordinal) =>
+        chunk(`vector-${ordinal}`, repeatedPage.id, ordinal, "unrelated body", [1, 0]),
+      ),
+      chunk("second-vector-body", secondPage.id, 0, "different unrelated body", [0.8, 0.6]),
+    ];
+
+    const outcome = await makeService(
+      chunks,
+      fakeEmbedder({ "semantic lookup": [1, 0] }),
+      "sk-test",
+      pageRecords,
+    ).search({ query: "semantic lookup", effectiveMode: "hybrid" });
+
+    expect(outcome.results.map((hit) => hit.page.id)).toEqual([repeatedPage.id, secondPage.id]);
+  });
+
+  it("does not expose keyword evidence from outside the keyword page limit", async () => {
+    const keywordPages = Array.from({ length: 50 }, (_, index) =>
+      page(`keyword-${index}`, `Keyword page ${index}`, "docs.example"),
+    );
+    const vectorPage = {
+      ...page("vector-only", "Vector result", "video.example"),
+      summary: `Local58 ${"background ".repeat(100)}`,
+    };
+    const pageRecords = new Map(
+      [...keywordPages, vectorPage].map((record): [string, PageRecord] => [record.id, record]),
+    );
+    const chunks = [
+      ...keywordPages.map((record, index) =>
+        chunk(`keyword-body-${index}`, record.id, 0, "local58 local58 local58"),
+      ),
+      chunk("vector-only-body", vectorPage.id, 0, "unrelated video player", [1, 0]),
+    ];
+
+    const outcome = await makeService(
+      chunks,
+      fakeEmbedder({ local58: [1, 0] }),
+      "sk-test",
+      pageRecords,
+    ).search({ query: "local58", effectiveMode: "hybrid", topK: 51 });
+
+    const vectorHit = outcome.results.find((hit) => hit.page.id === vectorPage.id);
+    expect(vectorHit).toMatchObject({
+      matchReason: "vector",
+      metadataMatches: { titleHighlightedHtml: null, summaryHighlightedHtml: null },
+      scores: { keyword: null, vector: expect.any(Number) },
+    });
   });
 });

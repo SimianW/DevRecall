@@ -32,6 +32,7 @@ function makeHit(overrides: Partial<PageHit> = {}): PageHit {
       ordinal: 0,
       highlightedHtml: "React lets you build user interfaces out of <mark>components</mark>.",
     },
+    metadataMatches: { titleHighlightedHtml: null, summaryHighlightedHtml: null },
     scores: { keyword: 2.1, vector: null, fused: 2.1 },
     matchReason: "keyword",
     ...overrides,
@@ -39,6 +40,46 @@ function makeHit(overrides: Partial<PageHit> = {}): PageHit {
 }
 
 describe("SearchResultCard", () => {
+  it("highlights matched metadata and shows the matched summary as result text", () => {
+    const { container } = render(
+      <SearchResultCard
+        hit={makeHit({
+          metadataMatches: {
+            titleHighlightedHtml: "Learn <mark>React</mark>",
+            summaryHighlightedHtml: "The official <mark>React</mark> learning path.",
+          },
+        })}
+      />,
+    );
+
+    expect(container.querySelector("h2 mark")?.textContent).toBe("React");
+    expect(container.querySelector("h2")).toHaveClass(
+      "[&_mark]:bg-amber-400/40",
+      "[&_mark]:text-foreground",
+    );
+    const resultText = container.querySelector("article > p.mt-2");
+    expect(resultText?.textContent).toBe("The official React learning path.");
+    expect(resultText?.querySelector("mark")?.textContent).toBe("React");
+  });
+
+  it("keeps the content chunk when only the title matches", () => {
+    const { container } = render(
+      <SearchResultCard
+        hit={makeHit({
+          metadataMatches: {
+            titleHighlightedHtml: "Learn <mark>React</mark>",
+            summaryHighlightedHtml: null,
+          },
+        })}
+      />,
+    );
+
+    expect(container.querySelector("h2 mark")?.textContent).toBe("React");
+    expect(container.querySelector("article > p.mt-2")?.textContent).toBe(
+      "React lets you build user interfaces out of components.",
+    );
+  });
+
   it("uses semantic theme tokens for the search result surface", () => {
     const { container } = render(<SearchResultCard hit={makeHit()} />);
 

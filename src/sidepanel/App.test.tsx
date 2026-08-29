@@ -48,6 +48,7 @@ function makeHit(page = makePage()): PageHit {
       ordinal: 0,
       highlightedHtml: "The HorizontalPodAutoscaler automatically scales <mark>pods</mark>.",
     },
+    metadataMatches: { titleHighlightedHtml: null, summaryHighlightedHtml: null },
     scores: { keyword: 2.1, vector: null, fused: 2.1 },
     matchReason: "keyword",
   };

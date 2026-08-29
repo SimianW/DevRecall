@@ -92,6 +92,12 @@ export type ChunkRecord = {
 
 export type SearchMatchReason = "keyword" | "vector" | "both";
 
+/** Safe highlight HTML for matching fields; null means that field did not match. */
+export type MetadataMatches = {
+  titleHighlightedHtml: string | null;
+  summaryHighlightedHtml: string | null;
+};
+
 export type PageHit = {
   page: PageListItem;
   bestChunk: {
@@ -99,10 +105,11 @@ export type PageHit = {
     ordinal: number;
     highlightedHtml: string; // matched terms wrapped in <mark>, HTML-escaped
   };
+  metadataMatches: MetadataMatches;
   scores: {
-    keyword: number | null; // BM25 score, or null if the keyword arm missed this chunk
-    vector: number | null; // cosine score, or null if the vector arm missed this chunk
-    fused: number; // RRF fused score (the ranking key)
+    keyword: number | null; // Best page-level BM25 document score, or null when outside the arm
+    vector: number | null; // Best page-level cosine score, or null when outside the arm
+    fused: number; // Page-level RRF score, the final ranking key
   };
   matchReason: SearchMatchReason;
 };

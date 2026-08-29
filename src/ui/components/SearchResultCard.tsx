@@ -20,16 +20,24 @@ const BADGE: Record<SearchMatchReason, { label: string; className: string }> = {
   },
 };
 
+const HIGHLIGHT_STYLES =
+  "[&_mark]:rounded [&_mark]:bg-amber-400/40 [&_mark]:px-0.5 [&_mark]:text-foreground";
+
 export function SearchResultCard({ hit, onDelete }: SearchResultCardProps) {
-  const { page, bestChunk, matchReason } = hit;
+  const { page, bestChunk, matchReason, metadataMatches } = hit;
   const badge = BADGE[matchReason];
+  const resultHtml = metadataMatches.summaryHighlightedHtml ?? bestChunk.highlightedHtml;
 
   return (
     <article className="rounded-lg border border-default bg-surface-raised px-4 py-3 text-foreground shadow-sm">
       <div className="flex items-start justify-between gap-2">
-        <h2 className="font-serif text-sm font-semibold text-foreground">
+        <h2 className={`font-serif text-sm font-semibold text-foreground ${HIGHLIGHT_STYLES}`}>
           <a href={page.url} target="_blank" rel="noopener noreferrer" className="hover:underline">
-            {page.title}
+            {metadataMatches.titleHighlightedHtml === null ? (
+              page.title
+            ) : (
+              <span dangerouslySetInnerHTML={{ __html: metadataMatches.titleHighlightedHtml }} />
+            )}
           </a>
         </h2>
         <span
@@ -42,8 +50,8 @@ export function SearchResultCard({ hit, onDelete }: SearchResultCardProps) {
       <p className="mt-1 text-xs text-foreground/60">{page.domain}</p>
 
       <p
-        className="mt-2 text-sm leading-6 text-foreground/75 [&_mark]:rounded [&_mark]:bg-amber-400/40 [&_mark]:px-0.5 [&_mark]:text-foreground"
-        dangerouslySetInnerHTML={{ __html: bestChunk.highlightedHtml }}
+        className={`mt-2 text-sm leading-6 text-foreground/75 ${HIGHLIGHT_STYLES}`}
+        dangerouslySetInnerHTML={{ __html: resultHtml }}
       />
 
       {page.topics.length > 0 && (
