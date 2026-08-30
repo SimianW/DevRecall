@@ -184,6 +184,10 @@ async function makeHarness(
       isEnabled: vi.fn(async () => false),
       setEnabled: vi.fn(async () => undefined),
     },
+    persistentStorage: {
+      request: vi.fn(async () => "unknown" as const),
+      getState: vi.fn(async () => "unknown" as const),
+    },
     modeStore,
   };
 

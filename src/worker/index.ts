@@ -14,6 +14,7 @@ import { BulkTaskRunner } from "./services/BulkTaskRunner";
 import { ChromeApiKeyStore } from "./settings/ApiKeyStore";
 import { ChromeAutoSaveSettingStore } from "./settings/AutoSaveSettingStore";
 import { ChromeModeStore } from "./settings/ModeStore";
+import { createPersistentStoragePort } from "./settings/PersistentStorage";
 import { handleMessage, processPageInBackground, type HandlerDeps } from "./handlers";
 
 function broadcast(message: WorkerBroadcast): void {
@@ -33,6 +34,7 @@ const autoSaveSettings = new ChromeAutoSaveSettingStore();
 const apiKeyStore = new ChromeApiKeyStore();
 const modeStore = new ChromeModeStore();
 const bulkRunner = new BulkTaskRunner();
+const persistentStorage = createPersistentStoragePort();
 const defaultDeps: HandlerDeps = {
   captureService,
   pageRepo,
@@ -47,6 +49,7 @@ const defaultDeps: HandlerDeps = {
   },
   broadcast,
   autoSaveSettings,
+  persistentStorage,
 };
 
 // A killed worker may leave a paid request's completion unknown. Recover the
@@ -81,6 +84,7 @@ const autoSaveService = new AutoSaveService(
 
 if (typeof chrome !== "undefined" && chrome.runtime?.onInstalled) {
   chrome.runtime.onInstalled.addListener(() => {
+    void persistentStorage.request();
     console.info("[DevRecall] installed");
   });
 }

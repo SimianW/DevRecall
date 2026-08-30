@@ -18,8 +18,6 @@ export function escapeHtml(value: string): string {
  * The returned HTML is safe to render.
  */
 export function highlightTerms(text: string, terms: string[]): string {
-  const escaped = escapeHtml(text);
-
   // Terms from the BM25 tokenizer are already stems (e.g. "autoscal" from
   // "autoscaler"). Store them as-is so we can match a text word either by
   // exact lowercase equality or by stemming the text word and checking its
@@ -27,18 +25,55 @@ export function highlightTerms(text: string, terms: string[]): string {
   const termSet = new Set(terms.map((term) => term.trim().toLowerCase()).filter(Boolean));
 
   if (termSet.size === 0) {
-    return escaped;
+    return escapeHtml(text);
   }
 
-  // Replace every alphanumeric word run with itself wrapped in <mark> when the
-  // text word matches a term either by exact lowercase equality (for raw terms)
-  // or by stemming the text word and checking against the term set (for when
-  // terms are already Porter stems, as emitted by the BM25 tokenizer).
-  return escaped.replace(/\b([a-z0-9]+)\b/gi, (match) => {
-    const lower = match.toLowerCase();
+  const ranges: Array<{ start: number; end: number }> = [];
+  const latinWord = /\b([a-z0-9]+)\b/gi;
+  for (const match of text.matchAll(latinWord)) {
+    const word = match[0];
+    const start = match.index;
+    const lower = word.toLowerCase();
     if (termSet.has(lower) || termSet.has(stem(lower))) {
-      return `<mark>${match}</mark>`;
+      ranges.push({ start, end: start + word.length });
     }
-    return match;
-  });
+  }
+
+  // CJK queries are tokenized into overlapping bigrams. Record every matched
+  // span against the original text, then merge overlaps so a multi-character
+  // query produces valid, contiguous <mark> markup.
+  const cjkTerm = /[぀-ヿ㐀-䶿一-鿿가-힯]/;
+  for (const term of termSet) {
+    if (!cjkTerm.test(term)) continue;
+    let start = text.indexOf(term);
+    while (start !== -1) {
+      ranges.push({ start, end: start + term.length });
+      start = text.indexOf(term, start + 1);
+    }
+  }
+
+  if (ranges.length === 0) {
+    return escapeHtml(text);
+  }
+
+  ranges.sort((left, right) => left.start - right.start || left.end - right.end);
+  const merged: Array<{ start: number; end: number }> = [];
+  for (const range of ranges) {
+    const previous = merged.at(-1);
+    if (previous && range.start <= previous.end) {
+      previous.end = Math.max(previous.end, range.end);
+    } else {
+      merged.push({ ...range });
+    }
+  }
+
+  let cursor = 0;
+  let highlighted = "";
+  for (const range of merged) {
+    highlighted += escapeHtml(text.slice(cursor, range.start));
+    highlighted += `<mark>${escapeHtml(text.slice(range.start, range.end))}</mark>`;
+    cursor = range.end;
+  }
+  highlighted += escapeHtml(text.slice(cursor));
+  return highlighted;
 }

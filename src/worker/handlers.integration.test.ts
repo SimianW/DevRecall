@@ -218,6 +218,10 @@ async function makeHarness(options: HarnessOptions = {}): Promise<Harness> {
       isEnabled: vi.fn(async () => false),
       setEnabled: vi.fn(async () => undefined),
     },
+    persistentStorage: {
+      request: vi.fn(async () => "unknown" as const),
+      getState: vi.fn(async () => "unknown" as const),
+    },
   };
 
   async function send(request: DevRecallRequest): Promise<DevRecallResponse> {

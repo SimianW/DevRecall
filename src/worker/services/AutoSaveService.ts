@@ -26,6 +26,7 @@
 
 import { normalizeUrl } from "../../lib/urlNormalize";
 import { isAllowlisted } from "../../shared/allowlist";
+import type { PageStatus } from "../../shared/types";
 
 // Re-export so existing test imports continue to work.
 export { ALLOWLIST_PATTERNS, isAllowlisted } from "../../shared/allowlist";
@@ -59,7 +60,7 @@ export type AutoSaveCapturePort = {
 
 export type AutoSaveDedupePort = {
   /** Look up an existing page by URL hash. Resolves to undefined if not found. */
-  getByUrlHash(urlHash: string): Promise<{ status: string } | undefined>;
+  getByUrlHash(urlHash: string): Promise<{ status: PageStatus } | undefined>;
 };
 
 export type AutoSaveEnabledPort = {
@@ -222,7 +223,7 @@ export class AutoSaveService {
     // local-only pages must not be duplicated by a later alarm.
     const { urlHash } = await normalizeUrl(entry.url);
     const existing = await this.dedupe.getByUrlHash(urlHash);
-    if (existing && ["pending", "keyword_ready", "enriching", "ready"].includes(existing.status)) {
+    if (existing && existing.status !== "failed") {
       await this.session.remove(alarmName(tabId));
       return;
     }

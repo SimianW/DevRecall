@@ -38,6 +38,7 @@ const renderOptions = (props: Partial<React.ComponentProps<typeof Options>> = {}
       hasApiKey: false,
       storedMode: "hybrid" as const,
       effectiveMode: "local" as const,
+      persistentStorage: "unknown" as const,
     }),
     loadMode: vi.fn().mockResolvedValue({ storedMode: "hybrid", effectiveMode: "local" }),
     saveApiKey: vi.fn().mockResolvedValue(undefined),
@@ -68,6 +69,17 @@ describe("Options", () => {
 
     // Test connection button present (also disabled initially)
     expect(screen.getByRole("button", { name: "Test connection" })).toBeDisabled();
+  });
+
+  it("shows whether browser storage protection was granted", async () => {
+    renderOptions({
+      loadStatus: vi.fn().mockResolvedValue({
+        hasApiKey: false,
+        persistentStorage: "granted",
+      }),
+    });
+
+    expect(await screen.findByText("Browser storage protection: Granted")).toBeInTheDocument();
   });
 
   it("enables save button when API key is entered", async () => {

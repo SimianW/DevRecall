@@ -10,7 +10,8 @@ type ModeResult = Extract<DevRecallResponse, { type: "settings.mode" }>["payload
 type StoredMode = ModeResult["storedMode"];
 type EffectiveMode = ModeResult["effectiveMode"];
 type StatusResult = Pick<SettingsStatusPayload, "hasApiKey"> &
-  Partial<Pick<SettingsStatusPayload, "storedMode" | "effectiveMode">>;
+  Partial<Pick<SettingsStatusPayload, "storedMode" | "effectiveMode" | "persistentStorage">>;
+type PersistentStorageState = SettingsStatusPayload["persistentStorage"];
 type TestResult = { success: boolean; message: string };
 type StorageStats = { pageCount: number; totalTextBytes: number; pagesMissingEmbeddings: number };
 type BulkOp = "enrich" | "semantic";
@@ -233,6 +234,7 @@ export function Options({
   const [exportError, setExportError] = useState<string | null>(null);
   const [deleteError, setDeleteError] = useState<string | null>(null);
   const [autoSaveEnabled, setAutoSaveEnabled] = useState(false);
+  const [persistentStorage, setPersistentStorage] = useState<PersistentStorageState>("unknown");
 
   const refreshMode = () => {
     loadMode()
@@ -265,6 +267,7 @@ export function Options({
       setKeySaved(status.hasApiKey);
       if (status.storedMode) setStoredMode(status.storedMode);
       if (status.effectiveMode) setEffectiveMode(status.effectiveMode);
+      setPersistentStorage(status.persistentStorage ?? "unknown");
     });
   }, [loadStatus]);
 
@@ -797,6 +800,14 @@ export function Options({
             {storageStats == null
               ? "Loading..."
               : `${storageStats.pageCount} ${storageStats.pageCount === 1 ? "page" : "pages"}, ${(storageStats.totalTextBytes / 1_048_576).toFixed(2)} MB`}
+          </p>
+          <p className="mt-1 text-sm text-foreground/65">
+            Browser storage protection:{" "}
+            {persistentStorage === "granted"
+              ? "Granted"
+              : persistentStorage === "denied"
+                ? "Not granted"
+                : "Unknown"}
           </p>
         </section>
 

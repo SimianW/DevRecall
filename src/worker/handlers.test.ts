@@ -91,6 +91,18 @@ describe("worker request handler", () => {
     expect(deps.modeStore.setStoredMode).not.toHaveBeenCalled();
   });
 
+  it("reports whether browser storage persistence was granted", async () => {
+    const deps = makeDeps();
+    deps.persistentStorage.getState = vi.fn().mockResolvedValue("granted");
+
+    const response = await handleRequest({ type: "settings.getStatus" }, deps);
+
+    expect(response).toMatchObject({
+      type: "settings.status",
+      payload: { persistentStorage: "granted" },
+    });
+  });
+
   it("stores Local-only and stops a running bulk queue", async () => {
     const deps = makeDeps({ apiKey: "sk-test", storedMode: "hybrid" });
 
@@ -643,6 +655,10 @@ function makeDeps(
     autoSaveSettings: {
       isEnabled: vi.fn().mockResolvedValue(false),
       setEnabled: vi.fn().mockResolvedValue(undefined),
+    },
+    persistentStorage: {
+      request: vi.fn().mockResolvedValue("unknown"),
+      getState: vi.fn().mockResolvedValue("unknown"),
     },
   };
 }

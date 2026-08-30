@@ -15,6 +15,7 @@ import type { BulkTaskProgress, BulkTaskRunnerPort } from "./services/BulkTaskRu
 import type { ApiKeyStore } from "./settings/ApiKeyStore";
 import type { AutoSaveSettingStore } from "./settings/AutoSaveSettingStore";
 import type { ModeStore } from "./settings/ModeStore";
+import type { PersistentStoragePort } from "./settings/PersistentStorage";
 
 export type CapturePort = {
   save(tabId: number, saveMode?: "manual" | "auto"): Promise<PageRecord>;
@@ -64,6 +65,7 @@ export type HandlerDeps = {
   semanticIndex: { embeddingModel: string; indexVersion: number };
   broadcast: (message: WorkerBroadcast) => void;
   autoSaveSettings: AutoSaveSettingStore;
+  persistentStorage: PersistentStoragePort;
 };
 
 const automaticPrivacyRevision = new WeakMap<HandlerDeps, number>();
@@ -265,7 +267,7 @@ export async function handleRequest(
         type: "settings.status",
         payload: {
           hasApiKey: mode.hasApiKey,
-          persistentStorage: "unknown",
+          persistentStorage: await deps.persistentStorage.getState(),
           storedMode: await deps.modeStore.getStoredMode(),
           effectiveMode: mode.effectiveMode,
         },
