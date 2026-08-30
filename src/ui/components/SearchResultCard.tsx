@@ -6,21 +6,38 @@ type SearchResultCardProps = {
 };
 
 const BADGE: Record<SearchMatchReason, { label: string; className: string }> = {
-  keyword: { label: "keyword", className: "bg-emerald-100 text-emerald-700" },
-  vector: { label: "matched by meaning", className: "bg-violet-100 text-violet-700" },
-  both: { label: "keyword + meaning", className: "bg-sky-100 text-sky-700" },
+  keyword: {
+    label: "keyword",
+    className: "bg-emerald-500/10 text-emerald-700 dark:text-emerald-300",
+  },
+  vector: {
+    label: "matched by meaning",
+    className: "bg-violet-500/10 text-violet-700 dark:text-violet-300",
+  },
+  both: {
+    label: "keyword + meaning",
+    className: "bg-sky-500/10 text-sky-700 dark:text-sky-300",
+  },
 };
 
+const HIGHLIGHT_STYLES =
+  "[&_mark]:rounded [&_mark]:bg-amber-400/40 [&_mark]:px-0.5 [&_mark]:text-foreground";
+
 export function SearchResultCard({ hit, onDelete }: SearchResultCardProps) {
-  const { page, bestChunk, matchReason } = hit;
+  const { page, bestChunk, matchReason, metadataMatches } = hit;
   const badge = BADGE[matchReason];
+  const resultHtml = metadataMatches.summaryHighlightedHtml ?? bestChunk.highlightedHtml;
 
   return (
-    <article className="rounded-md border border-slate-200 bg-white px-3 py-3">
+    <article className="rounded-lg border border-default bg-surface-raised px-4 py-3 text-foreground shadow-sm">
       <div className="flex items-start justify-between gap-2">
-        <h2 className="text-sm font-semibold text-slate-900">
+        <h2 className={`font-serif text-sm font-semibold text-foreground ${HIGHLIGHT_STYLES}`}>
           <a href={page.url} target="_blank" rel="noopener noreferrer" className="hover:underline">
-            {page.title}
+            {metadataMatches.titleHighlightedHtml === null ? (
+              page.title
+            ) : (
+              <span dangerouslySetInnerHTML={{ __html: metadataMatches.titleHighlightedHtml }} />
+            )}
           </a>
         </h2>
         <span
@@ -30,19 +47,19 @@ export function SearchResultCard({ hit, onDelete }: SearchResultCardProps) {
         </span>
       </div>
 
-      <p className="mt-1 text-xs text-slate-500">{page.domain}</p>
+      <p className="mt-1 text-xs text-foreground/60">{page.domain}</p>
 
       <p
-        className="mt-2 text-sm text-slate-600 [&_mark]:rounded [&_mark]:bg-amber-200 [&_mark]:px-0.5 [&_mark]:text-slate-900"
-        dangerouslySetInnerHTML={{ __html: bestChunk.highlightedHtml }}
+        className={`mt-2 text-sm leading-6 text-foreground/75 ${HIGHLIGHT_STYLES}`}
+        dangerouslySetInnerHTML={{ __html: resultHtml }}
       />
 
       {page.topics.length > 0 && (
-        <div className="mt-2 flex flex-wrap gap-1">
+        <div className="mt-3 flex flex-wrap gap-2">
           {page.topics.map((topic) => (
             <span
               key={topic}
-              className="inline-flex items-center rounded-full bg-slate-100 px-2 py-0.5 text-xs text-slate-600"
+              className="inline-flex items-center rounded-full border border-default/80 bg-foreground/5 px-2 py-1 text-xs text-foreground/75"
             >
               {topic}
             </span>
@@ -50,12 +67,12 @@ export function SearchResultCard({ hit, onDelete }: SearchResultCardProps) {
         </div>
       )}
 
-      <div className="mt-3 flex items-center justify-end gap-3 border-t border-slate-100 pt-2">
+      <div className="mt-4 flex items-center justify-end gap-3 border-t border-default/80 pt-3">
         {onDelete && (
           <button
             type="button"
             onClick={() => onDelete(page.id)}
-            className="text-xs font-medium text-red-600 hover:underline"
+            className="text-xs font-medium text-red-700 hover:underline dark:text-red-300"
           >
             Delete
           </button>

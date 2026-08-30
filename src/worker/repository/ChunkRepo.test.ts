@@ -2,6 +2,7 @@ import { beforeEach, describe, expect, it } from "vitest";
 
 import { ChunkRepo } from "./ChunkRepo";
 import { DevRecallDatabase } from "./db";
+import { ContentType, Platform } from "../../shared/enums";
 import type { PageRecord } from "../../shared/types";
 
 describe("ChunkRepo", () => {
@@ -61,7 +62,8 @@ function makePage(id: string, status: PageRecord["status"]): PageRecord {
     urlHash: id.padEnd(64, "0"),
     title: "T",
     domain: "example.test",
-    sourceType: "unknown",
+    platform: Platform.Web,
+    contentType: ContentType.Page,
     summary: "",
     topics: [],
     technologies: [],

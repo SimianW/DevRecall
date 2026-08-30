@@ -1,0 +1,462 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>问题 2 拆解：#20 的 OpenAI 请求计数为什么还没被证明</title>
+    <style>
+      :root {
+        --bg: #faf6f1;
+        --surface: #fffdf9;
+        --ink: #26221d;
+        --muted: #6f675c;
+        --accent: #bf4b2a;
+        --accent-soft: #f5e3da;
+        --ok: #3d6b45;
+        --line: #e5dcd0;
+        --code-bg: #f1e9de;
+      }
+      @media (prefers-color-scheme: dark) {
+        :root {
+          --bg: #211d19;
+          --surface: #2a2521;
+          --ink: #ece5da;
+          --muted: #a89e90;
+          --accent: #e06b45;
+          --accent-soft: #40291f;
+          --ok: #8db994;
+          --line: #3d362f;
+          --code-bg: #332d27;
+        }
+      }
+      * {
+        box-sizing: border-box;
+      }
+      body {
+        margin: 0 auto;
+        max-width: 900px;
+        padding: 2.5rem 1.25rem 4rem;
+        background: var(--bg);
+        color: var(--ink);
+        font:
+          16px/1.75 system-ui,
+          "PingFang SC",
+          "Noto Sans CJK SC",
+          sans-serif;
+      }
+      h1 {
+        font-family: Georgia, "Noto Serif SC", serif;
+        font-size: 1.7rem;
+        line-height: 1.35;
+        margin: 0 0 0.4rem;
+      }
+      .subtitle {
+        color: var(--muted);
+        margin: 0 0 2.2rem;
+      }
+      h2 {
+        font-family: Georgia, "Noto Serif SC", serif;
+        font-size: 1.15rem;
+        margin: 2.6rem 0 0.9rem;
+        padding-bottom: 0.35rem;
+        border-bottom: 1px solid var(--line);
+      }
+      .card {
+        background: var(--surface);
+        border: 1px solid var(--line);
+        border-radius: 10px;
+        padding: 1.1rem 1.3rem;
+        margin: 1rem 0;
+      }
+      blockquote {
+        margin: 0;
+        padding-left: 1rem;
+        border-left: 3px solid var(--accent);
+        font-style: italic;
+      }
+      .verdict {
+        margin-top: 0.9rem;
+      }
+      .verdict strong {
+        color: var(--accent);
+      }
+      code {
+        font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+        font-size: 0.86em;
+        background: var(--code-bg);
+        border-radius: 4px;
+        padding: 0.12em 0.38em;
+      }
+      pre.code {
+        background: var(--code-bg);
+        border: 1px solid var(--line);
+        border-radius: 10px;
+        padding: 1rem 1.2rem;
+        overflow-x: auto;
+        font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+        font-size: 0.84rem;
+        line-height: 1.65;
+      }
+      table {
+        width: 100%;
+        border-collapse: collapse;
+        margin: 1rem 0;
+        font-size: 0.92rem;
+      }
+      th {
+        text-align: left;
+        font-weight: 600;
+        color: var(--muted);
+        text-transform: uppercase;
+        letter-spacing: 0.04em;
+        font-size: 0.74rem;
+        border-bottom: 2px solid var(--line);
+        padding: 0.5rem 0.65rem;
+      }
+      td {
+        border-bottom: 1px solid var(--line);
+        padding: 0.55rem 0.65rem;
+        vertical-align: top;
+      }
+      tr:last-child td {
+        border-bottom: none;
+      }
+
+      /* request-path diagram */
+      .path {
+        display: flex;
+        flex-wrap: wrap;
+        gap: 0.55rem;
+        align-items: stretch;
+        margin: 1.2rem 0 0.5rem;
+      }
+      .node {
+        flex: 1 1 120px;
+        min-width: 118px;
+        background: var(--surface);
+        border: 1px solid var(--line);
+        border-radius: 8px;
+        padding: 0.6rem 0.7rem;
+        text-align: center;
+        position: relative;
+      }
+      .node b {
+        display: block;
+        font-size: 0.9rem;
+      }
+      .node span {
+        display: block;
+        font-size: 0.74rem;
+        color: var(--muted);
+        margin-top: 0.15rem;
+      }
+      .arrow {
+        align-self: center;
+        color: var(--muted);
+        font-size: 1.05rem;
+        user-select: none;
+      }
+      .probe {
+        margin-top: 0.45rem;
+        font-size: 0.72rem;
+        line-height: 1.45;
+        border-radius: 5px;
+        padding: 0.22rem 0.3rem;
+        display: block;
+      }
+      .probe.now {
+        color: var(--ok);
+        border: 1px dashed var(--ok);
+      }
+      .probe.want {
+        color: var(--accent);
+        border: 1px dashed var(--accent);
+      }
+      .probe.miss {
+        color: var(--muted);
+        font-style: italic;
+      }
+      .legend {
+        display: flex;
+        gap: 1.4rem;
+        flex-wrap: wrap;
+        color: var(--muted);
+        font-size: 0.82rem;
+        margin: 0.6rem 0 0;
+      }
+      .legend i {
+        font-style: normal;
+      }
+      .legend .now-mark {
+        color: var(--ok);
+      }
+      .legend .want-mark {
+        color: var(--accent);
+      }
+      footer {
+        margin-top: 3rem;
+        color: var(--muted);
+        font-size: 0.85rem;
+        border-top: 1px solid var(--line);
+        padding-top: 1rem;
+      }
+    </style>
+  </head>
+  <body>
+    <h1>问题 2 拆解：<br />Issue&nbsp;#20 的 OpenAI 请求计数为什么还没被证明</h1>
+    <p class="subtitle">DevRecall · v1.0 收尾前的测试覆盖审计 · 2026-08-27</p>
+
+    <h2>验收要求什么</h2>
+    <div class="card">
+      <blockquote>
+        Worker and UI tests use observable OpenAI call counts to cover confirmation, sequential
+        progress, failure continuation, Cancel, Local-only precedence, and later reconfirmation.
+      </blockquote>
+      <p class="verdict">
+        六种行为，<strong>每一个都要用可观测的 OpenAI 请求次数证明</strong>。 现状是相关测试 63
+        项全绿，但没有一个数字来自真实 HTTP 出口：
+        计数全部发生在替身内部。替身只能回答「调度逻辑打算发几次」， 只有出口才能回答「OpenAI
+        实际收到了几次」。
+      </p>
+    </div>
+
+    <h2>一条批量付费请求的真实链路</h2>
+    <p>绿框标出今天各测试埋计数的位置，橙色虚线框是验收真正要数的出口。</p>
+    <div class="path">
+      <div class="node">
+        <b>Options / SidePanel</b><span>React UI</span>
+        <span class="probe now">UI 状态与终态断言<br />(Options.test.tsx)</span>
+      </div>
+      <div class="arrow">▸</div>
+      <div class="node">
+        <b>handlers.ts</b><span>handleRequest 调度</span>
+        <span class="probe now">mocked shouldContinue 翻转<br />(handlers.test.ts)</span>
+      </div>
+      <div class="arrow">▸</div>
+      <div class="node">
+        <b>BulkTaskRunner</b><span>runPage 循环</span>
+        <span class="probe now">runPage 次序与 cancel 返回值<br />(BulkTaskRunner.test.ts)</span>
+      </div>
+      <div class="arrow">▸</div>
+      <div class="node">
+        <b>CaptureService</b><span>processPage / reindexSemanticPage</span>
+        <span class="probe miss">无服务级计数</span>
+      </div>
+      <div class="arrow">▸</div>
+      <div class="node">
+        <b>OpenAIProvider</b><span>fetchWithRetry 循环</span>
+        <span class="probe now">maySend 撤销后不再 retry<br />(OpenAIProvider.test.ts)</span>
+      </div>
+      <div class="arrow">▸</div>
+      <div class="node">
+        <b>全局 fetch()</b><span>api.openai.com</span>
+        <span class="probe want">没有任何测试数过这个出口 ← 差距在这里</span>
+      </div>
+    </div>
+    <div class="legend">
+      <i><span class="now-mark">绿框</span>&nbsp;= 现有测试的计量点（都是替身）</i>
+      <i><span class="want-mark">橙框</span>&nbsp;= 验收要求的计量点（HTTP 出口）</i>
+    </div>
+
+    <h2>每页操作实际产生的请求数</h2>
+    <p>下文所有数字的前提，已经对着 <code>CaptureService.ts</code> 核实。</p>
+    <table>
+      <tr>
+        <th>操作</th>
+        <th>每页 HTTP 请求数</th>
+        <th>构成</th>
+      </tr>
+      <tr>
+        <td>Add AI features（enrich）</td>
+        <td><b>2</b></td>
+        <td>1 × chat/completions（打标）+ 1 × embeddings（整页 token chunks 批量一次）</td>
+      </tr>
+      <tr>
+        <td>Re-index semantic search</td>
+        <td><b>1</b></td>
+        <td>embeddings</td>
+      </tr>
+      <tr>
+        <td>Hybrid 查询</td>
+        <td><b>1</b></td>
+        <td>query embedding（不属于批量，仅供对照）</td>
+      </tr>
+    </table>
+
+    <h2>六种行为逐条对照</h2>
+    <table>
+      <tr>
+        <th>验收行为</th>
+        <th>今天的证据</th>
+        <th>数的是哪个替身</th>
+        <th>缺的证据</th>
+      </tr>
+      <tr>
+        <td>confirmation 显示准确数量</td>
+        <td>handlers.test.ts 的 prepared 快照；Options.test.tsx 确认弹窗文案</td>
+        <td>响应对象快照 / UI 断言</td>
+        <td>「确认了 3 页」从未和「随后恰好发出 6 次请求」对过账</td>
+      </tr>
+      <tr>
+        <td>sequential progress</td>
+        <td>BulkTaskRunner.test.ts 断言 runPage 触达顺序</td>
+        <td>传给 runner 的回调 mock</td>
+        <td>每页 chat 先于 embeddings、页面之间不并发，无从谈起</td>
+      </tr>
+      <tr>
+        <td>failure continuation</td>
+        <td>同文件构造 runPage 抛错后继续</td>
+        <td>回调层面的 failed 加一</td>
+        <td>provider 判定不可重试（400/401）时，整链的请求序列没有断言</td>
+      </tr>
+      <tr>
+        <td>Cancel</td>
+        <td>
+          canceled 进度事件 + Options 终态；provider 单元层证明撤销 maySend 后 retry 不再 fetch
+        </td>
+        <td>cancel() 返回值、进度事件、provider 内部 spy</td>
+        <td>取消点之后全局 fetch 增量为零没有被量过</td>
+      </tr>
+      <tr>
+        <td>Local-only precedence</td>
+        <td>handlers.test.ts 让 mocked gate 从 true 翻成 false</td>
+        <td>modeStore 替身的读数</td>
+        <td>真实模式翻转是否掐断下一次 fetch 未证</td>
+      </tr>
+      <tr>
+        <td>later reconfirmation</td>
+        <td>同文件第二个 begin 输入的 shouldContinue 再次为 true</td>
+        <td>runner 输入替身</td>
+        <td>重新确认后的新增请求数从停点续接仍缺</td>
+      </tr>
+    </table>
+
+    <h2>补法：一个真件集成套件</h2>
+    <p>
+      新建 <code>src/worker/handlers.integration.test.ts</code>（与已有的
+      <code>CaptureService.integration.test.ts</code> 平行）。关键差异只有一个：
+      <code>BulkTaskRunner</code> 用真的，<code>OpenAIProvider</code> 用真的， <code>fetch</code> 用
+      spy 换掉全局。
+    </p>
+    <pre class="code">
+// src/worker/handlers.integration.test.ts
+const fetchSpy = vi.fn();
+beforeEach(() =&gt; vi.stubGlobal("fetch", fetchSpy));
+afterEach(() =&gt; vi.unstubAllGlobals());
+
+function makeRealDeps(): HandlerDeps {
+  const pageRepo = new PageRepo();          // fake-indexeddb/auto 已全局生效
+  const chunkRepo = new ChunkRepo();
+  const openai = new OpenAIProvider([0, 0, 0]);   // 重试瞬时化，计数才确定
+  const captureService = new CaptureService(pageRepo, undefined, pageRepo,
+                                           openai, chunkRepo, openai);
+  const apiKeyStore = memoryKeyStore();     // 内存实现，仿 ChromeApiKeyStore 接口
+  const modeStore = memoryModeStore();      // 可变状态，供场景中途翻转
+  return {
+    captureService,
+    pageRepo,
+    apiKeyStore,
+    modeStore,
+    testConnection: testOpenAIConnection,
+    retrievalService: new RetrievalService(chunkRepo, pageRepo, openai, apiKeyStore),
+    bulkRunner: new BulkTaskRunner(),       // 关键：不再是 vi.fn()
+    semanticIndex: { embeddingModel: openai.embeddingModel, indexVersion: SEMANTIC_INDEX_VERSION },
+    broadcast: () =&gt; {},
+    autoSaveSettings: memoryAutoSaveSettingStore(),
+  };
+}
+// 场景即常规流程：先 handleRequest 存入 3 个 keyword_ready 页，
+// prepare 拿 batchId，再 bulkEnrich，最后 expect(fetchSpy).toHaveBeenCalledTimes(N)。</pre
+    >
+
+    <p>stub 响应必须长成 parser 认识的样子：</p>
+    <pre class="code">
+// 打标响应：choices[0].message.content 是一段 JSON 字符串
+{ choices: [{ message: { content: JSON.stringify({
+    summary: "s", contentType: "documentation",
+    topics: ["t"], technologies: ["x"], intent: "reference" }) } }] }
+
+// embeddings 响应：data 数量等于 input 条数，index 对位
+{ data: [{ index: 0, embedding: number[] }] }</pre
+    >
+
+    <h2>场景与精确计数（N = 3 页）</h2>
+    <table>
+      <tr>
+        <th>场景</th>
+        <th>干预时机</th>
+        <th>全局 fetch 终值</th>
+        <th>批内账目</th>
+      </tr>
+      <tr>
+        <td>全部成功</td>
+        <td>不干预</td>
+        <td><b>6</b></td>
+        <td>p1..p3 各 2 次，三页 ready</td>
+      </tr>
+      <tr>
+        <td>失败后继续</td>
+        <td>p2 的打标调用返回 400</td>
+        <td><b>5</b></td>
+        <td>p2 计 1 次即断、failed=1，p3 仍然继续</td>
+      </tr>
+      <tr>
+        <td>Cancel</td>
+        <td>p2 的打标请求在途中点 Cancel</td>
+        <td><b>3</b></td>
+        <td>
+          p1 完成两次；p2 在途的打标请求放行完成，其 embeddings 腿被授权撤销拦下；p3 不发起，进度报
+          canceled
+        </td>
+      </tr>
+      <tr>
+        <td>Local-only 切换压过确认</td>
+        <td>p1 提交后立即切 local</td>
+        <td><b>2</b></td>
+        <td>p2/p3 维持 keyword_ready 且无 enrichmentError</td>
+      </tr>
+      <tr>
+        <td>后续重新确认跑完剩余</td>
+        <td>上一步之后恢复 hybrid 再 begin</td>
+        <td><b>2</b>（累计回到 6）</td>
+        <td>新增恰为剩余 2 页 × 2</td>
+      </tr>
+      <tr>
+        <td>两页之间移除 key</td>
+        <td>setApiKey("") 于页边界</td>
+        <td><b>2</b></td>
+        <td>handler 同时调 bulkRunner.cancel()，之后零增量</td>
+      </tr>
+    </table>
+    <p style="color: var(--muted); font-size: 0.88rem">
+      Semantic re-index 的对照版本把「每页 2 次」换成 「每页 1 次
+      embeddings」即可复用同一骨架。数字假设每页文本产出单次 embedBatch；
+      若未来分块策略改成多次上传，先更新本表。
+    </p>
+
+    <h2>实现注意</h2>
+    <ul>
+      <li>
+        构造器注入 <code>[0, 0, 0]</code> 让重试瞬时；或者用 400/401
+        这类不可重试状态码，两种手段都能保证「一页 = 已知请求数」。429/5xx
+        会吃满全部重试才抛，别用它们做计数断言。
+      </li>
+      <li>
+        每个用例结束后清一次 Dexie（<code>Dexie.delete()</code> 或 repo 的
+        <code>deleteAll</code>），fake-indexeddb 是进程级的，脏数据会让下一案的计数漂移。
+      </li>
+      <li>不依赖 OPENAI_API_KEY，CI 任何环境可跑；这也意味着它可以放在 PR 必跑集里。</li>
+      <li>
+        验收里「UI tests」的一半不必强求穿透到真实 HTTP。合理读法：worker 侧拿这份计数证据，UI 侧在
+        Options.test.tsx 里补一行注释映射即可，在 issue 评论中说明对应关系。
+      </li>
+    </ul>
+
+    <footer>
+      引用文件：src/worker/handlers.ts · src/worker/index.ts（真件组装范例）·
+      src/worker/services/BulkTaskRunner.ts ·
+      src/worker/services/CaptureService.ts（每页请求构成出处）·
+      src/worker/llm/OpenAIProvider.ts（全局 fetch 与重试表）· docs/chrome-mv3-manual-acceptance.md
+    </footer>
+  </body>
+</html>

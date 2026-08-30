@@ -15,6 +15,21 @@ describe("SurfaceShell", () => {
     expect(screen.getByText("Ready")).toBeInTheDocument();
   });
 
+  it("uses shared semantic surface tokens", () => {
+    const { container } = render(
+      <SurfaceShell title="DevRecall">
+        <p>Ready</p>
+      </SurfaceShell>,
+    );
+
+    expect(container.firstChild).toHaveClass("bg-surface", "text-foreground");
+    expect(screen.getByRole("banner")).toHaveClass(
+      "border-default",
+      "bg-surface-raised",
+      "text-foreground",
+    );
+  });
+
   it("renders optional actions", () => {
     render(
       <SurfaceShell title="DevRecall" actions={<button type="button">Settings</button>}>

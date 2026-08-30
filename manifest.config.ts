@@ -9,7 +9,6 @@ export default defineManifest({
   version: pkg.version,
   action: {
     default_title: "DevRecall",
-    default_popup: "src/popup/index.html",
   },
   side_panel: {
     default_path: "src/sidepanel/index.html",
@@ -33,6 +32,6 @@ export default defineManifest({
       description: "Open the DevRecall side panel",
     },
   },
-  permissions: ["activeTab", "sidePanel", "scripting", "storage", "tabs"],
+  permissions: ["activeTab", "alarms", "sidePanel", "scripting", "storage", "tabs"],
   host_permissions: ["http://*/*", "https://*/*"],
 });

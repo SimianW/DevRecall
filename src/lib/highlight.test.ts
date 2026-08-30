@@ -22,4 +22,10 @@ describe("highlightTerms", () => {
   it("does not highlight partial-word matches", () => {
     expect(highlightTerms("autoscaler", ["auto"])).toBe("autoscaler");
   });
+
+  it("highlights overlapping CJK bigram matches as one valid span", () => {
+    expect(highlightTerms("使用自动扩缩功能", ["自动", "动扩", "扩缩"])).toBe(
+      "使用<mark>自动扩缩</mark>功能",
+    );
+  });
 });

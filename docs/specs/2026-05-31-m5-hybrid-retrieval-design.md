@@ -89,8 +89,8 @@ type ChunkRecord = {
 
 **`embedding` is optional, on the same table — not a second table.** Decided in
 brainstorming: a chunk and its vector are produced together (in `processPage`),
-deleted together, and loaded together (hybrid scoring needs text *and* vector of
-the *same* chunk in memory at once). Splitting them into two tables would force a
+deleted together, and loaded together (hybrid scoring needs text _and_ vector of
+the _same_ chunk in memory at once). Splitting them into two tables would force a
 cross-table join on every query and a cross-table transaction on every write,
 buying integrity risk for no benefit the M5 architecture can use. A future
 multi-model-vector need is handled by a schema migration when it arrives, not
@@ -114,9 +114,9 @@ document length (`avgdl`). M5 does **not** build it. Two reasons:
   read, no write-time bookkeeping. M4's `bm25Search` already computes `avgdl` from
   the documents it is handed; M5 keeps that.
 - **Unit consistency.** BM25's per-document length `|d|` is the count from BM25's
-  *own* `tokenize()`. `avgdl` must be in the same unit. Computing it from the same
+  _own_ `tokenize()`. `avgdl` must be in the same unit. Computing it from the same
   tokenizer over the in-memory chunk texts guarantees this; a persisted
-  tiktoken-based token total would be a *different* unit and would skew scores.
+  tiktoken-based token total would be a _different_ unit and would skew scores.
 
 So `avgdl` is derived from the in-memory chunk array (cached alongside it,
 recomputed when the array refreshes on `page.updated` / `page.removed`).
@@ -126,7 +126,7 @@ recomputed when the array refreshes on `page.updated` / `page.removed`).
 
 The new `ChunkRecord` fields (`embedding`, `embeddingModel`, `tokenCount`) are
 **not indexed** — they are read off the loaded record, never queried by. Dexie
-versions track *index* declarations, not record shape, so adding non-indexed
+versions track _index_ declarations, not record shape, so adding non-indexed
 optional fields requires **no `version()` bump and no migration function**. The
 schema stays at v2:
 
@@ -269,7 +269,7 @@ fused(c) = Σ_{i ∈ {keyword, vector}}  1 / (k + rank_i(c)),   k = 60
   scores higher → `matchReason: "both"`.
 - `matchReason` derives from which lists contained the winning chunk:
   - in keyword list only → `"keyword"`
-  - in vector list only → `"vector"`  ← the "matched by meaning" case
+  - in vector list only → `"vector"` ← the "matched by meaning" case
   - in both → `"both"`
 - `lib/rrf.ts` is pure: takes two ranked `string[]` (or `{id}` lists) and returns
   `Map<id, {fused, inKeyword, inVector}>`. Unit-testable in isolation.
@@ -312,7 +312,7 @@ refreshed on those broadcasts so search never reads stale chunks.
 
 ### 7.1 Live side-panel refresh
 
-The parent spec always *designed* for a `page.updated` broadcast; M4 never wired
+The parent spec always _designed_ for a `page.updated` broadcast; M4 never wired
 the listening side. M5 does:
 
 - Worker broadcasts `page.updated { page: PageListItem }` after `processPage`
