@@ -1,4 +1,4 @@
-import { bm25Search } from "../../lib/bm25";
+import { bm25Search, tokenize } from "../../lib/bm25";
 import { highlightTerms } from "../../lib/highlight";
 import { matchReasonFor, reciprocalRankFusion } from "../../lib/rrf";
 import { cosineTopK } from "../../lib/vector";
@@ -35,7 +35,7 @@ export type SearchOutcome = {
 };
 
 const DEFAULT_TOP_K = 10;
-const VECTOR_TOP_K = 50;
+const ARM_TOP_K = 50;
 const MAX_QUERY_CACHE = 20;
 // M6 Task 5: re-measured post-stemming (text-embedding-3-small, 2026-06).
 // The [0.30, 0.40) band only contains "hyperlinks" (0.384) — a peripheral
@@ -49,19 +49,37 @@ const MAX_QUERY_CACHE = 20;
 // like "reporting" → "report" that BM25 misses without stemming.
 const MIN_VECTOR_SCORE = 0.4;
 
-type FusedChunk = {
-  chunk: ChunkRecord;
-  fused: number;
-  keyword: number | null;
-  vector: number | null;
-  matchReason: PageHit["matchReason"];
-  matchedTerms: string[];
+type KeywordDocument = {
+  pageId: string;
+  text: string;
+  chunk: ChunkRecord | null;
+};
+
+type KeywordPageCandidate = {
+  score: number;
+  contentChunk: ChunkRecord | null;
+  contentTerms: string[];
+  metadataTerms: string[];
+};
+
+type VectorPageCandidate = {
+  score: number;
+  contentChunk: ChunkRecord;
 };
 
 type SearchCorpus = {
   chunks: ChunkRecord[];
   pages: Map<string, PageRecord>;
 };
+
+function highlightFieldMatch(text: string, matchedTerms: readonly string[]): string | null {
+  const fieldTerms = new Set(tokenize(text));
+  if (!matchedTerms.some((term) => fieldTerms.has(term))) {
+    return null;
+  }
+
+  return highlightTerms(text, [...matchedTerms]);
+}
 
 const SEARCHABLE_STATUSES = new Set<PageRecord["status"]>(["keyword_ready", "enriching", "ready"]);
 
@@ -162,24 +180,49 @@ export class RetrievalService {
       return { results: [], searchMode: effectiveMode };
     }
 
-    // Keyword arm — BM25-lite over every chunk's text (CJK-aware tokenizer).
-    const keywordScore = new Map<string, number>();
-    const matchedTerms = new Map<string, string[]>();
-    const keywordRanking: string[] = [];
+    // Keyword arm: one query-time metadata document per page plus every content chunk.
+    // Rank documents first, then collapse to pages so repeated chunks cannot crowd
+    // other pages out of the arm's candidate window.
+    const keywordDocuments: KeywordDocument[] = [
+      ...allChunks.map((chunk) => ({ pageId: chunk.pageId, text: chunk.text, chunk })),
+      ...Array.from(pages.values()).map((page) => ({
+        pageId: page.id,
+        text: `${page.title}\n${page.summary}`,
+        chunk: null,
+      })),
+    ];
+    const keywordCandidates = new Map<string, KeywordPageCandidate>();
+    const rankedKeywordPages: string[] = [];
     for (const hit of bm25Search(
       trimmed,
-      allChunks.map((c) => c.text),
+      keywordDocuments.map((document) => document.text),
+      { topK: keywordDocuments.length },
     )) {
-      const id = allChunks[hit.index].id;
-      keywordRanking.push(id);
-      keywordScore.set(id, hit.score);
-      matchedTerms.set(id, hit.matchedTerms);
+      const document = keywordDocuments[hit.index];
+      let candidate = keywordCandidates.get(document.pageId);
+      if (!candidate) {
+        candidate = {
+          score: hit.score,
+          contentChunk: null,
+          contentTerms: [],
+          metadataTerms: [],
+        };
+        keywordCandidates.set(document.pageId, candidate);
+        rankedKeywordPages.push(document.pageId);
+      }
+      if (document.chunk && !candidate.contentChunk) {
+        candidate.contentChunk = document.chunk;
+        candidate.contentTerms = hit.matchedTerms;
+      } else if (!document.chunk) {
+        candidate.metadataTerms = hit.matchedTerms;
+      }
     }
+    const keywordRanking = rankedKeywordPages.slice(0, ARM_TOP_K);
 
     // Vector arm — hybrid mode only. Any failure (missing key, embed error)
     // degrades the whole query to keyword_fallback rather than throwing.
-    const vectorScore = new Map<string, number>();
-    const vectorRanking: string[] = [];
+    const vectorCandidates = new Map<string, VectorPageCandidate>();
+    const rankedVectorPages: string[] = [];
     let degraded = false;
     let searchMode: SearchMode = effectiveMode;
     if (effectiveMode === "hybrid") {
@@ -199,11 +242,13 @@ export class RetrievalService {
             const queryVector = maySend
               ? await this.embedder.embed(trimmed, apiKey, maySend)
               : await this.embedder.embed(trimmed, apiKey);
-            for (const hit of cosineTopK(queryVector, allChunks, VECTOR_TOP_K)) {
+            for (const hit of cosineTopK(queryVector, allChunks, allChunks.length)) {
               if (hit.score < MIN_VECTOR_SCORE) break; // results are sorted desc, can break early
-              const id = allChunks[hit.index].id;
-              vectorRanking.push(id);
-              vectorScore.set(id, hit.score);
+              const chunk = allChunks[hit.index];
+              if (!vectorCandidates.has(chunk.pageId)) {
+                rankedVectorPages.push(chunk.pageId);
+                vectorCandidates.set(chunk.pageId, { score: hit.score, contentChunk: chunk });
+              }
             }
           }
         }
@@ -222,58 +267,62 @@ export class RetrievalService {
       searchMode = "keyword_fallback";
     }
 
+    const vectorRanking = rankedVectorPages.slice(0, ARM_TOP_K);
     const fused = reciprocalRankFusion(keywordRanking, vectorRanking);
 
     if (fused.size === 0) {
       return { results: [], searchMode };
     }
 
-    const chunkById = new Map(allChunks.map((c): [string, ChunkRecord] => [c.id, c]));
-
-    const bestByPage = new Map<string, FusedChunk>();
-    for (const [id, entry] of fused) {
-      const chunk = chunkById.get(id);
-      if (!chunk) {
-        continue;
-      }
-
-      const candidate: FusedChunk = {
-        chunk,
-        fused: entry.fused,
-        keyword: keywordScore.get(id) ?? null,
-        vector: vectorScore.get(id) ?? null,
-        matchReason: matchReasonFor(entry),
-        matchedTerms: matchedTerms.get(id) ?? [],
-      };
-
-      const current = bestByPage.get(chunk.pageId);
-      if (!current || candidate.fused > current.fused) {
-        bestByPage.set(chunk.pageId, candidate);
+    const firstChunkByPage = new Map<string, ChunkRecord>();
+    for (const chunk of allChunks) {
+      const current = firstChunkByPage.get(chunk.pageId);
+      if (!current || chunk.ordinal < current.ordinal) {
+        firstChunkByPage.set(chunk.pageId, chunk);
       }
     }
 
-    const ranked = Array.from(bestByPage.values()).sort((left, right) => right.fused - left.fused);
+    const ranked = Array.from(fused.entries()).sort(
+      ([, left], [, right]) => right.fused - left.fused,
+    );
 
     const results: PageHit[] = [];
-    for (const entry of ranked) {
+    for (const [pageId, entry] of ranked) {
       if (results.length >= topK) {
         break;
       }
 
-      const page = pages.get(entry.chunk.pageId);
-      if (!page) {
+      const page = pages.get(pageId);
+      const keywordCandidate = entry.inKeyword ? keywordCandidates.get(pageId) : undefined;
+      const vectorCandidate = entry.inVector ? vectorCandidates.get(pageId) : undefined;
+      const bestChunk =
+        keywordCandidate?.contentChunk ??
+        vectorCandidate?.contentChunk ??
+        firstChunkByPage.get(pageId);
+      if (!page || !bestChunk) {
         continue;
       }
+
+      const matchedTerms = keywordCandidate?.contentTerms ?? [];
+      const matchedMetadataTerms = keywordCandidate?.metadataTerms ?? [];
 
       results.push({
         page: toPageListItem(page),
         bestChunk: {
-          text: entry.chunk.text,
-          ordinal: entry.chunk.ordinal,
-          highlightedHtml: highlightTerms(entry.chunk.text, entry.matchedTerms),
+          text: bestChunk.text,
+          ordinal: bestChunk.ordinal,
+          highlightedHtml: highlightTerms(bestChunk.text, matchedTerms),
         },
-        scores: { keyword: entry.keyword, vector: entry.vector, fused: entry.fused },
-        matchReason: entry.matchReason,
+        metadataMatches: {
+          titleHighlightedHtml: highlightFieldMatch(page.title, matchedMetadataTerms),
+          summaryHighlightedHtml: highlightFieldMatch(page.summary, matchedMetadataTerms),
+        },
+        scores: {
+          keyword: keywordCandidate?.score ?? null,
+          vector: vectorCandidate?.score ?? null,
+          fused: entry.fused,
+        },
+        matchReason: matchReasonFor(entry),
       });
     }
 
