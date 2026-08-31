@@ -27,10 +27,7 @@ export default defineManifest({
     },
   ],
   commands: {
-    "open-side-panel": {
-      suggested_key: { default: "Ctrl+Shift+K", mac: "Command+Shift+K" },
-      description: "Open the DevRecall side panel",
-    },
+    _execute_action: {},
   },
   permissions: ["activeTab", "alarms", "sidePanel", "scripting", "storage", "tabs"],
   host_permissions: ["http://*/*", "https://*/*"],
