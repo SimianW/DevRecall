@@ -621,19 +621,9 @@ export function Options({
         <section className="rounded-md border border-default bg-surface-raised p-4">
           <h2 className="text-sm font-semibold text-foreground">Keyboard shortcut</h2>
           <p className="mt-2 text-sm text-foreground/65">
-            <kbd className="rounded border border-default bg-foreground/5 px-1 py-0.5 font-mono text-xs text-foreground/80">
-              ⌘ Shift K
-            </kbd>{" "}
-            /{" "}
-            <kbd className="rounded border border-default bg-foreground/5 px-1 py-0.5 font-mono text-xs text-foreground/80">
-              Ctrl Shift K
-            </kbd>{" "}
-            opens the side panel. To customize, open{" "}
+            Customize the keyboard shortcut by opening{" "}
             <span className="font-medium text-foreground/80">chrome://extensions/shortcuts</span> in
-            Chrome and find DevRecall.
-          </p>
-          <p className="mt-1 text-xs text-foreground/50">
-            Note: Chrome lets the shortcut open the panel but not close it.
+            Chrome and finding DevRecall.
           </p>
         </section>
 

@@ -201,6 +201,17 @@ describe("Local-only settings", () => {
       ),
     ).toBeInTheDocument();
   });
+
+  it("directs keyboard-shortcut setup to Chrome's shortcut controls", () => {
+    renderOptions();
+    const section = screen.getByRole("heading", { name: "Keyboard shortcut" }).closest("section");
+    expect(section).toHaveTextContent(
+      "Customize the keyboard shortcut by opening chrome://extensions/shortcuts in Chrome and finding DevRecall.",
+    );
+    expect(section).not.toHaveTextContent("Shift K");
+    expect(section).not.toHaveTextContent("Shift+K");
+    expect(section).not.toHaveTextContent("open the panel but not close it");
+  });
 });
 
 describe("confirmed bulk AI operations", () => {

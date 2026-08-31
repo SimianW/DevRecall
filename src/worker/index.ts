@@ -99,17 +99,9 @@ if (typeof chrome !== "undefined" && chrome.runtime?.onMessage) {
 }
 
 if (typeof chrome !== "undefined" && chrome.sidePanel?.setPanelBehavior) {
-  // Toolbar icon opens the side panel directly (no popup in v1.0).
+  // The reserved _execute_action command never fires onCommand. Chrome's native
+  // action behavior (openPanelOnActionClick) opens, selects, or closes the panel.
   void chrome.sidePanel.setPanelBehavior({ openPanelOnActionClick: true });
-}
-
-if (typeof chrome !== "undefined" && chrome.commands?.onCommand) {
-  chrome.commands.onCommand.addListener((command) => {
-    if (command === "open-side-panel" && chrome.sidePanel?.open) {
-      // Synchronous within the command gesture — no await before open().
-      void chrome.sidePanel.open({ windowId: chrome.windows.WINDOW_ID_CURRENT });
-    }
-  });
 }
 
 // ---------------------------------------------------------------------------
