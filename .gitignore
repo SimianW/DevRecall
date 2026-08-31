@@ -10,3 +10,12 @@ coverage/
 .superpowers/
 /scripts/
 Todo.md
+/docs/*
+!/docs/agents/
+!/docs/agents/**
+!/docs/assets/
+!/docs/assets/**
+!/docs/plans/
+!/docs/plans/**
+!/docs/specs/
+!/docs/specs/**
