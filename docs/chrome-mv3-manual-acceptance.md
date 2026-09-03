@@ -1,6 +1,6 @@
 # Chrome MV3 manual acceptance checklist
 
-Run this checklist before the v1.0 release. Record failures in the release issue before merging or tagging.
+Run this checklist before the v0.1.0 release. Record failures in the release issue before merging or tagging.
 
 ## Setup
 

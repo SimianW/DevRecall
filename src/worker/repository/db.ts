@@ -9,7 +9,7 @@ export class DevRecallDatabase extends Dexie {
   constructor(name = "devrecall") {
     super(name);
 
-    // No legacy migration is needed before v1.0 because no user data has shipped.
+    // No legacy migration is needed before v0.1.0 because no user data has shipped.
     this.version(1).stores({
       pages:
         "&id, urlHash, savedAt, domain, platform, contentType, status, [platform+savedAt], [contentType+savedAt]",

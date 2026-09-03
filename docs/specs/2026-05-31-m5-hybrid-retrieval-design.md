@@ -3,7 +3,7 @@
 **Date:** 2026-05-31
 **Status:** Draft
 **Author:** Simian Wang
-**Parent spec:** [DevRecall MVP (v1.0)](./2026-05-16-devrecall-mvp-design.md)
+**Parent spec:** [DevRecall MVP (v0.1.0)](./2026-05-16-devrecall-mvp-design.md)
 
 ---
 
@@ -39,10 +39,10 @@ spec) pass at the end of M5.
 
 - Auto-save on allowlist domains → M6.
 - Export-all-data, dark-mode pass, README demo GIF → M6.
-- RAG-generated answers → v1.1.
-- Local/WebGPU embedding models → v1.2+.
+- RAG-generated answers → v0.1.1.
+- Local/WebGPU embedding models → v0.1.2+.
 - ANN indexes (IVF/HNSW) — only if full-scan is measured slow on real data.
-- A real CJK word segmenter (jieba-class) → v1.2+ if bigrams measure insufficient.
+- A real CJK word segmenter (jieba-class) → v0.1.2+ if bigrams measure insufficient.
 - Filter-chip wiring to search results — chips remain decorative until M6 unless
   trivially free; not a success criterion here.
 
@@ -467,6 +467,6 @@ Follows the parent spec's three layers; ≥80% on new `lib/` and
   the encoder only inside `processPage` (the embed path), keeping it out of the
   search path. Flag during implementation if the bundle grows materially.
 - **Embedding dim assumption.** 1536 is hard-coded for `text-embedding-3-small`.
-  A model change is a re-index migration (v1.2+), not an M5 concern.
+  A model change is a re-index migration (v0.1.2+), not an M5 concern.
 - **Full-scan latency.** Benchmark target <50ms for cosine over demo-scale
   corpora; revisit ANN only if measured slow on real data (parent spec §7).

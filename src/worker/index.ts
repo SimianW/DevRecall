@@ -99,7 +99,7 @@ if (typeof chrome !== "undefined" && chrome.runtime?.onMessage) {
 }
 
 if (typeof chrome !== "undefined" && chrome.sidePanel?.setPanelBehavior) {
-  // Toolbar icon opens the side panel directly (no popup in v1.0).
+  // Toolbar icon opens the side panel directly (no popup in v0.1.0).
   void chrome.sidePanel.setPanelBehavior({ openPanelOnActionClick: true });
 }
 
