@@ -619,9 +619,13 @@ export function Options({
         </section>
 
         <section className="rounded-md border border-default bg-surface-raised p-4">
-          <h2 className="text-sm font-semibold text-foreground">Keyboard shortcut</h2>
+          <h2 className="text-sm font-semibold text-foreground">Keyboard shortcuts</h2>
+          <ul className="mt-2 list-disc space-y-1 pl-5 text-sm text-foreground/75">
+            <li>Toggle DevRecall side panel</li>
+            <li>Save current page to DevRecall</li>
+          </ul>
           <p className="mt-2 text-sm text-foreground/65">
-            Customize the keyboard shortcut by opening{" "}
+            Neither shortcut has a default binding. Assign them by opening{" "}
             <span className="font-medium text-foreground/80">chrome://extensions/shortcuts</span> in
             Chrome and finding DevRecall.
           </p>

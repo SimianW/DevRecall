@@ -8,6 +8,10 @@ DevRecall keeps a local library of technical pages so people can find useful mat
 A local library entry created from a captured technical page.
 _Avoid_: Bookmark, document
 
+**Manual save**:
+A saved page capture explicitly requested by a person, whether from the side panel or a keyboard shortcut.
+_Avoid_: Menu save, shortcut save
+
 **Content chunk**:
 An ordered segment of a saved page's extracted body text.
 _Avoid_: Snippet, passage

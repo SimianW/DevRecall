@@ -1,4 +1,9 @@
-import type { DevRecallRequest, DevRecallResponse, WorkerBroadcast } from "../shared/messages";
+import type {
+  DevRecallRequest,
+  DevRecallResponse,
+  ManualSaveResultResponse,
+  WorkerBroadcast,
+} from "../shared/messages";
 import { OpenAIProvider, testOpenAIConnection } from "./llm/OpenAIProvider";
 import { ChunkRepo } from "./repository/ChunkRepo";
 import { PageRepo, toPageListItemWithExcerpt } from "./repository/PageRepo";
@@ -15,7 +20,14 @@ import { ChromeApiKeyStore } from "./settings/ApiKeyStore";
 import { ChromeAutoSaveSettingStore } from "./settings/AutoSaveSettingStore";
 import { ChromeModeStore } from "./settings/ModeStore";
 import { createPersistentStoragePort } from "./settings/PersistentStorage";
-import { handleMessage, processPageInBackground, type HandlerDeps } from "./handlers";
+import {
+  handleMessage,
+  handleRequest,
+  processPageInBackground,
+  type HandlerDeps,
+} from "./handlers";
+import { normalizeUrl } from "../lib/urlNormalize";
+import { createFailureBadge, createManualSaveCommandHandler } from "./manualSaveCommand";
 
 function broadcast(message: WorkerBroadcast): void {
   if (typeof chrome === "undefined" || !chrome.runtime?.sendMessage) {
@@ -102,6 +114,43 @@ if (typeof chrome !== "undefined" && chrome.sidePanel?.setPanelBehavior) {
   // The reserved _execute_action command never fires onCommand. Chrome's native
   // action behavior (openPanelOnActionClick) opens, selects, or closes the panel.
   void chrome.sidePanel.setPanelBehavior({ openPanelOnActionClick: true });
+}
+
+if (typeof chrome !== "undefined" && chrome.commands?.onCommand) {
+  const handleManualSaveCommand = createManualSaveCommandHandler({
+    getPageKey: async (url) => (await normalizeUrl(url)).urlHash,
+    findPage: (pageKey) => pageRepo.getByUrlHash(pageKey),
+    save: async (tabId) => {
+      await handleRequest({ type: "page.save", payload: { tabId } }, defaultDeps);
+    },
+    getTabUrl: async (tabId) => {
+      try {
+        return (await chrome.tabs.get(tabId)).url ?? null;
+      } catch {
+        return null;
+      }
+    },
+    showPageResult: async (tabId, result) => {
+      try {
+        const response = (await chrome.tabs.sendMessage(
+          tabId,
+          { type: "manualSave.result", payload: { result } },
+          { frameId: 0 },
+        )) as ManualSaveResultResponse | undefined;
+        return response?.type === "manualSave.resultShown";
+      } catch {
+        return false;
+      }
+    },
+    showFailureBadge: createFailureBadge(chrome.action),
+    reportError: (error) => console.error("[DevRecall] manual save command failed:", error),
+  });
+
+  chrome.commands.onCommand.addListener((command, tab) => {
+    void handleManualSaveCommand(command, tab ?? {}).catch((error) => {
+      console.error("[DevRecall] shortcut command failed:", error);
+    });
+  });
 }
 
 // ---------------------------------------------------------------------------

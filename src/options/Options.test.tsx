@@ -204,13 +204,12 @@ describe("Local-only settings", () => {
 
   it("directs keyboard-shortcut setup to Chrome's shortcut controls", () => {
     renderOptions();
-    const section = screen.getByRole("heading", { name: "Keyboard shortcut" }).closest("section");
+    const section = screen.getByRole("heading", { name: "Keyboard shortcuts" }).closest("section");
     expect(section).toHaveTextContent(
-      "Customize the keyboard shortcut by opening chrome://extensions/shortcuts in Chrome and finding DevRecall.",
+      "Neither shortcut has a default binding. Assign them by opening chrome://extensions/shortcuts in Chrome and finding DevRecall.",
     );
-    expect(section).not.toHaveTextContent("Shift K");
-    expect(section).not.toHaveTextContent("Shift+K");
-    expect(section).not.toHaveTextContent("open the panel but not close it");
+    expect(section).toHaveTextContent("Toggle DevRecall side panel");
+    expect(section).toHaveTextContent("Save current page to DevRecall");
   });
 });
 

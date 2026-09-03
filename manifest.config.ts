@@ -40,6 +40,9 @@ export default defineManifest({
   ],
   commands: {
     _execute_action: {},
+    "save-current-page": {
+      description: "Save current page to DevRecall",
+    },
   },
   permissions: ["activeTab", "alarms", "sidePanel", "scripting", "storage", "tabs"],
   host_permissions: ["http://*/*", "https://*/*"],

@@ -2,7 +2,7 @@ import type { EffectiveMode, SearchMode, StoredMode } from "./modes";
 import type { ExtractedPage, PageHit, PageListItem, PageStatus } from "./types";
 
 export const APP_NAME = "DevRecall";
-export const APP_VERSION = "0.1.1.0";
+export const APP_VERSION = "0.1.2.0";
 
 export type PersistentStorageState = "unknown" | "granted" | "denied";
 
@@ -165,6 +165,17 @@ export type WorkerBroadcast =
 
 export type ContentExtractRequest = { type: "content.extract" };
 
+export type ManualSaveResult = "saved" | "already_saved" | "failed";
+
+export type ManualSaveResultNotification = {
+  type: "manualSave.result";
+  payload: { result: ManualSaveResult };
+};
+
+export type ContentScriptRequest = ContentExtractRequest | ManualSaveResultNotification;
+
+export type ManualSaveResultResponse = { type: "manualSave.resultShown" };
+
 export type ContentExtractResponse =
   | {
       type: "content.extracted";
@@ -176,3 +187,5 @@ export type ContentExtractResponse =
         message: string;
       };
     };
+
+export type ContentScriptResponse = ContentExtractResponse | ManualSaveResultResponse;

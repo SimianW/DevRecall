@@ -265,6 +265,16 @@ describe("worker request handler", () => {
     );
   });
 
+  it("reports local save success without waiting for Hybrid enrichment", async () => {
+    const deps = makeDeps({ apiKey: "sk-test", storedMode: "hybrid" });
+    deps.captureService.processPage = vi.fn().mockImplementation(() => new Promise(() => {}));
+
+    await expect(
+      handleRequest({ type: "page.save", payload: { tabId: 7 } }, deps),
+    ).resolves.toMatchObject({ type: "page.saved" });
+    await vi.waitFor(() => expect(deps.captureService.processPage).toHaveBeenCalledOnce());
+  });
+
   it("passes the effective mode to search and returns the actual search mode", async () => {
     const deps = makeDeps({ apiKey: "sk-test", storedMode: "hybrid" });
     deps.retrievalService.search = vi.fn().mockResolvedValue({

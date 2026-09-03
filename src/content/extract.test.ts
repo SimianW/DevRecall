@@ -1,6 +1,6 @@
-import { beforeEach, describe, expect, it } from "vitest";
+import { beforeEach, describe, expect, it, vi } from "vitest";
 
-import { extractPage } from "./extract";
+import { extractPage, handleContentScriptRequest } from "./extract";
 
 describe("extractPage", () => {
   beforeEach(() => {
@@ -33,5 +33,19 @@ describe("extractPage", () => {
     document.body.innerHTML = "<main></main>";
 
     expect(() => extractPage(document, () => 1)).toThrow("No readable page text found");
+  });
+
+  it("shows shortcut results only in the top frame", () => {
+    const showResult = vi.fn();
+    const sendResponse = vi.fn();
+    const request = { type: "manualSave.result", payload: { result: "saved" } } as const;
+
+    handleContentScriptRequest(request, sendResponse, { isTopFrame: false, showResult });
+    expect(showResult).not.toHaveBeenCalled();
+    expect(sendResponse).not.toHaveBeenCalled();
+
+    handleContentScriptRequest(request, sendResponse, { isTopFrame: true, showResult });
+    expect(showResult).toHaveBeenCalledWith("saved");
+    expect(sendResponse).toHaveBeenCalledWith({ type: "manualSave.resultShown" });
   });
 });
