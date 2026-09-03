@@ -2,13 +2,13 @@
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
-**Goal:** Finish v1.0 by shipping the M6 polish pass: allowlist auto-save on technical domains, export-all-data, detail-view cleanup, dark-mode polish, filter-chip wiring, retry UX for failed pages, a README + demo GIF, and the final release/tag. This plan also includes the retrieval-quality stemming task surfaced during M5 hardening.
+**Goal:** Finish v0.1.0 by shipping the M6 polish pass: allowlist auto-save on technical domains, export-all-data, detail-view cleanup, dark-mode polish, filter-chip wiring, retry UX for failed pages, a README + demo GIF, and the final release/tag. This plan also includes the retrieval-quality stemming task surfaced during M5 hardening.
 
-**Architecture:** M6 is the last planned milestone before v1.0. It builds on the merged M5 stack (token chunking, embeddings, hybrid retrieval, live refresh, delete/re-index, meaning badges) and closes the product loop: background auto-save driven by tab dwell time, explicit data export and delete-all flows, a polished page detail view, a final visual pass, and release packaging. Retrieval-quality cleanup happens in `lib/bm25.ts`: stem Latin tokens in the shared tokenizer so query and document normalization stay in lockstep.
+**Architecture:** M6 is the last planned milestone before v0.1.0. It builds on the merged M5 stack (token chunking, embeddings, hybrid retrieval, live refresh, delete/re-index, meaning badges) and closes the product loop: background auto-save driven by tab dwell time, explicit data export and delete-all flows, a polished page detail view, a final visual pass, and release packaging. Retrieval-quality cleanup happens in `lib/bm25.ts`: stem Latin tokens in the shared tokenizer so query and document normalization stay in lockstep.
 
 **Tech Stack:** TypeScript strict mode, React 18, Chrome MV3 (`tabs`, `commands`, `sidePanel`, `runtime` messaging), Dexie, Vitest, Testing Library, Tailwind CSS.
 
-**Parent spec:** [`docs/superpowers/specs/2026-05-16-devrecall-mvp-design.md`](../specs/2026-05-16-devrecall-mvp-design.md) — §6.1 (auto-save), §6.2 (delete flow), §7 (retrieval), §8 (surfaces), §10 (testing), §14 (milestones), §15 (v1.1+ out of scope).
+**Parent spec:** [`docs/superpowers/specs/2026-05-16-devrecall-mvp-design.md`](../specs/2026-05-16-devrecall-mvp-design.md) — §6.1 (auto-save), §6.2 (delete flow), §7 (retrieval), §8 (surfaces), §10 (testing), §14 (milestones), §15 (v0.1.1+ out of scope).
 
 **Reference notes:** [`HANDOFF.md`](../../../HANDOFF.md) — stemming task, threshold note, and the current M6 wording.
 
@@ -21,16 +21,16 @@
 M6 delivers the final MVP polish and ship items:
 
 - English stemming inside `src/lib/bm25.ts` so `stakeholder` matches `stakeholders`, `reporting` matches `report`, and similar morphology gaps close without touching CJK tokenization.
-- Allowlist auto-save on technical domains with a **`chrome.alarms`-based** 30s dwell timer (NOT `setTimeout` — see Task 2), cancel-on-tab-switch/navigation, dedup against already-saved pages, and the hard-coded v1.0 allowlist from the parent spec.
-- Export-all-data from Options as a JSON download of the local library state (include `schemaVersion` for forward-compat, even though import is v1.1+).
+- Allowlist auto-save on technical domains with a **`chrome.alarms`-based** 30s dwell timer (NOT `setTimeout` — see Task 2), cancel-on-tab-switch/navigation, dedup against already-saved pages, and the hard-coded v0.1.0 allowlist from the parent spec.
+- Export-all-data from Options as a JSON download of the local library state (include `schemaVersion` for forward-compat, even though import is v0.1.1+).
 - Detail-view polish: summary, chips, timestamps, retry action for failed saves, and a cleaner entry point for single-page delete. **Scope = polishing the existing expandable `PageCard`, not building a new routed detail page** (a separate view would be its own task).
 - **[M6 extension, beyond spec §14]** Filter-chip wiring so source-type chips actually filter the library/search surface instead of staying decorative.
 - **[M6 extension, beyond spec §14]** Delete-all-data with confirmation from Options, using the same transactional guarantees as single-page delete.
 - Dark-mode pass across popup, side panel, options, cards, and empty/loading states.
 - README install/run docs plus a short demo GIF.
-- Final version bump and `v1.0` tag.
+- Final version bump and `v0.1.0.0` tag.
 
-Out of scope (v1.1+):
+Out of scope (v0.1.1+):
 
 - RAG-generated answers.
 - User-editable allowlist UI.
@@ -287,7 +287,7 @@ Keep the change conservative and document why it is safe.
 
 ---
 
-## Task 6: Release M6 and tag v1.0
+## Task 6: Release M6 and tag v0.1.0.0
 
 **Files:**
 
@@ -295,7 +295,7 @@ Keep the change conservative and document why it is safe.
 - Modify: `package.json`
 - Modify: `src/shared/messages.ts`
 
-Finish with the release packaging: update the version, add the README install/run section and demo GIF, then tag the release as `v1.0`.
+Finish with the release packaging: update the version, add the README install/run section and demo GIF, then tag the release as `v0.1.0.0`.
 
 - [ ] **Step 1: Update release metadata**
 
@@ -305,7 +305,7 @@ Bump the 4-part version everywhere it is mirrored.
 
 Document setup, usage, and the 60-second demo GIF path.
 
-- [ ] **Step 3: Verify v1.0 success criteria before tagging**
+- [ ] **Step 3: Verify v0.1.0 success criteria before tagging**
 
 Gate the release on the parent spec's §3 criteria — in particular **#7: ≥80%
 unit-test coverage on `src/lib/**`and`src/worker/services/**`** (run the
@@ -314,4 +314,4 @@ coverage report and confirm), plus #2 (auto-save works end-to-end) and #6
 
 - [ ] **Step 4: Tag the release**
 
-Create the final `v1.0` tag once the branch is green and the criteria above hold.
+Create the final `v0.1.0.0` tag once the branch is green and the criteria above hold.

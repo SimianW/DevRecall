@@ -1,4 +1,4 @@
-# DevRecall MVP (v1.0) — Design
+# DevRecall MVP (v0.1.0) — Design
 
 **Date:** 2026-05-16
 **Status:** Reviewed
@@ -10,7 +10,7 @@
 
 DevRecall is a local-first Chrome extension that captures technical browsing sessions, summarizes and tags saved pages, and lets developers retrieve past documentation, GitHub issues, Stack Overflow answers, and debugging notes through natural-language search.
 
-This document specifies the v1.0 ("MVP") milestone: **capture + hybrid (keyword + vector) retrieval**, with no LLM-generated answers. RAG answer generation is designed-for and lives in v1.1.
+This document specifies the v0.1.0 ("MVP") milestone: **capture + hybrid (keyword + vector) retrieval**, with no LLM-generated answers. RAG answer generation is designed-for and lives in v0.1.1.
 
 ## 2. Goals & non-goals
 
@@ -19,16 +19,16 @@ This document specifies the v1.0 ("MVP") milestone: **capture + hybrid (keyword 
 - Ship a portfolio-grade Chrome extension demonstrating modern MV3 internals, React+Vite+TypeScript fluency, and a real retrieval system.
 - Make the "search by meaning, not by keyword" pitch demonstrable in a 60-second video.
 
-### Non-goals (v1.0)
+### Non-goals (v0.1.0)
 
 - Chrome Web Store launch.
-- RAG-generated answers (designed-for; deferred to v1.1).
-- Local embedding models (deferred to v1.5+).
+- RAG-generated answers (designed-for; deferred to v0.1.1).
+- Local embedding models (deferred to v0.1.5+).
 - Cross-device sync, encryption, screenshots, knowledge graphs.
 
 ## 3. Success criteria
 
-v1.0 ships when:
+v0.1.0 ships when:
 
 1. User clicks "Save" in the popup on any page → page appears in the side panel library within 5 seconds with summary + tags.
 2. Allowlist domains (GitHub, Stack Overflow, MDN, kubernetes.io, etc.) auto-save after 30s of dwell time.
@@ -89,7 +89,7 @@ Five components, talking via well-defined boundaries:
 
 ### Architectural decisions
 
-- **All UI talks through the worker.** Single place to change schema, single place to hold the API key, makes RAG drop-in for v1.1. Worker is the only DB writer → no write/write races.
+- **All UI talks through the worker.** Single place to change schema, single place to hold the API key, makes RAG drop-in for v0.1.1. Worker is the only DB writer → no write/write races.
 - **Retrieval lives inside the service worker** (not the side panel). The MV3 service-worker lifecycle is intentional surface area to learn and to display on a resume. Worker may be killed mid-search → mitigated by keeping retrieval state rebuildable from IndexedDB and using a 3s retry on the side-panel side.
 - **Typed RPC contract.** All `chrome.runtime` messages go through a single typed dispatcher with a `Request → Response` discriminated union. No string-typed event soup:
 
@@ -151,7 +151,7 @@ interface ChunkRecord {
 interface SettingsRecord {
   id: "singleton";
   // API key is NOT stored here — see § 5 "Non-obvious decisions". This field is
-  // reserved for a future encrypted-key feature flag and is unused in v1.0.
+  // reserved for a future encrypted-key feature flag and is unused in v0.1.0.
   apiKeyEncryptedRef?: string;
   llmProvider: "openai";
   llmModel: "gpt-4o-mini";
@@ -186,7 +186,7 @@ interface CorpusStatsRecord {
 - **`embeddingModel` per chunk.** Enables future migrations to know which chunks are stale.
 - **`status` field.** Save is async; UI shows pending/failed states. Without it the library would lie during slow saves.
 - **`schemaVersion: 1`** on records that may evolve. Dexie migrations key off this.
-- **No separate `tags` table.** Arrays on `PageRecord` are sufficient for v1.0.
+- **No separate `tags` table.** Arrays on `PageRecord` are sufficient for v0.1.0.
 - **API key in `chrome.storage.local`, not IndexedDB.** `chrome.storage.local` is partitioned per extension and unreachable from content scripts. Defense in depth.
 - **`navigator.storage.persist()` at install time.** IndexedDB is best-effort storage by default — Chrome can silently evict it under disk pressure. Called from the popup on first open (the only guaranteed window context early in the extension lifecycle; `chrome.runtime.onInstalled` runs in the service worker where `persist()` is unavailable). Options page shows whether persistent storage was granted. Without this, large stores can be cleared without warning.
 
@@ -245,7 +245,7 @@ interface CorpusStatsRecord {
 - If `domain ∈ allowlist`, start a 30s dwell timer keyed on `tabId`.
 - Also listens to `chrome.tabs.onActivated` — cancels any running dwell timer when the user switches away from a tab, since the page is no longer being viewed.
 - If still on the page after 30s and tab still active → `CaptureService.save(tabId, {mode:'auto'})`.
-- Allowlist hard-coded in v1.0: `['github.com', 'stackoverflow.com', 'developer.mozilla.org', 'kubernetes.io', 'docs.python.org', 'react.dev', 'nodejs.org', 'typescriptlang.org']`. User-editable in v1.1.
+- Allowlist hard-coded in v0.1.0: `['github.com', 'stackoverflow.com', 'developer.mozilla.org', 'kubernetes.io', 'docs.python.org', 'react.dev', 'nodejs.org', 'typescriptlang.org']`. User-editable in v0.1.1.
 
 ### Delete flow
 
@@ -285,7 +285,7 @@ interface CorpusStatsRecord {
 **Keyword — BM25-lite, ~80 lines.**
 
 - Tokenize query and chunk text identically (lowercase, split on `\W+`, drop stopwords).
-- For each unique query term, walk all chunks (full scan for v1.0).
+- For each unique query term, walk all chunks (full scan for v0.1.0).
 - Score: `Σ_terms IDF(t) · (tf · (k1+1)) / (tf + k1·(1 - b + b·|d|/avgdl))`, `k1=1.5, b=0.75`.
 - `avgdl = corpusStats.totalTokens / corpusStats.docCount` — loaded from the `corpusStats` table at query time. Updated atomically inside the step-7 capture transaction on every page upsert and delete so scores don't drift as the corpus grows.
 - Keep top-K (default 50).
@@ -295,7 +295,7 @@ interface CorpusStatsRecord {
 
 - Detect CJK codepoint ranges in both the query and chunk text.
 - Emit **character bigrams** for CJK runs (e.g. `自动扩缩` → `自动`, `动扩`, `扩缩`) while keeping the existing whitespace/`\W+` tokenization for Latin-script runs. The two token streams are concatenated, so mixed-language text ("React 服务端渲染") tokenizes correctly.
-- Bigrams are a deliberate middle ground: no dictionary, no WASM segmenter (`jieba`-class libraries are 1–5MB and complicate the MV3 bundle), but materially better recall than unigrams and good enough precision for BM25 ranking. A real segmenter is deferred to v1.2+ if measured insufficient.
+- Bigrams are a deliberate middle ground: no dictionary, no WASM segmenter (`jieba`-class libraries are 1–5MB and complicate the MV3 bundle), but materially better recall than unigrams and good enough precision for BM25 ranking. A real segmenter is deferred to v0.1.2+ if measured insufficient.
 - Vector search is the primary path for cross-lingual and semantic recall; `text-embedding-3-small` is multilingual, so Chinese queries match Chinese (and even English) chunks by meaning regardless of tokenization. CJK bigrams make the keyword arm of the hybrid useful rather than dead weight.
 
 **Vector — cosine over Float32Array, ~30 lines.**
@@ -574,14 +574,14 @@ Six commits' worth of meaningful checkpoints, each independently demoable.
 | M3  | **LLM tagging + summary**         | Save generates summary, sourceType, topics, technologies, intent via `OpenAIProvider`. Pending/ready/failed states visible. Options page accepts API key.                                                                                                                                                                             |
 | M4  | **Keyword search**                | Side panel search box runs BM25 over chunks-of-fullText (simple chunking, no embeddings yet). Results show match highlighting.                                                                                                                                                                                                        |
 | M5  | **Embeddings + hybrid retrieval** | Real token-based chunking; embeddings stored; vector search; RRF fusion; "matched by meaning" badge. The 5 hybrid-vs-keyword test queries pass. Side panel refreshes live on `page.updated` (card-level, no full reload). CJK bigram tokenization makes Chinese keyword search work. Keyboard shortcut opens the side panel directly. |
-| M6  | **Polish + auto-save + ship**     | Allowlist auto-save on technical domains. Export-all-data. Detail view. Dark-mode pass. README with demo GIF. v1.0 tag.                                                                                                                                                                                                               |
+| M6  | **Polish + auto-save + ship**     | Allowlist auto-save on technical domains. Export-all-data. Detail view. Dark-mode pass. README with demo GIF. v0.1.0.0 tag.                                                                                                                                                                                                           |
 
 Estimated effort: M1–M3 each ≈ one weekend; M4–M5 each ≈ one weekend; M6 ≈ one weekend. Total ≈ 6 weekends.
 
-## 15. Out of scope for v1.0 (designed-for, deferred)
+## 15. Out of scope for v0.1.0 (designed-for, deferred)
 
-- **v1.1** — RAG-generated answers using the v1.0 retrieval as input. Worker already has the chunks and LLM client; this is one prompt + one component.
-- **v1.1** — User-editable allowlist UI.
-- **v1.2+** — Local embedding models via Transformers.js / WebGPU (Phase 5 of the original proposal).
-- **v1.2+** — Chrome Web Store launch (privacy policy, store listing, BYO-API-key onboarding).
+- **v0.1.1** — RAG-generated answers using the v0.1.0 retrieval as input. Worker already has the chunks and LLM client; this is one prompt + one component.
+- **v0.1.1** — User-editable allowlist UI.
+- **v0.1.2+** — Local embedding models via Transformers.js / WebGPU (Phase 5 of the original proposal).
+- **v0.1.2+** — Chrome Web Store launch (privacy policy, store listing, BYO-API-key onboarding).
 - **Indefinitely** — sync, screenshots, knowledge graphs, encryption-at-rest, Notion export.

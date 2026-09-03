@@ -28,10 +28,13 @@ This repo uses the `mattpocock/skills` workflow. Route work through its skills:
 ## Non-negotiable rules
 
 1. **Version every code change.** Keep `package.json` `version` and `APP_VERSION` in
-   `src/shared/messages.ts` identical, using four-part `X.Y.Z.N`. Choose the highest
-   applicable release type: increment `X` for a major release, `Y` for a feature, or
-   `Z` for an update or bug fix. Reset every position to the right of the incremented
-   position to `0`. Reserve `N` for another build of the same `X.Y.Z` release.
+   `src/shared/messages.ts` identical, using four-part `X.Y.Z.N`. Before the stable
+   release, keep `X` at `0`, increment `Y` for a new milestone, and increment `Z` for
+   a feature, update, or bug fix within that milestone. Reserve `N` for another build
+   of unchanged source. Reset every position to the right of the incremented position
+   to `0`. Move to `1.0.0.0` only with explicit owner approval after the extension is
+   ready for a stable public release. After `1.0.0.0`, increment `X` for an incompatible
+   release, `Y` for a compatible feature, and `Z` for a compatible fix.
 2. **MV3 stops the worker after about 30 seconds of inactivity; in-memory globals are
    lost.** For delayed worker work that must survive suspension, use `chrome.alarms`
    with `chrome.storage.session` and register `onAlarm` at module scope.

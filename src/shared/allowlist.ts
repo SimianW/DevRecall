@@ -1,5 +1,5 @@
 /**
- * v1.0 auto-save allowlist of technical/documentation domains.
+ * v0.1.0 auto-save allowlist of technical/documentation domains.
  * A URL must match at least one pattern before a dwell timer is started.
  */
 export const ALLOWLIST_PATTERNS: RegExp[] = [
