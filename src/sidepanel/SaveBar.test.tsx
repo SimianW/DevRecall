@@ -2,6 +2,7 @@ import { render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { describe, expect, it, vi } from "vitest";
 
+import type { WorkerBroadcast } from "../shared/messages";
 import { SaveBar } from "./SaveBar";
 
 const tab = {
@@ -148,5 +149,90 @@ describe("SaveBar", () => {
     await waitFor(() => expect(getActiveTab).toHaveBeenCalledTimes(2));
     expect(screen.getByText("Using chrome.alarms")).toBeInTheDocument();
     expect(screen.queryByText("Old page")).not.toBeInTheDocument();
+  });
+
+  it("shows a retry action when the active-tab query fails", async () => {
+    const getActiveTab = vi
+      .fn()
+      .mockRejectedValueOnce(new Error("tabs unavailable"))
+      .mockResolvedValue(tab);
+    render(<SaveBar {...makeProps({ getActiveTab })} />);
+
+    expect(await screen.findByText("Could not refresh this page.")).toBeInTheDocument();
+    expect(screen.getByRole("alert")).toHaveTextContent("tabs unavailable");
+
+    await userEvent.setup().click(screen.getByRole("button", { name: "Retry" }));
+    expect(await screen.findByText("Using chrome.alarms")).toBeInTheDocument();
+    expect(getActiveTab).toHaveBeenCalledTimes(2);
+  });
+
+  it("refreshes status for page removal and library changes", async () => {
+    let broadcast!: (message: WorkerBroadcast) => void;
+    const subscribe = vi.fn().mockImplementation((handler) => {
+      broadcast = handler;
+      return () => {};
+    });
+    const loadUrlStatus = vi.fn().mockResolvedValue({ saved: false });
+    render(<SaveBar {...makeProps({ subscribe, loadUrlStatus })} />);
+    await screen.findByText("Using chrome.alarms");
+
+    broadcast({ type: "page.removed", payload: { id: "page-1" } });
+    await waitFor(() => expect(loadUrlStatus).toHaveBeenCalledTimes(2));
+    broadcast({ type: "library.changed" });
+    await waitFor(() => expect(loadUrlStatus).toHaveBeenCalledTimes(3));
+  });
+
+  it("does not let a stale save failure affect a newly active tab", async () => {
+    const newTab = { tabId: 8, title: "New page", url: "https://github.com/new" };
+    let rejectSave!: (error: Error) => void;
+    const saveTab = vi.fn().mockReturnValue(
+      new Promise<void>((_resolve, reject) => {
+        rejectSave = reject;
+      }),
+    );
+    const getActiveTab = vi.fn().mockResolvedValueOnce(tab).mockResolvedValueOnce(newTab);
+    let fireTabChange!: () => void;
+    const onTabChange = vi.fn().mockImplementation((handler: () => void) => {
+      fireTabChange = handler;
+      return () => {};
+    });
+    render(<SaveBar {...makeProps({ getActiveTab, saveTab, onTabChange })} />);
+
+    await userEvent.setup().click(await screen.findByRole("button", { name: /save to library/i }));
+    fireTabChange();
+    expect(await screen.findByText("New page")).toBeInTheDocument();
+    rejectSave(new Error("old save failed"));
+
+    await waitFor(() => expect(screen.getByRole("button")).toHaveTextContent("Save to library"));
+    expect(screen.queryByText("old save failed")).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: /save failed/i })).not.toBeInTheDocument();
+  });
+
+  it("disables saving on restricted browser URLs with an explanation", async () => {
+    const restrictedTab = {
+      tabId: 7,
+      title: "Extensions",
+      url: "chrome://extensions",
+    };
+    const loadUrlStatus = vi.fn().mockResolvedValue({ saved: false });
+    render(
+      <SaveBar
+        {...makeProps({ getActiveTab: vi.fn().mockResolvedValue(restrictedTab), loadUrlStatus })}
+      />,
+    );
+
+    expect(await screen.findByText("Extensions")).toBeInTheDocument();
+    expect(screen.getByRole("note")).toHaveTextContent("Only HTTP and HTTPS pages can be saved.");
+    expect(screen.getByRole("button", { name: "Save unavailable" })).toBeDisabled();
+    expect(loadUrlStatus).not.toHaveBeenCalled();
+  });
+
+  it("shows the worker save error while offering a retry", async () => {
+    const saveTab = vi.fn().mockRejectedValue(new Error("capture failed: no content"));
+    render(<SaveBar {...makeProps({ saveTab })} />);
+
+    await userEvent.setup().click(await screen.findByRole("button", { name: /save to library/i }));
+    expect(await screen.findByRole("alert")).toHaveTextContent("capture failed: no content");
+    expect(screen.getByRole("button", { name: /save failed.*try again/i })).toBeEnabled();
   });
 });

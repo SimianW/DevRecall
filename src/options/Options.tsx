@@ -1,9 +1,10 @@
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import type { ChangeEvent } from "react";
 import { SurfaceShell } from "../ui/components";
 import type { DevRecallResponse, WorkerBroadcast } from "../shared/messages";
-import { sendRequest, subscribeToBroadcasts } from "../ui/rpc";
+import { requireResponse, sendRequest, subscribeToBroadcasts } from "../ui/rpc";
 import { ALLOWLIST_DISPLAY } from "../shared/allowlist";
+import { ImportBackup } from "./ImportBackup";
 
 type SettingsStatusPayload = Extract<DevRecallResponse, { type: "settings.status" }>["payload"];
 type ModeResult = Extract<DevRecallResponse, { type: "settings.mode" }>["payload"];
@@ -47,12 +48,15 @@ const defaultLoadStatus = async (): Promise<StatusResult> => {
 };
 
 const defaultSaveApiKey = async (apiKey: string): Promise<void> => {
-  await sendRequest({ type: "settings.setApiKey", payload: { apiKey } }, "settings.apiKeySet");
+  await requireResponse({ type: "settings.setApiKey", payload: { apiKey } }, "settings.apiKeySet");
 };
 
 /** The RPC contract clears the key by storing an empty string. */
 const defaultRemoveApiKey = async (): Promise<void> => {
-  await sendRequest({ type: "settings.setApiKey", payload: { apiKey: "" } }, "settings.apiKeySet");
+  await requireResponse(
+    { type: "settings.setApiKey", payload: { apiKey: "" } },
+    "settings.apiKeySet",
+  );
 };
 
 const defaultTestConnection = async (): Promise<TestResult> => {
@@ -69,7 +73,7 @@ const defaultLoadMode = async (): Promise<ModeResult | null> => {
 };
 
 const defaultSetMode = async (mode: StoredMode): Promise<ModeResult | null> => {
-  const response = await sendRequest(
+  const response = await requireResponse(
     { type: "settings.setMode", payload: { mode } },
     "settings.modeSet",
   );
@@ -127,7 +131,7 @@ const defaultPrepareReindexSemantic = async (): Promise<PreparedBatch> => {
 };
 
 const defaultStartBulkEnrich = async (batchId: string): Promise<{ total: number }> => {
-  const response = await sendRequest(
+  const response = await requireResponse(
     { type: "library.bulkEnrich", payload: { batchId } },
     "library.bulkEnrichStarted",
   );
@@ -135,7 +139,7 @@ const defaultStartBulkEnrich = async (batchId: string): Promise<{ total: number 
 };
 
 const defaultStartReindexSemantic = async (batchId: string): Promise<{ total: number }> => {
-  const response = await sendRequest(
+  const response = await requireResponse(
     { type: "library.reindexSemantic", payload: { batchId } },
     "library.reindexSemanticStarted",
   );
@@ -143,18 +147,18 @@ const defaultStartReindexSemantic = async (batchId: string): Promise<{ total: nu
 };
 
 const defaultCancelBulk = async (): Promise<void> => {
-  await sendRequest({ type: "library.cancelBulk", payload: {} }, "library.bulkCanceled");
+  await requireResponse({ type: "library.cancelBulk", payload: {} }, "library.bulkCanceled");
 };
 
 const defaultSubscribe = subscribeToBroadcasts;
 
 const defaultExportData = async (): Promise<string> => {
-  const response = await sendRequest({ type: "data.export" }, "data.exported");
-  return response?.payload.json ?? "{}";
+  const response = await requireResponse({ type: "data.export" }, "data.exported");
+  return response.payload.json;
 };
 
 const defaultDeleteAll = async (): Promise<void> => {
-  await sendRequest({ type: "data.deleteAll" }, "data.deletedAll");
+  await requireResponse({ type: "data.deleteAll" }, "data.deletedAll");
 };
 
 const defaultLoadAutoSave = async (): Promise<boolean> => {
@@ -163,7 +167,10 @@ const defaultLoadAutoSave = async (): Promise<boolean> => {
 };
 
 const defaultSetAutoSave = async (enabled: boolean): Promise<void> => {
-  await sendRequest({ type: "settings.setAutoSave", payload: { enabled } }, "settings.autoSaveSet");
+  await requireResponse(
+    { type: "settings.setAutoSave", payload: { enabled } },
+    "settings.autoSaveSet",
+  );
 };
 
 const MODE_LABELS: Record<EffectiveMode, string> = {
@@ -212,6 +219,10 @@ export function Options({
 }: OptionsProps) {
   const [apiKey, setApiKey] = useState("");
   const [keySaved, setKeySaved] = useState(false);
+  const [savingKey, setSavingKey] = useState(false);
+  const [settingsError, setSettingsError] = useState<string | null>(null);
+  const [autoSaveBusy, setAutoSaveBusy] = useState(false);
+  const [modeBusy, setModeBusy] = useState(false);
   const [testResult, setTestResult] = useState<TestResult | null>(null);
   const [testing, setTesting] = useState(false);
   const [storedMode, setStoredMode] = useState<StoredMode | null>(null);
@@ -223,6 +234,7 @@ export function Options({
     null,
   );
   const [bulkOp, setBulkOp] = useState<BulkOp | null>(null);
+  const activeBulk = useRef<BulkOp | null>(null);
   const [bulkProgress, setBulkProgress] = useState<BulkProgress | null>(null);
   const [bulkError, setBulkError] = useState<string | null>(null);
   const [showEnrichConfirm, setShowEnrichConfirm] = useState(false);
@@ -263,12 +275,14 @@ export function Options({
   }, [loadAutoSave]);
 
   useEffect(() => {
-    loadStatus().then((status) => {
-      setKeySaved(status.hasApiKey);
-      if (status.storedMode) setStoredMode(status.storedMode);
-      if (status.effectiveMode) setEffectiveMode(status.effectiveMode);
-      setPersistentStorage(status.persistentStorage ?? "unknown");
-    });
+    loadStatus()
+      .then((status) => {
+        setKeySaved(status.hasApiKey);
+        if (status.storedMode) setStoredMode(status.storedMode);
+        if (status.effectiveMode) setEffectiveMode(status.effectiveMode);
+        setPersistentStorage(status.persistentStorage ?? "unknown");
+      })
+      .catch(() => setSettingsError("Could not load settings. Reopen this page to try again."));
   }, [loadStatus]);
 
   useEffect(() => {
@@ -281,23 +295,42 @@ export function Options({
 
   useEffect(() => {
     const unsubscribe = subscribe((message) => {
-      if (message.type === "bulk.progress" && message.payload.kind === bulkOp) {
+      if (message.type === "bulk.progress" && message.payload.kind === activeBulk.current) {
         setBulkProgress(message.payload);
         // Keep the final payload visible: it renders as the terminal state.
         if (isBulkProgressTerminal(message.payload)) {
           setBulkOp(null);
+          activeBulk.current = null;
           setCancelingBulk(false);
           refreshCounts();
         }
+      } else if (message.type === "settings.changed") {
+        setKeySaved(message.payload.hasApiKey);
+        setStoredMode(message.payload.storedMode);
+        setEffectiveMode(message.payload.effectiveMode);
+      } else if (
+        message.type === "page.updated" ||
+        message.type === "page.removed" ||
+        message.type === "library.changed" ||
+        message.type === "library.cleared"
+      ) {
+        refreshCounts();
       }
     });
     return unsubscribe;
-  }, [subscribe, loadStorageStats, loadKeywordReadyCount, bulkOp]);
+  }, [subscribe, loadStorageStats, loadKeywordReadyCount]);
 
   const handleToggleAutoSave = (e: ChangeEvent<HTMLInputElement>) => {
     const next = e.target.checked;
+    setSettingsError(null);
+    setAutoSaveBusy(true);
     setAutoSaveEnabled(next);
-    setAutoSave(next).catch(() => setAutoSaveEnabled(!next)); // roll back on failure
+    setAutoSave(next)
+      .catch(() => {
+        setAutoSaveEnabled(!next);
+        setSettingsError("Could not update auto-save. Please try again.");
+      })
+      .finally(() => setAutoSaveBusy(false));
   };
 
   const handleToggleLocalOnly = (e: ChangeEvent<HTMLInputElement>) => {
@@ -306,6 +339,8 @@ export function Options({
     const previousMode = storedMode;
     const previousEffective = effectiveMode;
     const nextMode: StoredMode = next ? "local" : "hybrid";
+    setSettingsError(null);
+    setModeBusy(true);
     setStoredMode(nextMode); // optimistic; rolled back if the worker rejects
     setMode(nextMode)
       .then((result) => {
@@ -315,21 +350,32 @@ export function Options({
         } else {
           setStoredMode(previousMode);
           setEffectiveMode(previousEffective);
+          setSettingsError("Could not change search mode. Please try again.");
         }
       })
       .catch(() => {
         setStoredMode(previousMode);
         setEffectiveMode(previousEffective);
-      });
+        setSettingsError("Could not change search mode. Please try again.");
+      })
+      .finally(() => setModeBusy(false));
   };
 
   const handleSave = async () => {
-    if (!apiKey.trim()) return;
-    await saveApiKey(apiKey.trim());
-    setKeySaved(true);
-    setApiKey(""); // clear input for security/ux
-    setTestResult(null); // clear previous test results
-    refreshMode(); // A saved key can make the stored Hybrid preference effective again.
+    if (!apiKey.trim() || savingKey) return;
+    setSettingsError(null);
+    setSavingKey(true);
+    try {
+      await saveApiKey(apiKey.trim());
+      setKeySaved(true);
+      setApiKey("");
+      setTestResult({ success: true, message: "API key saved." });
+      refreshMode();
+    } catch (error) {
+      setSettingsError(error instanceof Error ? error.message : "Could not save the API key.");
+    } finally {
+      setSavingKey(false);
+    }
   };
 
   const handleRemoveApiKey = async () => {
@@ -354,6 +400,11 @@ export function Options({
     try {
       const result = await testConnection();
       setTestResult(result);
+    } catch (error) {
+      setTestResult({
+        success: false,
+        message: error instanceof Error ? error.message : "Connection test failed.",
+      });
     } finally {
       setTesting(false);
     }
@@ -365,6 +416,7 @@ export function Options({
     setShowEnrichConfirm(false);
     setPreparedBulkEnrich(null);
     setBulkError(null);
+    activeBulk.current = "enrich";
     setBulkOp("enrich");
     setBulkProgress({
       kind: "enrich",
@@ -375,13 +427,14 @@ export function Options({
     });
     try {
       const { total } = await startBulkEnrich(preparation.batchId);
-      setBulkProgress({ kind: "enrich", done: 0, total, failed: 0, remaining: total });
-      if (total === 0) {
+      if (total === 0 && activeBulk.current === "enrich") {
+        activeBulk.current = null;
         setBulkOp(null);
         setBulkProgress(null);
         refreshCounts();
       }
     } catch (err) {
+      activeBulk.current = null;
       setBulkOp(null);
       setBulkProgress(null);
       setBulkError(err instanceof Error ? err.message : "Could not start adding AI features");
@@ -394,6 +447,7 @@ export function Options({
     setShowSemanticConfirm(false);
     setPreparedReindexSemantic(null);
     setBulkError(null);
+    activeBulk.current = "semantic";
     setBulkOp("semantic");
     setBulkProgress({
       kind: "semantic",
@@ -404,13 +458,14 @@ export function Options({
     });
     try {
       const { total } = await startReindexSemantic(preparation.batchId);
-      setBulkProgress({ kind: "semantic", done: 0, total, failed: 0, remaining: total });
-      if (total === 0) {
+      if (total === 0 && activeBulk.current === "semantic") {
+        activeBulk.current = null;
         setBulkOp(null);
         setBulkProgress(null);
         refreshCounts();
       }
     } catch (err) {
+      activeBulk.current = null;
       setBulkOp(null);
       setBulkProgress(null);
       setBulkError(err instanceof Error ? err.message : "Could not start re-indexing");
@@ -491,7 +546,7 @@ export function Options({
               type="checkbox"
               checked={!keySaved || storedMode === "local"}
               onChange={handleToggleLocalOnly}
-              disabled={storedMode == null || !keySaved}
+              disabled={storedMode == null || !keySaved || modeBusy}
               className="h-4 w-4 accent-accent"
             />
             Local-only mode
@@ -502,9 +557,9 @@ export function Options({
             </p>
           )}
           <p className="mt-2 text-sm text-foreground/65">
-            Pages stay in this browser. DevRecall uses keyword search and does not automatically
-            contact OpenAI. Content is sent to OpenAI only when you explicitly choose Add AI
-            features for one or more saved pages.
+            {effectiveMode === "hybrid"
+              ? "Hybrid search sends search queries to OpenAI, and newly saved pages may be sent for AI summaries and semantic indexing. Your library is stored in this browser."
+              : "Pages stay in this browser. DevRecall uses keyword search and does not automatically contact OpenAI. Content is sent to OpenAI only when you explicitly choose Add AI features for one or more saved pages."}
           </p>
         </section>
 
@@ -517,18 +572,24 @@ export function Options({
               value={apiKey}
               onChange={(e) => setApiKey(e.target.value)}
               placeholder={keySaved ? "API key is set" : "sk-..."}
-              className="flex-1 rounded-md border border-default bg-surface-raised px-3 py-2 text-sm text-foreground outline-none placeholder:text-foreground/45 focus:border-accent focus:ring-2 focus:ring-accent/20"
+              className="min-w-0 flex-1 rounded-md border border-default bg-surface-raised px-3 py-2 text-sm text-foreground outline-none placeholder:text-foreground/45 focus:border-accent focus:ring-2 focus:ring-accent/20"
             />
             <button
               type="button"
               onClick={handleSave}
-              disabled={!apiKey.trim()}
+              disabled={!apiKey.trim() || savingKey}
               className="rounded-md bg-accent px-4 py-2 text-sm font-medium text-white transition-colors hover:bg-accent/90 disabled:bg-foreground/15 disabled:text-foreground/50 disabled:hover:bg-foreground/15"
             >
-              Save
+              {savingKey ? "Saving..." : "Save"}
             </button>
           </div>
         </label>
+
+        {settingsError && (
+          <p role="alert" className="text-sm text-red-700 dark:text-red-300">
+            {settingsError}
+          </p>
+        )}
 
         <div className="flex flex-col gap-2">
           <div className="flex flex-wrap gap-3">
@@ -597,6 +658,7 @@ export function Options({
             <input
               type="checkbox"
               checked={autoSaveEnabled}
+              disabled={autoSaveBusy}
               onChange={handleToggleAutoSave}
               className="h-4 w-4 accent-accent"
             />
@@ -634,9 +696,11 @@ export function Options({
         <section className="rounded-md border border-default bg-surface-raised p-4">
           <h2 className="text-sm font-semibold text-foreground">AI features</h2>
           <p className="mt-2 text-sm text-foreground/65">
-            AI features are opt-in: summaries, tags, and meaning-based search are only generated
-            when you ask for them. Adding AI features sends full page text to OpenAI. Semantic
-            re-indexing sends the relevant text chunks.
+            {effectiveMode === "hybrid"
+              ? "Hybrid adds AI summaries and semantic indexing to newly saved pages automatically. The actions below process existing saved pages after you confirm."
+              : "AI features are optional. The actions below process saved pages only after you confirm."}{" "}
+            Adding AI features sends page text to OpenAI. Semantic re-indexing sends the relevant
+            text chunks.
           </p>
 
           <div className="mt-3 flex flex-wrap gap-3">
@@ -826,6 +890,8 @@ export function Options({
           {exportError && (
             <p className="mt-2 text-sm text-red-700 dark:text-red-300">{exportError}</p>
           )}
+
+          <ImportBackup onImported={refreshCounts} />
 
           {showDeleteConfirm && (
             <div className="mt-4 rounded-md border border-red-500/25 bg-red-500/10 p-4">

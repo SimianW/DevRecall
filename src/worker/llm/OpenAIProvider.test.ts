@@ -3,11 +3,20 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import { dot } from "../../lib/vector";
 import { CONTENT_TYPE_VALUES, ContentType } from "../../shared/enums";
 import {
+  EMBEDDING_DIMENSIONS,
   EMBEDDING_MODEL_ID,
   OpenAIProvider,
   type PageTaggingResult,
   testOpenAIConnection,
 } from "./OpenAIProvider";
+
+function embedding(...values: number[]): number[] {
+  return [...values, ...Array(EMBEDDING_DIMENSIONS - values.length).fill(0)];
+}
+
+function embeddingWithDimension(dimension: number, ...values: number[]): number[] {
+  return [...values, ...Array(dimension - values.length).fill(0)];
+}
 
 const taggingResult: PageTaggingResult = {
   summary: "HPA autoscales pods based on CPU and memory metrics.",
@@ -151,7 +160,56 @@ describe("OpenAIProvider", () => {
     expect(maySend).toHaveBeenCalledTimes(2);
   });
 
-  it("uses the local seed when the model returns an invalid content type", async () => {
+  it("aborts a request that exceeds the configured timeout", async () => {
+    const fetchMock = vi.fn(
+      (_input: RequestInfo | URL, options?: RequestInit): Promise<Response> => {
+        return new Promise<Response>((_resolve, reject) => {
+          options?.signal?.addEventListener("abort", () => reject(new Error("aborted")));
+        });
+      },
+    );
+    globalThis.fetch = fetchMock;
+    const provider = new OpenAIProvider([], 1);
+
+    await expect(
+      provider.summarizeAndTag("text", "title", "url", "sk-test", ContentType.Page),
+    ).rejects.toThrow("timed out");
+    expect(fetchMock).toHaveBeenCalledOnce();
+  });
+
+  it("keeps the timeout active while reading a response body", async () => {
+    const fetchMock = vi.fn(
+      (_input: RequestInfo | URL, options?: RequestInit): Promise<Response> => {
+        return Promise.resolve({
+          ok: true,
+          json: () =>
+            new Promise<unknown>((_resolve, reject) => {
+              options?.signal?.addEventListener("abort", () => reject(new Error("aborted")));
+            }),
+        } as Response);
+      },
+    );
+    globalThis.fetch = fetchMock;
+    const provider = new OpenAIProvider([], 1);
+
+    await expect(
+      provider.summarizeAndTag("text", "title", "url", "sk-test", ContentType.Page),
+    ).rejects.toThrow("timed out");
+    expect(fetchMock).toHaveBeenCalledOnce();
+  });
+
+  it("does not retry a network failure because the request outcome is ambiguous", async () => {
+    const fetchMock = vi.fn().mockRejectedValue(new Error("network failure"));
+    globalThis.fetch = fetchMock;
+    const provider = new OpenAIProvider([0]);
+
+    await expect(
+      provider.summarizeAndTag("text", "title", "url", "sk-test", ContentType.Page),
+    ).rejects.toThrow("network failure");
+    expect(fetchMock).toHaveBeenCalledOnce();
+  });
+
+  it("rejects an invalid content type even when the HTTP response is successful", async () => {
     globalThis.fetch = vi.fn().mockResolvedValue({
       ok: true,
       json: () =>
@@ -162,8 +220,9 @@ describe("OpenAIProvider", () => {
                 content: JSON.stringify({
                   summary: "A summary",
                   contentType: "INVALID",
-                  topics: "not-an-array",
+                  topics: [],
                   technologies: ["React"],
+                  intent: "reference",
                 }),
               },
             },
@@ -172,24 +231,12 @@ describe("OpenAIProvider", () => {
     });
     const provider = new OpenAIProvider([]);
 
-    const result = await provider.summarizeAndTag(
-      "text",
-      "title",
-      "url",
-      "sk-test",
-      ContentType.Article,
-    );
-
-    expect(result).toEqual({
-      summary: "A summary",
-      contentType: ContentType.Article,
-      topics: [],
-      technologies: ["React"],
-      intent: "reference",
-    });
+    await expect(
+      provider.summarizeAndTag("text", "title", "url", "sk-test", ContentType.Article),
+    ).rejects.toThrow("Invalid tagging response content type");
   });
 
-  it("uses the local seed when contentType is missing", async () => {
+  it("rejects a tagging response when a required field is missing", async () => {
     globalThis.fetch = vi.fn().mockResolvedValue({
       ok: true,
       json: () =>
@@ -210,16 +257,35 @@ describe("OpenAIProvider", () => {
     });
     const provider = new OpenAIProvider([]);
 
-    const result = await provider.summarizeAndTag(
-      "text",
-      "title",
-      "url",
-      "sk-test",
-      ContentType.Course,
-    );
+    await expect(
+      provider.summarizeAndTag("text", "title", "url", "sk-test", ContentType.Course),
+    ).rejects.toThrow("Missing required");
+  });
 
-    expect(result.contentType).toBe(ContentType.Course);
-    expect(result.summary).toBe("A summary");
+  it.each([
+    ["summary", { summary: 42 }],
+    ["topics", { topics: {} }],
+    ["technologies", { technologies: [null] }],
+    ["intent", { intent: "unknown" }],
+  ])("rejects malformed %s even when the HTTP response is successful", async (_field, override) => {
+    globalThis.fetch = vi.fn().mockResolvedValue({
+      ok: true,
+      json: () =>
+        Promise.resolve({
+          choices: [
+            {
+              message: {
+                content: JSON.stringify({ ...taggingResult, ...override }),
+              },
+            },
+          ],
+        }),
+    });
+    const provider = new OpenAIProvider([]);
+
+    await expect(
+      provider.summarizeAndTag("text", "title", "url", "sk-test", ContentType.Course),
+    ).rejects.toThrow("Invalid tagging response");
   });
 
   it("ignores a platform field in an untrusted response", async () => {
@@ -253,7 +319,7 @@ describe("OpenAIProvider", () => {
     expect(result).not.toHaveProperty("platform");
   });
 
-  it("returns safe local metadata when the model refuses", async () => {
+  it("rejects when the model refuses tagging", async () => {
     globalThis.fetch = vi.fn().mockResolvedValue({
       ok: true,
       json: () =>
@@ -263,41 +329,33 @@ describe("OpenAIProvider", () => {
     });
     const provider = new OpenAIProvider([]);
 
-    const result = await provider.summarizeAndTag(
-      "text",
-      "title",
-      "url",
-      "sk-test",
-      ContentType.Question,
-    );
-
-    expect(result).toEqual({
-      summary: "",
-      contentType: ContentType.Question,
-      topics: [],
-      technologies: [],
-      intent: "reference",
-    });
+    await expect(
+      provider.summarizeAndTag("text", "title", "url", "sk-test", ContentType.Question),
+    ).rejects.toThrow("Invalid tagging response");
   });
 
-  it("returns safe local metadata for malformed JSON", async () => {
+  it("rejects malformed tagging JSON", async () => {
     globalThis.fetch = vi.fn().mockResolvedValue({
       ok: true,
       json: () => Promise.resolve({ choices: [{ message: { content: "{not valid JSON" } }] }),
     });
     const provider = new OpenAIProvider([]);
 
-    const result = await provider.summarizeAndTag(
-      "text",
-      "title",
-      "url",
-      "sk-test",
-      ContentType.Repository,
-    );
+    await expect(
+      provider.summarizeAndTag("text", "title", "url", "sk-test", ContentType.Repository),
+    ).rejects.toThrow("Invalid tagging response JSON");
+  });
 
-    expect(result.contentType).toBe(ContentType.Repository);
-    expect(result).not.toHaveProperty("platform");
-    expect(result).not.toHaveProperty("sourceType");
+  it("rejects when the tagging response body is not an object", async () => {
+    globalThis.fetch = vi.fn().mockResolvedValue({
+      ok: true,
+      json: () => Promise.resolve(null),
+    });
+    const provider = new OpenAIProvider([]);
+
+    await expect(
+      provider.summarizeAndTag("text", "title", "url", "sk-test", ContentType.Article),
+    ).rejects.toThrow("Invalid tagging response shape");
   });
 });
 
@@ -358,8 +416,8 @@ describe("OpenAIProvider embeddings", () => {
       json: () =>
         Promise.resolve({
           data: [
-            { index: 0, embedding: [3, 4] },
-            { index: 1, embedding: [0, 5] },
+            { index: 0, embedding: embedding(3, 4) },
+            { index: 1, embedding: embedding(0, 5) },
           ],
         }),
     });
@@ -386,8 +444,8 @@ describe("OpenAIProvider embeddings", () => {
       json: () =>
         Promise.resolve({
           data: [
-            { index: 1, embedding: [0, 1] },
-            { index: 0, embedding: [1, 0] },
+            { index: 1, embedding: embedding(0, 1) },
+            { index: 0, embedding: embedding(1, 0) },
           ],
         }),
     });
@@ -395,20 +453,20 @@ describe("OpenAIProvider embeddings", () => {
 
     const vectors = await provider.embedBatch(["first", "second"], "sk-test");
 
-    expect(Array.from(vectors[0])).toEqual([1, 0]); // index 0 first
-    expect(Array.from(vectors[1])).toEqual([0, 1]);
+    expect(Array.from(vectors[0]).slice(0, 2)).toEqual([1, 0]); // index 0 first
+    expect(Array.from(vectors[1]).slice(0, 2)).toEqual([0, 1]);
   });
 
   it("embeds a single text", async () => {
     globalThis.fetch = vi.fn().mockResolvedValue({
       ok: true,
-      json: () => Promise.resolve({ data: [{ index: 0, embedding: [0, 3] }] }),
+      json: () => Promise.resolve({ data: [{ index: 0, embedding: embedding(0, 3) }] }),
     });
     const provider = new OpenAIProvider([]);
 
     const vector = await provider.embed("solo", "sk-test");
 
-    expect(Array.from(vector)).toEqual([0, 1]);
+    expect(Array.from(vector).slice(0, 2)).toEqual([0, 1]);
   });
 
   it("returns an empty array without calling fetch for empty input", async () => {
@@ -438,8 +496,79 @@ describe("OpenAIProvider embeddings", () => {
     await expect(provider.embedBatch(["x"], "sk-test")).rejects.toThrow();
   });
 
+  it("rejects duplicate or out-of-range response indexes", async () => {
+    globalThis.fetch = vi.fn().mockResolvedValue({
+      ok: true,
+      json: () =>
+        Promise.resolve({
+          data: [
+            { index: 0, embedding: embedding(1, 0) },
+            { index: 0, embedding: embedding(0, 1) },
+          ],
+        }),
+    });
+    const provider = new OpenAIProvider([]);
+
+    await expect(provider.embedBatch(["first", "second"], "sk-test")).rejects.toThrow("indexes");
+  });
+
+  it("requires every embedding row to carry a contiguous index", async () => {
+    globalThis.fetch = vi.fn().mockResolvedValue({
+      ok: true,
+      json: () => Promise.resolve({ data: [{ embedding: embedding(1, 0) }] }),
+    });
+    const provider = new OpenAIProvider([]);
+
+    await expect(provider.embedBatch(["missing index"], "sk-test")).rejects.toThrow("indexes");
+  });
+
+  it("rejects non-finite and zero-length vectors", async () => {
+    globalThis.fetch = vi.fn().mockResolvedValue({
+      ok: true,
+      json: () => Promise.resolve({ data: [{ index: 0, embedding: embedding(Number.NaN, 0) }] }),
+    });
+    const provider = new OpenAIProvider([]);
+
+    await expect(provider.embedBatch(["x"], "sk-test")).rejects.toThrow("invalid embedding");
+
+    globalThis.fetch = vi.fn().mockResolvedValue({
+      ok: true,
+      json: () => Promise.resolve({ data: [{ index: 0, embedding: embedding(0, 0) }] }),
+    });
+    await expect(provider.embedBatch(["x"], "sk-test")).rejects.toThrow("Zero-length");
+  });
+
+  it("rejects malformed rows, float32 overflow, and inconsistent dimensions", async () => {
+    const provider = new OpenAIProvider([]);
+
+    globalThis.fetch = vi.fn().mockResolvedValue({
+      ok: true,
+      json: () => Promise.resolve({ data: [null] }),
+    });
+    await expect(provider.embedBatch(["x"], "sk-test")).rejects.toThrow("rows");
+
+    globalThis.fetch = vi.fn().mockResolvedValue({
+      ok: true,
+      json: () => Promise.resolve({ data: [{ index: 0, embedding: embedding(1e100) }] }),
+    });
+    await expect(provider.embedBatch(["x"], "sk-test")).rejects.toThrow("overflows");
+
+    globalThis.fetch = vi.fn().mockResolvedValue({
+      ok: true,
+      json: () =>
+        Promise.resolve({
+          data: [
+            { index: 0, embedding: embedding(1, 0) },
+            { index: 1, embedding: embeddingWithDimension(1537, 1, 0, 0) },
+          ],
+        }),
+    });
+    await expect(provider.embedBatch(["first", "second"], "sk-test")).rejects.toThrow("dimensions");
+  });
+
   it("exposes a stable embedding model id", () => {
     expect(new OpenAIProvider([]).embeddingModel).toBe(EMBEDDING_MODEL_ID);
     expect(EMBEDDING_MODEL_ID).toBe("openai:text-embedding-3-small");
+    expect(EMBEDDING_DIMENSIONS).toBe(1536);
   });
 });

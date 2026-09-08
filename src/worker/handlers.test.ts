@@ -76,6 +76,27 @@ async function prepareSemanticReindex(deps: HandlerDeps): Promise<string> {
 }
 
 describe("worker request handler", () => {
+  it("rejects invalid imports before touching storage", async () => {
+    const deps = makeDeps();
+    await expect(
+      handleRequest({ type: "data.import", payload: { json: "{}" } }, deps),
+    ).rejects.toThrow("backup");
+    expect(deps.pageRepo.importPages).not.toHaveBeenCalled();
+  });
+
+  it("invalidates search and refreshes surfaces after a local import without AI", async () => {
+    const deps = makeDeps({ apiKey: "sk-test", storedMode: "hybrid" });
+    await expect(
+      handleRequest(
+        { type: "data.import", payload: { json: JSON.stringify({ schemaVersion: 1, pages: [] }) } },
+        deps,
+      ),
+    ).resolves.toEqual({ type: "data.imported", payload: { imported: 0, skipped: 0 } });
+    expect(deps.retrievalService.invalidate).toHaveBeenCalledOnce();
+    expect(deps.broadcast).toHaveBeenCalledWith({ type: "library.changed" });
+    expect(deps.captureService.processPage).not.toHaveBeenCalled();
+  });
+
   it("reports stored and effective mode without overwriting a missing-key preference", async () => {
     const deps = makeDeps({ apiKey: null, storedMode: "hybrid" });
 
@@ -195,6 +216,38 @@ describe("worker request handler", () => {
     });
   });
 
+  it("revokes explicit work when the API key is rotated", async () => {
+    const deps = makeDeps({ apiKey: "sk-old", storedMode: "local" });
+    deps.pageRepo.getById = vi.fn().mockResolvedValue(keywordReadyPage);
+    let finish: ((page: PageRecord) => void) | undefined;
+    deps.captureService.processPage = vi.fn(
+      () =>
+        new Promise<PageRecord>((resolve) => {
+          finish = resolve;
+        }),
+    );
+
+    await handleRequest(
+      { type: "page.addAiFeatures", payload: { pageId: keywordReadyPage.id } },
+      deps,
+    );
+    await vi.waitFor(() => expect(deps.captureService.processPage).toHaveBeenCalledOnce());
+    const mayProceed = vi.mocked(deps.captureService.processPage).mock.calls[0][2];
+
+    await handleRequest({ type: "settings.setApiKey", payload: { apiKey: "sk-new" } }, deps);
+    await expect(mayProceed?.()).resolves.toBe(false);
+    finish?.({ ...keywordReadyPage, status: "ready" });
+    await Promise.resolve();
+    expect(deps.broadcast).not.toHaveBeenCalledWith(
+      expect.objectContaining({
+        type: "page.updated",
+        payload: expect.objectContaining({
+          page: expect.objectContaining({ status: "ready" }),
+        }),
+      }),
+    );
+  });
+
   it("broadcasts settings.changed when API key is removed", async () => {
     const deps = makeDeps({ apiKey: "sk-test", storedMode: "hybrid" });
 
@@ -228,6 +281,47 @@ describe("worker request handler", () => {
     });
     await Promise.resolve();
     expect(deps.captureService.processPage).not.toHaveBeenCalled();
+  });
+
+  it("does not start enrichment for a failed local save", async () => {
+    const deps = makeDeps({ apiKey: "sk-test", storedMode: "hybrid" });
+    deps.captureService.save = vi.fn().mockResolvedValue({
+      ...keywordReadyPage,
+      status: "failed",
+      localSaveError: "quota",
+    });
+
+    await handleRequest({ type: "page.save", payload: { tabId: 7 } }, deps);
+    await Promise.resolve();
+    expect(deps.captureService.processPage).not.toHaveBeenCalled();
+  });
+
+  it("does not restart enrichment when a duplicate save returns ready or enriching", async () => {
+    for (const status of ["ready", "enriching"] as const) {
+      const deps = makeDeps({ apiKey: "sk-test", storedMode: "hybrid" });
+      deps.captureService.save = vi.fn().mockResolvedValue({ ...keywordReadyPage, status });
+
+      await handleRequest({ type: "page.save", payload: { tabId: 7 } }, deps);
+      await Promise.resolve();
+      expect(deps.captureService.processPage).not.toHaveBeenCalled();
+    }
+  });
+
+  it("passes a revocable commit gate to a capture that finishes after clear", async () => {
+    const deps = makeDeps();
+    deps.captureService.save = vi.fn(async (_tabId, _mode, mayCommit) => {
+      await handleRequest({ type: "data.deleteAll" }, deps);
+      expect(await mayCommit?.()).toBe(false);
+      throw new Error("Page save authorization was revoked");
+    });
+
+    await expect(handleRequest({ type: "page.save", payload: { tabId: 7 } }, deps)).rejects.toThrow(
+      "Page save authorization was revoked",
+    );
+    expect(deps.broadcast).toHaveBeenCalledWith({ type: "library.cleared" });
+    expect(deps.broadcast).not.toHaveBeenCalledWith(
+      expect.objectContaining({ type: "page.updated" }),
+    );
   });
 
   it("a Local-only change during mode resolution blocks automatic enrichment", async () => {
@@ -273,6 +367,106 @@ describe("worker request handler", () => {
       handleRequest({ type: "page.save", payload: { tabId: 7 } }, deps),
     ).resolves.toMatchObject({ type: "page.saved" });
     await vi.waitFor(() => expect(deps.captureService.processPage).toHaveBeenCalledOnce());
+  });
+
+  it("does not broadcast automatic completion after the page is deleted", async () => {
+    const deps = makeDeps({ apiKey: "sk-test", storedMode: "hybrid" });
+    let deleted = false;
+    let finish: ((page: PageRecord) => void) | undefined;
+    deps.pageRepo.getById = vi.fn().mockImplementation(async () => {
+      return deleted ? undefined : keywordReadyPage;
+    });
+    deps.pageRepo.deleteWithChunks = vi.fn().mockImplementation(async () => {
+      deleted = true;
+    });
+    deps.captureService.processPage = vi.fn(
+      () =>
+        new Promise<PageRecord>((resolve) => {
+          finish = resolve;
+        }),
+    );
+
+    processPageInBackground(deps, keywordReadyPage.id);
+    await vi.waitFor(() => expect(deps.captureService.processPage).toHaveBeenCalledOnce());
+
+    await handleRequest({ type: "page.delete", payload: { id: keywordReadyPage.id } }, deps);
+    finish?.({ ...keywordReadyPage, status: "ready" });
+    await vi.waitFor(() =>
+      expect(deps.broadcast).toHaveBeenCalledWith({
+        type: "page.removed",
+        payload: { id: keywordReadyPage.id },
+      }),
+    );
+    await Promise.resolve();
+
+    expect(deps.broadcast).not.toHaveBeenCalledWith(
+      expect.objectContaining({ type: "page.updated" }),
+    );
+  });
+
+  it("does not broadcast automatic completion after the library is cleared", async () => {
+    const deps = makeDeps({ apiKey: "sk-test", storedMode: "hybrid" });
+    let finish: ((page: PageRecord) => void) | undefined;
+    deps.captureService.processPage = vi.fn(
+      () =>
+        new Promise<PageRecord>((resolve) => {
+          finish = resolve;
+        }),
+    );
+
+    processPageInBackground(deps, keywordReadyPage.id);
+    await vi.waitFor(() => expect(deps.captureService.processPage).toHaveBeenCalledOnce());
+
+    await handleRequest({ type: "data.deleteAll" }, deps);
+    finish?.({ ...keywordReadyPage, status: "ready" });
+    await vi.waitFor(() =>
+      expect(deps.broadcast).toHaveBeenCalledWith({ type: "library.cleared" }),
+    );
+    await Promise.resolve();
+
+    expect(deps.broadcast).not.toHaveBeenCalledWith(
+      expect.objectContaining({ type: "page.updated" }),
+    );
+  });
+
+  it("revokes explicit enrichment before a deleted page can send or complete", async () => {
+    const deps = makeDeps({ apiKey: "sk-test", storedMode: "local" });
+    let deleted = false;
+    let finish: ((page: PageRecord) => void) | undefined;
+    deps.pageRepo.getById = vi.fn().mockImplementation(async () => {
+      return deleted ? undefined : keywordReadyPage;
+    });
+    deps.pageRepo.deleteWithChunks = vi.fn().mockImplementation(async () => {
+      deleted = true;
+    });
+    deps.captureService.processPage = vi.fn(
+      () =>
+        new Promise<PageRecord>((resolve) => {
+          finish = resolve;
+        }),
+    );
+
+    await handleRequest(
+      { type: "page.addAiFeatures", payload: { pageId: keywordReadyPage.id } },
+      deps,
+    );
+    await vi.waitFor(() => expect(deps.captureService.processPage).toHaveBeenCalledOnce());
+    const mayProceed = vi.mocked(deps.captureService.processPage).mock.calls[0][2];
+    expect(mayProceed).toEqual(expect.any(Function));
+
+    await handleRequest({ type: "page.delete", payload: { id: keywordReadyPage.id } }, deps);
+    await expect(mayProceed?.()).resolves.toBe(false);
+    finish?.({ ...keywordReadyPage, status: "ready" });
+    await Promise.resolve();
+
+    expect(deps.broadcast).not.toHaveBeenCalledWith(
+      expect.objectContaining({
+        type: "page.updated",
+        payload: expect.objectContaining({
+          page: expect.objectContaining({ status: "ready" }),
+        }),
+      }),
+    );
   });
 
   it("passes the effective mode to search and returns the actual search mode", async () => {
@@ -370,7 +564,11 @@ describe("worker request handler", () => {
       payload: { page: { status: "enriching" } },
     });
     await vi.waitFor(() =>
-      expect(deps.captureService.processPage).toHaveBeenCalledWith(keywordReadyPage.id, "sk-test"),
+      expect(deps.captureService.processPage).toHaveBeenCalledWith(
+        keywordReadyPage.id,
+        "sk-test",
+        expect.any(Function),
+      ),
     );
     expect(deps.modeStore.setStoredMode).not.toHaveBeenCalled();
   });
@@ -382,6 +580,88 @@ describe("worker request handler", () => {
     await expect(
       handleRequest({ type: "page.addAiFeatures", payload: { pageId: keywordReadyPage.id } }, deps),
     ).resolves.toEqual({ type: "error", payload: { message: "No API key set" } });
+  });
+
+  it("does not launch explicit enrichment when the key rotates during lookup", async () => {
+    const deps = makeDeps({ apiKey: "sk-old", storedMode: "local" });
+    deps.pageRepo.getById = vi.fn().mockResolvedValue(keywordReadyPage);
+    let releaseLookup: ((key: string) => void) | undefined;
+    const pendingLookup = new Promise<string>((resolve) => {
+      releaseLookup = resolve;
+    });
+    vi.mocked(deps.apiKeyStore.getApiKey)
+      .mockImplementationOnce(() => pendingLookup)
+      .mockResolvedValue("sk-new");
+
+    const request = handleRequest(
+      { type: "page.addAiFeatures", payload: { pageId: keywordReadyPage.id } },
+      deps,
+    );
+    await vi.waitFor(() => expect(deps.apiKeyStore.getApiKey).toHaveBeenCalledOnce());
+    await handleRequest({ type: "settings.setApiKey", payload: { apiKey: "sk-new" } }, deps);
+    releaseLookup?.("sk-old");
+
+    await expect(request).resolves.toEqual({
+      type: "error",
+      payload: { message: `Page ${keywordReadyPage.id} is no longer available` },
+    });
+    expect(deps.captureService.processPage).not.toHaveBeenCalled();
+  });
+
+  it("does not broadcast explicit enriching after deletion during lookup", async () => {
+    const deps = makeDeps({ apiKey: "sk-test", storedMode: "local" });
+    let releaseLookup: ((page: PageRecord) => void) | undefined;
+    const pendingLookup = new Promise<PageRecord>((resolve) => {
+      releaseLookup = resolve;
+    });
+    deps.pageRepo.getById = vi.fn().mockReturnValue(pendingLookup);
+
+    const request = handleRequest(
+      { type: "page.addAiFeatures", payload: { pageId: keywordReadyPage.id } },
+      deps,
+    );
+    await vi.waitFor(() => expect(deps.pageRepo.getById).toHaveBeenCalledOnce());
+    await handleRequest({ type: "page.delete", payload: { id: keywordReadyPage.id } }, deps);
+    releaseLookup?.(keywordReadyPage);
+
+    await expect(request).resolves.toMatchObject({ type: "error" });
+    expect(deps.broadcast).not.toHaveBeenCalledWith(
+      expect.objectContaining({
+        type: "page.updated",
+        payload: expect.objectContaining({
+          page: expect.objectContaining({ status: "enriching" }),
+        }),
+      }),
+    );
+  });
+
+  it("does not broadcast a retry completion after the library is cleared", async () => {
+    const deps = makeDeps({ apiKey: "sk-test", storedMode: "hybrid" });
+    deps.pageRepo.getById = vi.fn().mockResolvedValue({
+      ...keywordReadyPage,
+      status: "failed",
+      localSaveError: "capture failed",
+    });
+    let finishRetry: ((page: PageRecord) => void) | undefined;
+    deps.captureService.retryLocalPage = vi.fn(
+      () =>
+        new Promise<PageRecord>((resolve) => {
+          finishRetry = resolve;
+        }),
+    );
+
+    const request = handleRequest(
+      { type: "page.retry", payload: { id: keywordReadyPage.id } },
+      deps,
+    );
+    await vi.waitFor(() => expect(deps.captureService.retryLocalPage).toHaveBeenCalledOnce());
+    await handleRequest({ type: "data.deleteAll" }, deps);
+    finishRetry?.({ ...keywordReadyPage, status: "keyword_ready" });
+
+    await expect(request).resolves.toMatchObject({ type: "page.retryStarted" });
+    expect(deps.broadcast).not.toHaveBeenCalledWith(
+      expect.objectContaining({ type: "page.updated" }),
+    );
   });
 
   it("rejects retry when the page has no stored enrichment error", async () => {
@@ -523,6 +803,7 @@ describe("worker request handler", () => {
 
   it("keeps a confirmed bulk page authorized while Local-only remains selected", async () => {
     const deps = makeDeps({ apiKey: "sk-current", storedMode: "local" });
+    deps.pageRepo.getById = vi.fn().mockResolvedValue(keywordReadyPage);
     deps.pageRepo.pageIdsKeywordReady = vi.fn().mockResolvedValue(["a"]);
     const batchId = await prepareBulkEnrich(deps);
 
@@ -630,6 +911,7 @@ function makeDeps(
       pageIdsKeywordReady: vi.fn().mockResolvedValue([]),
       pageIdsNeedingSemanticIndex: vi.fn().mockResolvedValue([]),
       exportAll: vi.fn().mockResolvedValue([]),
+      importPages: vi.fn().mockResolvedValue({ imported: 0, skipped: 0 }),
       deleteAll: vi.fn().mockResolvedValue(undefined),
     },
     apiKeyStore: {

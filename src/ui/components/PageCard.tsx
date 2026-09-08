@@ -11,6 +11,7 @@ type PageCardProps = {
   onDelete?: (id: string) => void;
   onOpenSettings?: () => void;
   onRetry?: (id: string) => void;
+  pendingAction?: "delete" | "retry" | "ai";
 };
 
 const STATUS_LABELS: Record<PageListItem["status"], string> = {
@@ -73,6 +74,7 @@ export function PageCard({
   onDelete,
   onOpenSettings,
   onRetry,
+  pendingAction,
 }: PageCardProps) {
   const [expanded, setExpanded] = useState(false);
 
@@ -88,25 +90,30 @@ export function PageCard({
   const addAiLabel = page.enrichmentError ? "Retry AI features" : "Add AI features";
 
   return (
-    <article className="rounded-lg border border-default bg-surface-raised px-4 py-3 text-foreground shadow-sm">
+    <article
+      aria-busy={Boolean(pendingAction)}
+      className="rounded-lg border border-default bg-surface-raised px-4 py-3 text-foreground shadow-sm"
+    >
       <button
         type="button"
         className="flex w-full items-start justify-between gap-3 text-left"
         onClick={() => setExpanded((value) => !value)}
         aria-expanded={expanded}
       >
-        <h2 className="font-serif text-sm font-semibold text-foreground">{page.title}</h2>
+        <h2 className="min-w-0 break-words font-serif text-sm font-semibold text-foreground">
+          {page.title}
+        </h2>
         <div className="flex shrink-0 items-center gap-1">
           <StatusBadge status={page.status} />
           <span className="text-xs text-foreground/40">{expanded ? "▲" : "▼"}</span>
         </div>
       </button>
 
-      <p className="mt-1 text-xs text-foreground/60">{page.domain}</p>
+      <p className="mt-1 break-all text-xs text-foreground/60">{page.domain}</p>
 
       {cardText && (
         <p
-          className={`mt-2 text-sm leading-6 text-foreground/75 ${expanded ? "" : "line-clamp-2"}`}
+          className={`mt-2 break-words text-sm leading-6 text-foreground/75 ${expanded ? "" : "line-clamp-2"}`}
         >
           {cardText}
         </p>
@@ -122,11 +129,11 @@ export function PageCard({
         <div className="mt-3 rounded-md border border-default/80 bg-foreground/[0.025] p-3">
           <button
             type="button"
-            disabled={!hasApiKey || !onAddAiFeatures}
+            disabled={!hasApiKey || !onAddAiFeatures || pendingAction === "ai"}
             onClick={() => onAddAiFeatures?.(page.id)}
             className="text-xs font-medium text-accent hover:underline disabled:cursor-not-allowed disabled:text-foreground/35 disabled:no-underline"
           >
-            {addAiLabel}
+            {pendingAction === "ai" ? "Starting…" : addAiLabel}
           </button>
           <p className="mt-1 text-xs text-foreground/55">
             Sends this page to OpenAI for a summary, tags, and semantic search.
@@ -201,25 +208,27 @@ export function PageCard({
               {page.status === "failed" && onRetry && (
                 <button
                   type="button"
+                  disabled={pendingAction === "retry"}
                   onClick={(event) => {
                     event.stopPropagation();
                     onRetry(page.id);
                   }}
                   className="text-xs font-medium text-amber-700 hover:underline dark:text-amber-300"
                 >
-                  Retry
+                  {pendingAction === "retry" ? "Retrying…" : "Retry"}
                 </button>
               )}
               {onDelete && (
                 <button
                   type="button"
+                  disabled={pendingAction === "delete"}
                   onClick={(event) => {
                     event.stopPropagation();
                     onDelete(page.id);
                   }}
                   className="text-xs font-medium text-red-700 hover:underline dark:text-red-300"
                 >
-                  Delete
+                  {pendingAction === "delete" ? "Deleting…" : "Delete"}
                 </button>
               )}
             </div>

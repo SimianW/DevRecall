@@ -23,6 +23,35 @@ describe("PageRepo", () => {
     await database.open();
   });
 
+  it("filters the full library before applying the display limit", async () => {
+    const docs = await saveFixture(repo, {
+      url: "https://example.com/docs",
+      title: "Older docs",
+      fullText: "Reference text",
+      readingTimeMs: 0,
+      saveMode: "manual",
+    });
+    await repo.updatePage(docs.id, { savedAt: 1, contentType: ContentType.Documentation });
+    const repository = await saveFixture(repo, {
+      url: "https://github.com/example/project",
+      title: "Newer repository",
+      fullText: "Source code",
+      readingTimeMs: 0,
+      saveMode: "manual",
+    });
+    await repo.updatePage(repository.id, { savedAt: 2 });
+    expect(
+      (await repo.listPages({ limit: 1, filter: { contentType: ContentType.Documentation } })).map(
+        (page) => page.id,
+      ),
+    ).toEqual([docs.id]);
+    expect(
+      (await repo.listPages({ limit: 1, filter: { platform: Platform.Github } })).map(
+        (page) => page.id,
+      ),
+    ).toEqual([repository.id]);
+  });
+
   it("commits a captured page and its keyword chunks before returning keyword_ready", async () => {
     const page = await repo.commitCapturedPage(
       {
@@ -52,6 +81,30 @@ describe("PageRepo", () => {
     expect(chunks.every((chunk) => chunk.embedding === undefined)).toBe(true);
   });
 
+  it("reports UTF-8 text bytes and supports browsing past the first page", async () => {
+    const first = await saveFixture(repo, {
+      url: "https://example.com/first",
+      title: "First",
+      fullText: "中文",
+      readingTimeMs: 0,
+      saveMode: "manual",
+    });
+    const second = await saveFixture(repo, {
+      url: "https://example.com/second",
+      title: "Second",
+      fullText: "abc",
+      readingTimeMs: 0,
+      saveMode: "manual",
+    });
+    await repo.updatePage(first.id, { savedAt: 1 });
+    await repo.updatePage(second.id, { savedAt: 2 });
+    expect((await repo.getStats()).totalTextBytes).toBe(9);
+    expect((await repo.listPages({ limit: 1, offset: 1 })).map((page) => page.id)).toEqual([
+      first.id,
+    ]);
+    await expect(repo.listPages({ limit: -1 })).rejects.toThrow("Invalid library page range");
+  });
+
   it("rolls back the local transaction and records failed when a chunk write fails", async () => {
     database.chunks.hook("creating", () => {
       throw new Error("IndexedDB quota exceeded");
@@ -77,6 +130,29 @@ describe("PageRepo", () => {
       localSaveError: "IndexedDB quota exceeded",
     });
     expect(failed.enrichmentError).toBeUndefined();
+  });
+
+  it("does not write a stale failed capture after commit authorization is revoked", async () => {
+    database.chunks.hook("creating", () => {
+      throw new Error("IndexedDB quota exceeded");
+    });
+    let checks = 0;
+
+    await expect(
+      repo.commitCapturedPage(
+        {
+          url: "https://example.test/revoked-failure",
+          title: "Revoked failure",
+          fullText: "This chunk cannot be stored.",
+          readingTimeMs: 1000,
+          saveMode: "auto",
+        },
+        ["This chunk cannot be stored."],
+        () => checks++ === 0,
+      ),
+    ).rejects.toThrow(/quota/i);
+
+    expect(await database.pages.count()).toBe(0);
   });
 
   it("never marks a page keyword_ready when chunking produced no searchable chunks", async () => {

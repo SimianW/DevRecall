@@ -1,4 +1,4 @@
-import { stem } from "./stem";
+import { tokenizeWithSpans } from "./bm25";
 
 export function escapeHtml(value: string): string {
   return value
@@ -23,33 +23,20 @@ export function highlightTerms(text: string, terms: string[]): string {
   // exact lowercase equality or by stemming the text word and checking its
   // stem against the set.
   const termSet = new Set(terms.map((term) => term.trim().toLowerCase()).filter(Boolean));
+  for (const term of terms) {
+    for (const { token } of tokenizeWithSpans(term)) termSet.add(token);
+  }
 
   if (termSet.size === 0) {
     return escapeHtml(text);
   }
 
+  // Use the same token boundaries and stemming as BM25. In particular this
+  // keeps C++/C#, camelCase parts, accented words, and CJK bigrams consistent
+  // between ranking and evidence shown to the reader.
   const ranges: Array<{ start: number; end: number }> = [];
-  const latinWord = /\b([a-z0-9]+)\b/gi;
-  for (const match of text.matchAll(latinWord)) {
-    const word = match[0];
-    const start = match.index;
-    const lower = word.toLowerCase();
-    if (termSet.has(lower) || termSet.has(stem(lower))) {
-      ranges.push({ start, end: start + word.length });
-    }
-  }
-
-  // CJK queries are tokenized into overlapping bigrams. Record every matched
-  // span against the original text, then merge overlaps so a multi-character
-  // query produces valid, contiguous <mark> markup.
-  const cjkTerm = /[぀-ヿ㐀-䶿一-鿿가-힯]/;
-  for (const term of termSet) {
-    if (!cjkTerm.test(term)) continue;
-    let start = text.indexOf(term);
-    while (start !== -1) {
-      ranges.push({ start, end: start + term.length });
-      start = text.indexOf(term, start + 1);
-    }
+  for (const span of tokenizeWithSpans(text)) {
+    if (termSet.has(span.token)) ranges.push({ start: span.start, end: span.end });
   }
 
   if (ranges.length === 0) {

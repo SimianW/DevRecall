@@ -1,4 +1,4 @@
-import { act, render, screen } from "@testing-library/react";
+import { act, render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
@@ -73,6 +73,156 @@ beforeEach(() => {
 });
 
 describe("Side panel search", () => {
+  it("does not restore pages when an initial library read finishes after clear", async () => {
+    let finishRead!: (pages: PageListItemWithExcerpt[]) => void;
+    const listPages = vi.fn(
+      () =>
+        new Promise<PageListItemWithExcerpt[]>((resolve) => {
+          finishRead = resolve;
+        }),
+    );
+    const broadcast = makeSubscribe();
+    renderApp({ listPages, subscribe: broadcast.subscribe });
+    await broadcast.emit({ type: "library.cleared" });
+    await act(async () => finishRead([makePage()]));
+    expect(screen.getByRole("heading", { name: "No saved pages yet" })).toBeInTheDocument();
+    expect(screen.queryByText("Horizontal Pod Autoscaling")).not.toBeInTheDocument();
+  });
+
+  it("does not restore older pages when load-more finishes after clear", async () => {
+    let finishRead!: (pages: PageListItemWithExcerpt[]) => void;
+    const listPages = vi
+      .fn()
+      .mockResolvedValueOnce(
+        Array.from({ length: 50 }, (_, index) =>
+          makePage({ id: String(index), title: `Page ${index}` }),
+        ),
+      )
+      .mockImplementationOnce(
+        () =>
+          new Promise<PageListItemWithExcerpt[]>((resolve) => {
+            finishRead = resolve;
+          }),
+      );
+    const broadcast = makeSubscribe();
+    const { user } = renderApp({ listPages, subscribe: broadcast.subscribe });
+    await user.click(await screen.findByRole("button", { name: "Load more pages" }));
+    await broadcast.emit({ type: "library.cleared" });
+    await act(async () => finishRead([makePage()]));
+    expect(screen.getByRole("heading", { name: "No saved pages yet" })).toBeInTheDocument();
+    expect(screen.queryByText("Horizontal Pod Autoscaling")).not.toBeInTheDocument();
+  });
+
+  it("reruns an active query when a page broadcast changes the index", async () => {
+    const first = makeHit();
+    const refreshed = makeHit(makePage({ id: "refreshed", title: "Fresh autoscaler result" }));
+    let resolveInitial!: (value: { results: PageHit[]; searchMode: "local" }) => void;
+    const initial = new Promise<{ results: PageHit[]; searchMode: "local" }>((resolve) => {
+      resolveInitial = resolve;
+    });
+    const runSearch = vi
+      .fn()
+      .mockReturnValueOnce(initial)
+      .mockResolvedValue({ results: [refreshed], searchMode: "local" as const });
+    const broadcast = makeSubscribe();
+    const { user } = renderApp({ runSearch, subscribe: broadcast.subscribe });
+    const input = screen.getByRole("searchbox", { name: "Search saved pages" });
+
+    await user.type(input, "pods");
+    await waitFor(() => expect(runSearch).toHaveBeenCalledWith("pods"));
+    await broadcast.emit({ type: "page.updated", payload: { page: makePage() } });
+    expect(await screen.findByText("Fresh autoscaler result")).toBeInTheDocument();
+
+    resolveInitial({ results: [first], searchMode: "local" });
+    await act(async () => {});
+    expect(screen.queryByText("Horizontal Pod Autoscaling")).not.toBeInTheDocument();
+    expect(runSearch).toHaveBeenCalledTimes(2);
+  });
+
+  it("does not restore a deleted hit when an older search resolves late", async () => {
+    let resolveOld!: (value: { results: PageHit[]; searchMode: "local" }) => void;
+    const oldSearch = new Promise<{ results: PageHit[]; searchMode: "local" }>((resolve) => {
+      resolveOld = resolve;
+    });
+    const runSearch = vi
+      .fn()
+      .mockReturnValueOnce(oldSearch)
+      .mockResolvedValueOnce({ results: [], searchMode: "local" as const });
+    const broadcast = makeSubscribe();
+    const { user } = renderApp({ runSearch, subscribe: broadcast.subscribe });
+    const input = screen.getByRole("searchbox", { name: "Search saved pages" });
+    await user.type(input, "pods");
+    await waitFor(() => expect(runSearch).toHaveBeenCalledWith("pods"));
+
+    await broadcast.emit({ type: "page.removed", payload: { id: makePage().id } });
+    resolveOld({ results: [makeHit()], searchMode: "local" });
+    await waitFor(() => expect(runSearch).toHaveBeenCalledTimes(2));
+    expect(screen.queryByText("Horizontal Pod Autoscaling")).not.toBeInTheDocument();
+  });
+
+  it("shows a search error and retries the same query", async () => {
+    const runSearch = vi
+      .fn()
+      .mockRejectedValueOnce(new Error("worker unavailable"))
+      .mockResolvedValueOnce({ results: [makeHit()], searchMode: "local" as const });
+    const { user } = renderApp({ runSearch });
+    await user.type(screen.getByRole("searchbox", { name: "Search saved pages" }), "pods");
+
+    expect(await screen.findByRole("alert")).toHaveTextContent("Search unavailable");
+    await user.click(screen.getByRole("button", { name: "Retry search" }));
+    expect(await screen.findByText("Horizontal Pod Autoscaling")).toBeInTheDocument();
+    expect(runSearch).toHaveBeenCalledTimes(2);
+  });
+
+  it("clears the query and results with Escape", async () => {
+    const { user } = renderApp({
+      runSearch: vi.fn().mockResolvedValue({ results: [makeHit()], searchMode: "local" as const }),
+    });
+    const input = screen.getByRole("searchbox", { name: "Search saved pages" });
+    await user.type(input, "pods");
+    expect(await screen.findByText("Horizontal Pod Autoscaling")).toBeInTheDocument();
+    await user.keyboard("{Escape}");
+    expect(input).toHaveValue("");
+    await waitFor(() =>
+      expect(screen.queryByText("Horizontal Pod Autoscaling")).not.toBeInTheDocument(),
+    );
+  });
+
+  it("passes the selected filter to server-side search", async () => {
+    const runSearch = vi.fn().mockResolvedValue({ results: [], searchMode: "local" as const });
+    const { user } = renderApp({ runSearch });
+    await user.type(screen.getByRole("searchbox", { name: "Search saved pages" }), "pods");
+    await waitFor(() => expect(runSearch).toHaveBeenCalledWith("pods"));
+    await user.click(screen.getByRole("button", { name: "Stack Overflow" }));
+    await waitFor(() =>
+      expect(runSearch).toHaveBeenLastCalledWith("pods", { platform: Platform.StackOverflow }),
+    );
+  });
+
+  it("shows an action error when AI processing cannot be started", async () => {
+    const addAiFeatures = vi.fn().mockRejectedValue(new Error("worker unavailable"));
+    const { user } = renderApp({
+      listPages: vi.fn().mockResolvedValue([makePage({ status: "keyword_ready" })]),
+      loadSearchStatus: vi.fn().mockResolvedValue({ hasApiKey: true, effectiveMode: "local" }),
+      addAiFeatures,
+    });
+    await user.click(await screen.findByRole("button", { name: "Add AI features" }));
+    expect(await screen.findByRole("alert")).toHaveTextContent("AI features couldn't be started");
+    expect(addAiFeatures).toHaveBeenCalledWith(makePage().id);
+  });
+
+  it("shows a library error and retries loading it", async () => {
+    const listPages = vi
+      .fn()
+      .mockRejectedValueOnce(new Error("offline"))
+      .mockResolvedValueOnce([makePage({ title: "Recovered page" })]);
+    const { user } = renderApp({ listPages });
+    expect(await screen.findByRole("alert")).toHaveTextContent("Library unavailable");
+    await user.click(screen.getByRole("button", { name: "Retry loading library" }));
+    expect(await screen.findByText("Recovered page")).toBeInTheDocument();
+    expect(listPages).toHaveBeenCalledTimes(2);
+  });
+
   it("shows the configured mode before a search completes and links to Settings", async () => {
     const openSettings = vi.fn();
     const { user } = renderApp({
@@ -125,6 +275,23 @@ describe("Side panel search", () => {
 });
 
 describe("Side panel library", () => {
+  it("keeps a live page update that arrives while the initial list is loading", async () => {
+    let resolveList!: (pages: PageListItemWithExcerpt[]) => void;
+    const listPages = vi.fn().mockReturnValue(
+      new Promise<PageListItemWithExcerpt[]>((resolve) => {
+        resolveList = resolve;
+      }),
+    );
+    const broadcast = makeSubscribe();
+    renderApp({ listPages, subscribe: broadcast.subscribe });
+    await broadcast.emit({
+      type: "page.updated",
+      payload: { page: makePage({ title: "Live while loading" }) },
+    });
+    resolveList([]);
+    expect(await screen.findByText("Live while loading")).toBeInTheDocument();
+  });
+
   it("renders the worker-provided excerpt instead of the URL", async () => {
     renderApp({ listPages: vi.fn().mockResolvedValue([makePage()]) });
 
@@ -161,6 +328,89 @@ describe("Side panel library", () => {
 
     await user.click(screen.getByRole("button", { name: "GitHub" }));
     expect(screen.getByText("GitHub issue")).toBeInTheDocument();
+  });
+
+  it("asks the worker to filter before paging so matches beyond the first page remain visible", async () => {
+    const olderStackOverflowPage = makePage({
+      id: "older-so",
+      title: "Older Stack Overflow answer",
+      platform: Platform.StackOverflow,
+    });
+    const firstPage = Array.from({ length: 50 }, (_, index) => makePage({ id: `page-${index}` }));
+    const listPages = vi
+      .fn()
+      .mockImplementation((request?: { filter?: unknown }) =>
+        Promise.resolve(request?.filter ? [olderStackOverflowPage] : firstPage),
+      );
+    const { user } = renderApp({ listPages });
+    await screen.findAllByRole("heading", { name: "Horizontal Pod Autoscaling" });
+    await user.click(screen.getByRole("button", { name: "Stack Overflow" }));
+
+    expect(
+      await screen.findByRole("heading", { name: "Older Stack Overflow answer" }),
+    ).toBeInTheDocument();
+    expect(listPages).toHaveBeenLastCalledWith({
+      limit: 50,
+      filter: { platform: Platform.StackOverflow },
+    });
+  });
+
+  it("loads more filtered matches with a cumulative limit", async () => {
+    const firstFilteredPage = Array.from({ length: 50 }, (_, index) =>
+      makePage({
+        id: `stack-overflow-${index}`,
+        title: `Stack Overflow answer ${index + 1}`,
+        platform: Platform.StackOverflow,
+      }),
+    );
+    const filteredPrefix = [
+      ...firstFilteredPage,
+      makePage({
+        id: "stack-overflow-50",
+        title: "Stack Overflow answer 51",
+        platform: Platform.StackOverflow,
+      }),
+    ];
+    const listPages = vi
+      .fn()
+      .mockImplementation((request?: { limit?: number; filter?: unknown }) =>
+        Promise.resolve(
+          request?.filter
+            ? request.limit && request.limit > 50
+              ? filteredPrefix
+              : firstFilteredPage
+            : [],
+        ),
+      );
+    const { user } = renderApp({ listPages });
+
+    await user.click(await screen.findByRole("button", { name: "Stack Overflow" }));
+    await screen.findByRole("heading", { name: "Stack Overflow answer 1" });
+    await user.click(screen.getByRole("button", { name: "Load more pages" }));
+
+    expect(
+      await screen.findByRole("heading", { name: "Stack Overflow answer 51" }),
+    ).toBeInTheDocument();
+    expect(listPages).toHaveBeenLastCalledWith({
+      limit: 100,
+      filter: { platform: Platform.StackOverflow },
+    });
+  });
+
+  it("loads a larger prefix from offset zero instead of offsetting by rendered rows", async () => {
+    const firstPage = Array.from({ length: 50 }, (_, index) => makePage({ id: `page-${index}` }));
+    const prefix = [...firstPage, makePage({ id: "page-50", title: "Page 51" })];
+    const listPages = vi
+      .fn()
+      .mockImplementation((request?: { limit?: number }) =>
+        Promise.resolve(request?.limit && request.limit > 50 ? prefix : firstPage),
+      );
+    const { user } = renderApp({ listPages });
+    await screen.findAllByRole("heading", { name: "Horizontal Pod Autoscaling" });
+    await user.click(screen.getByRole("button", { name: "Load more pages" }));
+
+    expect(await screen.findByRole("heading", { name: "Page 51" })).toBeInTheDocument();
+    expect(listPages).toHaveBeenLastCalledWith({ limit: 100, filter: undefined });
   });
 
   it("sends explicit per-page consent when Add AI features is selected", async () => {

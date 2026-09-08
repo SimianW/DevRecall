@@ -1,4 +1,5 @@
-import { getEncoding, type Tiktoken } from "js-tiktoken";
+import { Tiktoken } from "js-tiktoken/lite";
+import cl100kBase from "js-tiktoken/ranks/cl100k_base";
 
 export type TokenChunk = {
   text: string;
@@ -17,7 +18,7 @@ let encoder: Tiktoken | null = null;
 
 function getEncoder(): Tiktoken {
   if (!encoder) {
-    encoder = getEncoding("cl100k_base");
+    encoder = new Tiktoken(cl100kBase);
   }
   return encoder;
 }

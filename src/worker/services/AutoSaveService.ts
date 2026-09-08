@@ -172,7 +172,19 @@ export class AutoSaveService {
 
     const startedAt = Date.now();
     await this.session.set(alarmName(tabId), { url, startedAt });
-    await this.alarm.create(alarmName(tabId), startedAt + this.dwellMs);
+    try {
+      await this.alarm.create(alarmName(tabId), startedAt + this.dwellMs);
+    } catch (error) {
+      // Do not leave durable dwell state behind when alarm creation fails.
+      // The session entry without an alarm could otherwise be mistaken for a
+      // live dwell after the worker restarts.
+      try {
+        await this.session.remove(alarmName(tabId));
+      } catch {
+        // Preserve the alarm creation error; cleanup is best effort.
+      }
+      throw error;
+    }
 
     this.currentDwellTabId = tabId;
   }
@@ -204,6 +216,14 @@ export class AutoSaveService {
     // Load session state (may be absent if the worker was restarted with no storage).
     const entry = await this.session.get(alarmName(tabId));
     if (!isDwellEntry(entry)) {
+      return;
+    }
+
+    // The setting can be switched off after the dwell alarm was scheduled.
+    // Re-check it at execution time so disabling auto-save is an immediate
+    // privacy boundary, including alarms that survive a worker restart.
+    if (!(await this.enabled.isEnabled())) {
+      await this.session.remove(alarmName(tabId));
       return;
     }
 
@@ -248,10 +268,9 @@ export class AutoSaveService {
  */
 export const chromeAlarmPort: AlarmPort = {
   async create(name, when) {
-    return new Promise((resolve) => {
-      chrome.alarms.create(name, { when });
-      resolve();
-    });
+    // MV3 exposes Promise-returning Chrome APIs. Await the native result so
+    // callers can remove a partially persisted dwell when scheduling fails.
+    await chrome.alarms.create(name, { when });
   },
   async clear(name) {
     return chrome.alarms.clear(name);

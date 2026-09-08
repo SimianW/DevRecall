@@ -95,6 +95,20 @@ describe("PageCard lifecycle labels", () => {
 });
 
 describe("PageCard AI action", () => {
+  it("shows pending feedback while AI features are starting", () => {
+    render(
+      <PageCard
+        page={makePage({ status: "keyword_ready" })}
+        hasApiKey
+        onAddAiFeatures={vi.fn()}
+        pendingAction="ai"
+      />,
+    );
+
+    expect(screen.getByRole("button", { name: "Starting…" })).toBeDisabled();
+    expect(screen.getByRole("article")).toHaveAttribute("aria-busy", "true");
+  });
+
   it("starts per-page AI features immediately when a key is available", async () => {
     const user = userEvent.setup();
     const onAddAiFeatures = vi.fn();

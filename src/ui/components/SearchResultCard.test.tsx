@@ -40,6 +40,39 @@ function makeHit(overrides: Partial<PageHit> = {}): PageHit {
 }
 
 describe("SearchResultCard", () => {
+  it("shows why a page matched when the match is only in its URL", () => {
+    const { container } = render(
+      <SearchResultCard
+        hit={makeHit({
+          metadataMatches: {
+            titleHighlightedHtml: null,
+            summaryHighlightedHtml: null,
+            fields: [{ field: "url", highlightedHtml: "https://example.com/<mark>quartz</mark>" }],
+          },
+        })}
+      />,
+    );
+    expect(screen.getByLabelText("Matched page details")).toHaveTextContent(
+      "URL: https://example.com/quartz",
+    );
+    expect(container.querySelector("dd mark")).toHaveTextContent("quartz");
+  });
+  it("expands to show content evidence and page metadata", async () => {
+    const user = userEvent.setup();
+    render(<SearchResultCard hit={makeHit()} />);
+    await user.click(screen.getByRole("button", { name: "Show details" }));
+
+    expect(screen.getByRole("heading", { name: "Content evidence" })).toBeInTheDocument();
+    expect(
+      screen.getByText("React lets you build user interfaces out of components."),
+    ).toBeInTheDocument();
+    expect(screen.getByRole("heading", { name: "Platform" })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Hide details" })).toHaveAttribute(
+      "aria-expanded",
+      "true",
+    );
+  });
+
   it("highlights matched metadata and shows the matched summary as result text", () => {
     const { container } = render(
       <SearchResultCard

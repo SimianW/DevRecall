@@ -1,9 +1,10 @@
 import { describe, expect, it } from "vitest";
-import { getEncoding } from "js-tiktoken";
+import { Tiktoken } from "js-tiktoken/lite";
+import cl100kBase from "js-tiktoken/ranks/cl100k_base";
 
 import { chunkTokens } from "./tokenChunking";
 
-const enc = getEncoding("cl100k_base");
+const enc = new Tiktoken(cl100kBase);
 
 // A paragraph long enough to span several small windows.
 const LONG_TEXT = (

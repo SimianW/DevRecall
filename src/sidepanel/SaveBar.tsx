@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 
 import type { DevRecallResponse, WorkerBroadcast } from "../shared/messages";
-import { sendRequest, subscribeToBroadcasts } from "../ui/rpc";
+import { requireResponse, sendRequest, subscribeToBroadcasts } from "../ui/rpc";
 
 export type UrlStatus = Extract<DevRecallResponse, { type: "page.urlStatus" }>["payload"];
 
@@ -27,10 +27,7 @@ async function defaultGetActiveTab(): Promise<ActiveTab | null> {
 }
 
 async function defaultSaveTab(tabId: number): Promise<void> {
-  const response = await sendRequest({ type: "page.save", payload: { tabId } }, "page.saved");
-  if (!response) {
-    throw new Error("Save failed");
-  }
+  await requireResponse({ type: "page.save", payload: { tabId } }, "page.saved");
 }
 
 async function defaultLoadUrlStatus(url: string): Promise<UrlStatus> {
@@ -69,6 +66,15 @@ function formatRelativeTime(savedAt: number): string {
   return `${Math.floor(hours / 24)}d ago`;
 }
 
+function isCapturableUrl(url: string): boolean {
+  try {
+    const protocol = new URL(url).protocol;
+    return protocol === "http:" || protocol === "https:";
+  } catch {
+    return false;
+  }
+}
+
 export function SaveBar({
   getActiveTab = defaultGetActiveTab,
   saveTab = defaultSaveTab,
@@ -80,20 +86,47 @@ export function SaveBar({
   const [urlStatus, setUrlStatus] = useState<UrlStatus>({ saved: false });
   const [saving, setSaving] = useState(false);
   const [saveFailed, setSaveFailed] = useState(false);
+  const [saveError, setSaveError] = useState<string | null>(null);
+  const [refreshError, setRefreshError] = useState<string | null>(null);
+  const [initialLoading, setInitialLoading] = useState(true);
 
   // Guards overlapping refreshes: only the most recent call may commit state,
   // so out-of-order resolutions can't clobber newer tab/status pairs.
   const refreshSeq = useRef(0);
+  const activeTabRef = useRef<ActiveTab | null>(null);
+  const saveSeq = useRef(0);
 
   const refresh = useCallback(async () => {
     const seq = ++refreshSeq.current;
-    const nextTab = await getActiveTab();
-    const nextStatus: UrlStatus = nextTab ? await loadUrlStatus(nextTab.url) : { saved: false };
-    if (seq !== refreshSeq.current) {
-      return; // a newer refresh superseded us
+    let nextTab: ActiveTab | null = null;
+    try {
+      nextTab = await getActiveTab();
+      const nextStatus =
+        nextTab && isCapturableUrl(nextTab.url)
+          ? await loadUrlStatus(nextTab.url)
+          : ({ saved: false } satisfies UrlStatus);
+      if (seq !== refreshSeq.current) {
+        return; // a newer refresh superseded us
+      }
+      activeTabRef.current = nextTab;
+      setTab(nextTab);
+      setUrlStatus(nextStatus);
+      setRefreshError(null);
+    } catch (error) {
+      if (seq !== refreshSeq.current) {
+        return;
+      }
+      // Keep the tab identity, but discard its status: stale status from a
+      // previous tab must never enable a save action for the wrong URL.
+      activeTabRef.current = nextTab;
+      setTab(nextTab);
+      setUrlStatus({ saved: false });
+      setRefreshError(error instanceof Error ? error.message : "Could not refresh this page");
+    } finally {
+      if (seq === refreshSeq.current) {
+        setInitialLoading(false);
+      }
     }
-    setTab(nextTab);
-    setUrlStatus(nextStatus);
   }, [getActiveTab, loadUrlStatus]);
 
   useEffect(() => {
@@ -104,7 +137,12 @@ export function SaveBar({
   // status for the current tab instead of polling (the popup used a 2 s poll).
   useEffect(() => {
     const unsubscribe = subscribe((message) => {
-      if (message.type === "page.updated" || message.type === "library.cleared") {
+      if (
+        message.type === "page.updated" ||
+        message.type === "page.removed" ||
+        message.type === "library.cleared" ||
+        message.type === "library.changed"
+      ) {
         void refresh();
       }
     });
@@ -113,26 +151,69 @@ export function SaveBar({
 
   useEffect(() => {
     const unsubscribe = onTabChange(() => {
+      saveSeq.current += 1;
       setSaving(false);
       setSaveFailed(false);
+      setSaveError(null);
       void refresh();
     });
     return unsubscribe;
   }, [onTabChange, refresh]);
 
   const handleSave = async () => {
-    if (!tab) return;
+    const target = tab;
+    if (!target || !isCapturableUrl(target.url)) return;
+    const operation = ++saveSeq.current;
     setSaving(true);
     setSaveFailed(false);
+    setSaveError(null);
     try {
-      await saveTab(tab.tabId);
+      await saveTab(target.tabId);
+      if (
+        operation !== saveSeq.current ||
+        activeTabRef.current?.tabId !== target.tabId ||
+        activeTabRef.current.url !== target.url
+      ) {
+        return;
+      }
       await refresh();
-    } catch {
-      setSaveFailed(true);
+    } catch (error) {
+      if (
+        operation === saveSeq.current &&
+        activeTabRef.current?.tabId === target.tabId &&
+        activeTabRef.current.url === target.url
+      ) {
+        setSaveFailed(true);
+        setSaveError(error instanceof Error ? error.message : "Save failed");
+      }
     } finally {
-      setSaving(false);
+      if (operation === saveSeq.current) {
+        setSaving(false);
+      }
     }
   };
+
+  if (initialLoading) {
+    return null;
+  }
+
+  if (refreshError) {
+    return (
+      <section className="rounded-md border border-default bg-surface-raised px-4 py-3">
+        <p className="text-sm font-medium text-foreground">Could not refresh this page.</p>
+        <p role="alert" className="mt-1 text-xs text-foreground/65">
+          {refreshError}
+        </p>
+        <button
+          type="button"
+          onClick={() => void refresh()}
+          className="mt-2 rounded-md bg-accent px-3 py-2 text-sm font-medium text-white"
+        >
+          Retry
+        </button>
+      </section>
+    );
+  }
 
   if (!tab) {
     return null;
@@ -147,7 +228,11 @@ export function SaveBar({
 
   let buttonLabel: string;
   let disabled: boolean;
-  if (saving) {
+  const capturable = isCapturableUrl(tab.url);
+  if (!capturable) {
+    buttonLabel = "Save unavailable";
+    disabled = true;
+  } else if (saving) {
     buttonLabel = "Saving…";
     disabled = true;
   } else if (urlStatus.saved && urlStatus.status === "pending") {
@@ -177,6 +262,16 @@ export function SaveBar({
       </p>
       <p className="mt-1 truncate font-serif text-sm font-semibold text-foreground">{tab.title}</p>
       <p className="text-xs text-foreground/55">{domain}</p>
+      {!capturable ? (
+        <p role="note" className="mt-2 text-xs text-foreground/65">
+          Only HTTP and HTTPS pages can be saved.
+        </p>
+      ) : null}
+      {saveError ? (
+        <p role="alert" className="mt-2 text-xs text-red-700 dark:text-red-300">
+          {saveError}
+        </p>
+      ) : null}
       <button
         type="button"
         disabled={disabled}

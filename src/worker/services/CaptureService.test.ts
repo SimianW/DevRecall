@@ -681,6 +681,23 @@ describe("ChromePageExtractor", () => {
     expect(result.fullText).toBe(fakeExtracted.fullText);
   });
 
+  it("retries a frame while its document-idle content script is still loading", async () => {
+    const chrome = (globalThis as Record<string, unknown>)["chrome"] as {
+      tabs: { sendMessage: ReturnType<typeof vi.fn> };
+      scripting: { executeScript: ReturnType<typeof vi.fn> };
+    };
+
+    chrome.scripting.executeScript.mockResolvedValue([{ frameId: 0 }]);
+    chrome.tabs.sendMessage
+      .mockRejectedValueOnce(new Error("Receiving end does not exist"))
+      .mockResolvedValueOnce({ type: "content.extracted", payload: fakeExtracted });
+
+    const result = await new ChromePageExtractor().extract(tabId);
+
+    expect(result.fullText).toBe(fakeExtracted.fullText);
+    expect(chrome.tabs.sendMessage).toHaveBeenCalledTimes(2);
+  });
+
   it("throws when all frames fail to respond", async () => {
     const chrome = (globalThis as Record<string, unknown>)["chrome"] as {
       tabs: { sendMessage: ReturnType<typeof vi.fn> };

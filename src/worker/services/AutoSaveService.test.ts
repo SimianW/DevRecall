@@ -12,6 +12,7 @@ import { ContentType, Platform } from "../../shared/enums";
 import {
   AutoSaveService,
   ALLOWLIST_PATTERNS,
+  chromeAlarmPort,
   chromeSessionPort,
   chromeTabPort,
   type AlarmPort,
@@ -211,6 +212,17 @@ describe("AutoSaveService.startDwell", () => {
     expect(alarm.clear).toHaveBeenCalledWith(`autosave:${TAB_ID}`);
     expect(alarm.create).toHaveBeenCalledWith(`autosave:${TAB_ID}`, expect.any(Number));
   });
+
+  it("removes durable dwell state when alarm creation fails", async () => {
+    const alarm = makeAlarmPort({
+      create: vi.fn().mockRejectedValue(new Error("alarm unavailable")),
+    });
+    const session = makeSessionPort();
+    const { service } = buildService({ alarm, session });
+
+    await expect(service.startDwell(TAB_ID, ALLOWLISTED_URL)).rejects.toThrow("alarm unavailable");
+    expect(session.remove).toHaveBeenCalledWith(`autosave:${TAB_ID}`);
+  });
 });
 
 // ---------------------------------------------------------------------------
@@ -277,6 +289,21 @@ describe("AutoSaveService.onAlarmFired — happy path", () => {
 // ---------------------------------------------------------------------------
 
 describe("AutoSaveService.onAlarmFired — re-verify guards", () => {
+  it("does NOT capture when auto-save was disabled after the dwell started", async () => {
+    const session = makeSessionPort({
+      get: vi.fn().mockResolvedValue({ url: ALLOWLISTED_URL, startedAt: Date.now() }),
+      remove: vi.fn().mockResolvedValue(undefined),
+    });
+    const capture = makeCapturePort();
+    const enabled = makeEnabledPort(false);
+    const { service } = buildService({ session, capture, enabled });
+
+    await service.onAlarmFired(`autosave:${TAB_ID}`);
+
+    expect(capture.saveAuto).not.toHaveBeenCalled();
+    expect(session.remove).toHaveBeenCalledWith(`autosave:${TAB_ID}`);
+  });
+
   it("does NOT capture if no session entry exists (worker was restarted without state)", async () => {
     const session = makeSessionPort({
       get: vi.fn().mockResolvedValue(undefined),
@@ -598,6 +625,43 @@ describe("chromeSessionPort", () => {
     await chromeSessionPort.remove(KEY);
     const result = await chromeSessionPort.get(KEY);
     expect(result).toBeUndefined();
+  });
+});
+
+describe("chromeAlarmPort", () => {
+  afterEach(() => {
+    delete (globalThis as Record<string, unknown>)["chrome"];
+  });
+
+  it("waits for a Promise-returning chrome.alarms.create", async () => {
+    let resolved = false;
+    (globalThis as Record<string, unknown>)["chrome"] = {
+      alarms: {
+        create: vi.fn(
+          () =>
+            new Promise<void>((resolve) => {
+              setTimeout(() => {
+                resolved = true;
+                resolve();
+              }, 0);
+            }),
+        ),
+      },
+    };
+
+    const create = chromeAlarmPort.create("autosave:42", 1000);
+    expect(resolved).toBe(false);
+    await create;
+    expect(resolved).toBe(true);
+  });
+
+  it("propagates a chrome.alarms.create rejection", async () => {
+    const error = new Error("alarm unavailable");
+    (globalThis as Record<string, unknown>)["chrome"] = {
+      alarms: { create: vi.fn().mockRejectedValue(error) },
+    };
+
+    await expect(chromeAlarmPort.create("autosave:42", 1000)).rejects.toBe(error);
   });
 });
 

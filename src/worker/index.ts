@@ -6,7 +6,7 @@ import type {
 } from "../shared/messages";
 import { OpenAIProvider, testOpenAIConnection } from "./llm/OpenAIProvider";
 import { ChunkRepo } from "./repository/ChunkRepo";
-import { PageRepo, toPageListItemWithExcerpt } from "./repository/PageRepo";
+import { PageRepo } from "./repository/PageRepo";
 import { CaptureService, SEMANTIC_INDEX_VERSION } from "./services/CaptureService";
 import {
   AutoSaveService,
@@ -20,12 +20,7 @@ import { ChromeApiKeyStore } from "./settings/ApiKeyStore";
 import { ChromeAutoSaveSettingStore } from "./settings/AutoSaveSettingStore";
 import { ChromeModeStore } from "./settings/ModeStore";
 import { createPersistentStoragePort } from "./settings/PersistentStorage";
-import {
-  handleMessage,
-  handleRequest,
-  processPageInBackground,
-  type HandlerDeps,
-} from "./handlers";
+import { handleMessage, handleRequest, savePageInBackground, type HandlerDeps } from "./handlers";
 import { normalizeUrl } from "../lib/urlNormalize";
 import { createFailureBadge, createManualSaveCommandHandler } from "./manualSaveCommand";
 
@@ -81,11 +76,7 @@ const autoSaveService = new AutoSaveService(
   chromeTabPort,
   {
     saveAuto: async (tabId: number) => {
-      const page = await captureService.save(tabId, "auto");
-      defaultDeps.retrievalService.invalidate();
-      broadcast({ type: "page.updated", payload: { page: toPageListItemWithExcerpt(page) } });
-      processPageInBackground(defaultDeps, page.id);
-      return page;
+      return savePageInBackground(defaultDeps, tabId, "auto");
     },
   },
   {

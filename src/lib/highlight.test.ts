@@ -3,6 +3,11 @@ import { describe, expect, it } from "vitest";
 import { highlightTerms } from "./highlight";
 
 describe("highlightTerms", () => {
+  it("keeps original offsets when Unicode lowercasing expands a character", () => {
+    expect(highlightTerms("İ 中文 useState", ["中文", "state"])).toBe(
+      "İ <mark>中文</mark> use<mark>State</mark>",
+    );
+  });
   it("wraps whole-word matches in <mark>, case-insensitively", () => {
     expect(highlightTerms("Auto scaling pods", ["auto", "pods"])).toBe(
       "<mark>Auto</mark> scaling <mark>pods</mark>",
@@ -27,5 +32,15 @@ describe("highlightTerms", () => {
     expect(highlightTerms("使用自动扩缩功能", ["自动", "动扩", "扩缩"])).toBe(
       "使用<mark>自动扩缩</mark>功能",
     );
+  });
+
+  it("highlights the same technical tokens BM25 searches", () => {
+    expect(highlightTerms("React useState and C++", ["state", "c++"])).toBe(
+      "React use<mark>State</mark> and <mark>C++</mark>",
+    );
+  });
+
+  it("highlights non-ASCII alphabetic words", () => {
+    expect(highlightTerms("Café naïve", ["café"])).toBe("<mark>Café</mark> naïve");
   });
 });

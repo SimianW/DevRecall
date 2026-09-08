@@ -1,6 +1,6 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 
-import { sendRequest, subscribeToBroadcasts } from "./rpc";
+import { requireResponse, sendRequest, subscribeToBroadcasts } from "./rpc";
 
 type ChromeStub = {
   runtime?: {
@@ -56,6 +56,32 @@ describe("sendRequest", () => {
     const result = await sendRequest({ type: "devrecall.ping" }, "devrecall.pong");
 
     expect(result).toBeNull();
+  });
+});
+
+describe("requireResponse", () => {
+  it("preserves worker failures so a write cannot appear successful", async () => {
+    installChrome({
+      runtime: {
+        sendMessage: vi.fn().mockResolvedValue({
+          type: "error",
+          payload: { message: "Storage is full" },
+        }),
+      },
+    });
+    await expect(requireResponse({ type: "data.deleteAll" }, "data.deletedAll")).rejects.toThrow(
+      "Storage is full",
+    );
+  });
+
+  it("rejects missing acknowledgements and an unavailable extension", async () => {
+    await expect(requireResponse({ type: "data.export" }, "data.exported")).rejects.toThrow(
+      "unavailable",
+    );
+    installChrome({ runtime: { sendMessage: vi.fn().mockResolvedValue(undefined) } });
+    await expect(requireResponse({ type: "data.export" }, "data.exported")).rejects.toThrow(
+      "did not confirm",
+    );
   });
 });
 

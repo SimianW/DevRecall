@@ -1,0 +1,936 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <meta name="color-scheme" content="light dark" />
+    <title>DevRecall · 一小时升级记录</title>
+    <style>
+      :root {
+        --paper: #f7f5ef;
+        --card: #fffefb;
+        --ink: #232722;
+        --muted: #63685e;
+        --line: #dadccf;
+        --accent: #a4472e;
+        --wash: #eee7dd;
+        --good: #37613d;
+      }
+      * {
+        box-sizing: border-box;
+      }
+      html {
+        scroll-padding-top: 24px;
+      }
+      body {
+        margin: 0;
+        background: var(--paper);
+        color: var(--ink);
+        font:
+          16px/1.75 system-ui,
+          -apple-system,
+          "PingFang SC",
+          "Microsoft YaHei",
+          sans-serif;
+      }
+      a {
+        color: var(--accent);
+        text-underline-offset: 4px;
+      }
+      button {
+        font: inherit;
+        cursor: pointer;
+      }
+      button,
+      a {
+        -webkit-tap-highlight-color: transparent;
+      }
+      :focus-visible {
+        outline: 3px solid var(--accent);
+        outline-offset: 4px;
+      }
+      .shell {
+        width: min(1040px, calc(100% - 48px));
+        margin: auto;
+      }
+      header {
+        padding: 28px 0 20px;
+        border-bottom: 1px solid var(--line);
+        display: flex;
+        justify-content: space-between;
+        align-items: center;
+        gap: 16px;
+      }
+      .wordmark {
+        font-size: 18px;
+        font-weight: 750;
+        letter-spacing: -0.04em;
+      }
+      .wordmark span {
+        color: var(--accent);
+      }
+      .edition,
+      .eyebrow {
+        font-size: 12px;
+        color: var(--muted);
+        letter-spacing: 0.09em;
+      }
+      nav {
+        display: flex;
+        flex-wrap: wrap;
+        gap: 20px;
+        font-size: 13px;
+      }
+      nav a {
+        text-decoration: none;
+      }
+      .hero {
+        padding: 64px 0 34px;
+      }
+      .eyebrow {
+        text-transform: uppercase;
+        margin-bottom: 20px;
+      }
+      h1 {
+        margin: 0;
+        font-size: clamp(34px, 6.3vw, 64px);
+        line-height: 1.23;
+        letter-spacing: -0.05em;
+        font-weight: 750;
+      }
+      h1 span {
+        color: var(--accent);
+      }
+      .intro {
+        max-width: 670px;
+        font-size: 18px;
+        color: var(--muted);
+        margin: 24px 0;
+      }
+      .pill {
+        display: inline-block;
+        border: 1px solid var(--line);
+        border-radius: 20px;
+        padding: 4px 11px;
+        font-size: 12px;
+        margin: 0 6px 6px 0;
+      }
+      .metrics {
+        display: grid;
+        grid-template-columns: repeat(3, 1fr);
+        border: 1px solid var(--line);
+        border-radius: 14px;
+        overflow: hidden;
+        background: var(--card);
+      }
+      .metric {
+        padding: 24px 28px;
+      }
+      .metric + .metric {
+        border-left: 1px solid var(--line);
+      }
+      .metric strong {
+        display: block;
+        font-size: 36px;
+        letter-spacing: -0.05em;
+        line-height: 1.2;
+      }
+      .metric .unit {
+        font-size: 17px;
+        letter-spacing: 0;
+      }
+      .metric p {
+        margin: 8px 0 0;
+        font-size: 13px;
+        color: var(--muted);
+      }
+      section {
+        padding-top: 52px;
+      }
+      .section-heading {
+        display: flex;
+        align-items: baseline;
+        gap: 14px;
+        margin-bottom: 20px;
+      }
+      .section-heading .number {
+        font-size: 12px;
+        color: var(--accent);
+        font-variant-numeric: tabular-nums;
+      }
+      h2 {
+        margin: 0;
+        font-size: 24px;
+        letter-spacing: -0.03em;
+      }
+      h3 {
+        margin: 0 0 10px;
+        font-size: 18px;
+      }
+      p {
+        margin: 0 0 14px;
+      }
+      .grid {
+        display: grid;
+        grid-template-columns: 1fr 1fr;
+        gap: 14px;
+      }
+      .card {
+        border: 1px solid var(--line);
+        border-radius: 12px;
+        padding: 24px;
+        background: var(--card);
+      }
+      .card p {
+        color: var(--muted);
+        font-size: 14px;
+      }
+      .card p:last-child {
+        margin-bottom: 0;
+      }
+      .card .example {
+        color: var(--ink);
+        background: var(--wash);
+        padding: 10px 12px;
+        border-radius: 6px;
+        font-size: 13px;
+      }
+      kbd,
+      code {
+        font-family: ui-monospace, SFMono-Regular, Consolas, monospace;
+        font-size: 0.85em;
+        overflow-wrap: anywhere;
+      }
+      kbd {
+        border: 1px solid var(--line);
+        border-radius: 4px;
+        padding: 1px 5px;
+      }
+      .table-wrap {
+        overflow-x: auto;
+        border: 1px solid var(--line);
+        border-radius: 12px;
+      }
+      table {
+        width: 100%;
+        border-collapse: collapse;
+        font-size: 14px;
+        background: var(--card);
+      }
+      th {
+        text-align: left;
+        font-weight: 600;
+        background: var(--wash);
+      }
+      th,
+      td {
+        padding: 16px 20px;
+        vertical-align: top;
+      }
+      tr + tr td {
+        border-top: 1px solid var(--line);
+      }
+      td:first-child {
+        width: 24%;
+        font-weight: 600;
+      }
+      td:last-child {
+        color: var(--muted);
+      }
+      .note {
+        font-size: 13px;
+        color: var(--muted);
+        margin-top: 12px;
+      }
+      .demo {
+        border: 1px solid var(--line);
+        border-radius: 14px;
+        overflow: hidden;
+        background: var(--card);
+      }
+      .demo-intro {
+        padding: 24px 26px 8px;
+      }
+      .demo-intro p {
+        color: var(--muted);
+        font-size: 14px;
+      }
+      .state {
+        margin: 10px 26px 18px;
+        padding: 20px;
+        background: var(--wash);
+        border-radius: 8px;
+      }
+      .state-grid {
+        display: grid;
+        grid-template-columns: 1fr 1fr;
+        gap: 12px 24px;
+      }
+      .state dt {
+        font-size: 12px;
+        color: var(--muted);
+      }
+      .state dd {
+        margin: 0;
+        font-size: 14px;
+        overflow-wrap: anywhere;
+      }
+      .state .message {
+        margin-top: 18px;
+        padding-top: 14px;
+        border-top: 1px solid var(--line);
+        font-size: 14px;
+        color: var(--accent);
+      }
+      .actions {
+        display: flex;
+        flex-wrap: wrap;
+        gap: 8px;
+        padding: 0 26px 24px;
+      }
+      button {
+        border: 1px solid var(--line);
+        border-radius: 6px;
+        padding: 8px 12px;
+        background: var(--card);
+        color: var(--ink);
+        font-size: 13px;
+      }
+      button:hover {
+        border-color: var(--accent);
+      }
+      .guide {
+        border-top: 1px solid var(--line);
+        padding: 22px 26px 26px;
+      }
+      .tabs {
+        display: flex;
+        flex-wrap: wrap;
+        gap: 8px;
+        margin-bottom: 18px;
+      }
+      .tabs button[aria-selected="true"] {
+        background: var(--ink);
+        color: var(--paper);
+        border-color: var(--ink);
+      }
+      .guide p {
+        font-size: 14px;
+        color: var(--muted);
+      }
+      .steps {
+        display: flex;
+        flex-wrap: wrap;
+        gap: 8px;
+      }
+      .steps button:disabled {
+        opacity: 0.55;
+        cursor: default;
+      }
+      .steps button.current {
+        border-color: var(--accent);
+        color: var(--accent);
+      }
+      .checks {
+        margin: 0;
+        padding-left: 20px;
+        font-size: 14px;
+      }
+      .checks li {
+        padding: 4px 0;
+      }
+      .checks li::marker {
+        color: var(--good);
+      }
+      .caveat {
+        border-left: 3px solid var(--accent);
+        padding: 16px 22px;
+        margin-top: 18px;
+        background: var(--wash);
+        font-size: 14px;
+      }
+      .caveat p:last-child {
+        margin-bottom: 0;
+      }
+      .handoff {
+        display: grid;
+        grid-template-columns: 1.2fr 1fr;
+        gap: 24px;
+        padding: 28px;
+        border: 1px solid var(--line);
+        border-radius: 12px;
+        background: var(--card);
+      }
+      .handoff p {
+        font-size: 14px;
+        color: var(--muted);
+      }
+      pre {
+        margin: 0;
+        padding: 16px;
+        background: var(--wash);
+        border-radius: 6px;
+        white-space: pre-wrap;
+        overflow-wrap: anywhere;
+        font-size: 13px;
+      }
+      footer {
+        display: flex;
+        justify-content: space-between;
+        gap: 20px;
+        border-top: 1px solid var(--line);
+        margin-top: 52px;
+        padding: 24px 0 36px;
+        font-size: 12px;
+        color: var(--muted);
+      }
+      @media (prefers-color-scheme: dark) {
+        :root {
+          --paper: #1e211d;
+          --card: #262a24;
+          --ink: #eceee3;
+          --muted: #b3b9a9;
+          --line: #454b3e;
+          --accent: #ed9b7d;
+          --wash: #30352c;
+          --good: #a4c19b;
+        }
+      }
+      @media (max-width: 650px) {
+        .shell {
+          width: calc(100% - 32px);
+        }
+        header {
+          align-items: flex-start;
+        }
+        nav {
+          gap: 10px;
+        }
+        .hero {
+          padding-top: 40px;
+        }
+        .intro {
+          font-size: 16px;
+        }
+        .grid,
+        .handoff {
+          grid-template-columns: 1fr;
+        }
+        .metric {
+          padding: 18px 12px;
+        }
+        .metric strong {
+          font-size: 27px;
+        }
+        .metric .unit {
+          font-size: 13px;
+        }
+        .metric p {
+          font-size: 11px;
+        }
+        .state-grid {
+          grid-template-columns: 1fr;
+        }
+        .demo-intro,
+        .guide {
+          padding-left: 18px;
+          padding-right: 18px;
+        }
+        .state {
+          margin-left: 18px;
+          margin-right: 18px;
+        }
+        .actions {
+          padding-left: 18px;
+          padding-right: 18px;
+        }
+        th,
+        td {
+          padding: 13px 12px;
+        }
+        td:first-child {
+          width: 30%;
+        }
+        footer {
+          flex-direction: column;
+          gap: 8px;
+        }
+      }
+      @media print {
+        nav,
+        .actions,
+        .guide {
+          display: none;
+        }
+        section {
+          break-inside: avoid;
+        }
+        body {
+          font-size: 12px;
+        }
+        .hero {
+          padding-top: 24px;
+        }
+      }
+    </style>
+  </head>
+  <body>
+    <div class="shell">
+      <header>
+        <div class="wordmark">
+          Dev<span>Recall</span> <span class="edition">/ FIELD NOTES</span>
+        </div>
+        <nav aria-label="页面导航">
+          <a href="#changes">改了什么</a><a href="#demo">试一试</a><a href="#validation">验证</a>
+        </nav>
+      </header>
+      <main>
+        <div class="hero">
+          <div class="eyebrow">2026.09.07 · 一小时升级 · v0.1.3.0</div>
+          <h1>存得下，<span>也找得回来。</span></h1>
+          <p class="intro">
+            这次集中补了搜索、备份恢复和日常操作中的断点。所有改动都在独立 worktree
+            和分支里，保留本地优先，也保留你决定何时使用 AI 的权利。
+          </p>
+          <span class="pill">独立分支交付</span><span class="pill">没有使用真实 API key</span
+          ><span class="pill">未合并 main</span>
+        </div>
+
+        <div class="metrics" aria-label="可核验结果">
+          <div class="metric">
+            <strong id="test-count">552<span class="unit"> 项</span></strong>
+            <p>自动化测试通过<br />基线 454 项，另有 1 项在线测试跳过</p>
+          </div>
+          <div class="metric">
+            <strong>78.4<span class="unit">%</span></strong>
+            <p>worker 构建体积减少<br />约 5.75 MB → 1.24 MB，未压缩</p>
+          </div>
+          <div class="metric">
+            <strong>65<span class="unit"> 页</span></strong>
+            <p>真实 Chromium 验证数据<br />导入、筛选、分页、导出及去重</p>
+          </div>
+        </div>
+
+        <section id="changes" aria-labelledby="changes-title">
+          <div class="section-heading">
+            <span class="number">01</span>
+            <h2 id="changes-title">你能直接感受到的变化</h2>
+          </div>
+          <div class="grid">
+            <article class="card">
+              <h3>搜索更容易命中</h3>
+              <p>
+                正文之外，标题、摘要、主题、技术名、域名和 URL
+                也参与检索。标题与标签有更高权重，结果会显示命中的字段。
+              </p>
+              <p class="example">
+                支持 C++、C#、camelCase 和中文分词。搜 state 可以找到 useState。
+              </p>
+            </article>
+            <article class="card">
+              <h3>筛选不再漏掉旧收藏</h3>
+              <p>
+                先对整个库筛选，再截取结果。浏览列表可以继续加载，筛选后的列表也一样。保存、删除或导入后，当前搜索会更新。
+              </p>
+              <p class="example">
+                <kbd>/</kbd> 或 <kbd>Ctrl / ⌘ K</kbd> 聚焦搜索，<kbd>Esc</kbd>
+                清空。卡片可展开查看命中依据。
+              </p>
+            </article>
+            <article class="card">
+              <h3>备份终于能恢复</h3>
+              <p>
+                选择 JSON 后先预览数量，再确认导入。恢复保留现有收藏，跳过重复
+                URL；如果写入失败，整批回滚。文本和标签恢复后可直接本地搜索。
+              </p>
+              <p class="example">设置 → Data Management → Import backup。导入不会调用 AI。</p>
+            </article>
+            <article class="card">
+              <h3>操作有明确的结果</h3>
+              <p>
+                保存、设置、列表读取都有失败反馈或重试入口。删除前确认，等待中的操作不重复提交。无法保存的浏览器内部页面会给出说明。
+              </p>
+              <p class="example">同时检查了浅色、深色和 320 像素窄侧栏，修正横向溢出。</p>
+            </article>
+          </div>
+        </section>
+
+        <section aria-labelledby="architecture-title">
+          <div class="section-heading">
+            <span class="number">02</span>
+            <h2 id="architecture-title">底层改动，为什么值得做</h2>
+          </div>
+          <div class="table-wrap">
+            <table>
+              <thead>
+                <tr>
+                  <th scope="col">位置</th>
+                  <th scope="col">这次的处理</th>
+                  <th scope="col">带来的好处</th>
+                </tr>
+              </thead>
+              <tbody>
+                <tr>
+                  <td>搜索索引</td>
+                  <td>每个语料版本复用 BM25 索引；正文与元数据共用分词和高亮规则。</td>
+                  <td>重复搜索不必重建词频统计，命中与高亮更一致。</td>
+                </tr>
+                <tr>
+                  <td>数据写入</td>
+                  <td>备份先校验，页面和文本块事务写入；清空时使旧保存任务失效。</td>
+                  <td>避免导入一半、重复覆盖和清空后旧任务重新写回。</td>
+                </tr>
+                <tr>
+                  <td>界面与 worker</td>
+                  <td>关键写操作要求明确成功响应；列表和搜索丢弃过期返回值。</td>
+                  <td>不把通信失败显示成成功，不让旧结果覆盖当前状态。</td>
+                </tr>
+                <tr>
+                  <td>AI 边界</td>
+                  <td>请求及响应读取限时 30 秒；严格检查标签和 1536 维向量；发送前复核授权。</td>
+                  <td>
+                    异常响应不会被当作成功。超时等结果不明的 POST 不自动重发，降低重复计费风险。
+                  </td>
+                </tr>
+                <tr>
+                  <td>构建依赖</td>
+                  <td>tokenizer 只加载实际使用的 cl100k_base 字典。</td>
+                  <td>worker 体积约减少 4.51 MB；gzip 后约 2.65 MB → 0.56 MB。</td>
+                </tr>
+              </tbody>
+            </table>
+          </div>
+          <p class="note">
+            没有更换技术栈或数据库格式。仍是 React、TypeScript、Dexie 和 Chrome
+            MV3；这次优先收紧已有模块的职责与数据边界。
+          </p>
+        </section>
+
+        <section id="demo" aria-labelledby="demo-title">
+          <div class="section-heading">
+            <span class="number">03</span>
+            <h2 id="demo-title">点一下，看看边界怎么处理</h2>
+          </div>
+          <div class="demo">
+            <div class="demo-intro">
+              <h3>清空之后，旧任务还能把页面带回来吗？</h3>
+              <p>
+                这个 prototype
+                用简化的内存状态解释本次设计：旧保存失效，重复备份不新增，失败导入不留半批数据。下方演示不是扩展本身，不读取你的收藏，也不会联网。
+              </p>
+            </div>
+            <div class="state" aria-live="polite" aria-atomic="true">
+              <dl class="state-grid">
+                <div>
+                  <dt>收藏库</dt>
+                  <dd id="library-state"></dd>
+                </div>
+                <div>
+                  <dt>等待中的保存</dt>
+                  <dd id="pending-state"></dd>
+                </div>
+                <div>
+                  <dt>当前库版本 / 任务版本</dt>
+                  <dd id="revision-state"></dd>
+                </div>
+                <div>
+                  <dt>最近导入</dt>
+                  <dd id="import-state"></dd>
+                </div>
+              </dl>
+              <div class="message" id="state-message"></div>
+            </div>
+            <div class="actions" aria-label="自由操作">
+              <button data-action="start">开始保存新文章</button
+              ><button data-action="finish">让保存完成</button
+              ><button data-action="clear">清空收藏</button
+              ><button data-action="import">导入示例备份</button
+              ><button data-action="fail">模拟导入写入失败</button
+              ><button data-action="reset">重置演示</button>
+            </div>
+            <div class="guide">
+              <div class="tabs" role="tablist" aria-label="引导场景">
+                <button
+                  role="tab"
+                  id="tab-save"
+                  aria-controls="walkthrough"
+                  data-scenario="save"
+                  aria-selected="true"
+                >
+                  正常保存
+                </button>
+                <button
+                  role="tab"
+                  id="tab-clear"
+                  aria-controls="walkthrough"
+                  data-scenario="clear"
+                  aria-selected="false"
+                  tabindex="-1"
+                >
+                  先清空，后完成
+                </button>
+                <button
+                  role="tab"
+                  id="tab-backup"
+                  aria-controls="walkthrough"
+                  data-scenario="backup"
+                  aria-selected="false"
+                  tabindex="-1"
+                >
+                  重复导入与失败
+                </button>
+              </div>
+              <div id="walkthrough" role="tabpanel" aria-labelledby="tab-save">
+                <p id="scenario-description"></p>
+                <div class="steps" id="steps"></div>
+              </div>
+            </div>
+          </div>
+          <p class="note">
+            设计结论已经写进扩展和回归测试。这里保留的是讲解用原型，只属于本次功能分支，不进入扩展构建。
+          </p>
+        </section>
+
+        <section id="validation" aria-labelledby="validation-title">
+          <div class="section-heading">
+            <span class="number">04</span>
+            <h2 id="validation-title">验证了什么，还缺什么</h2>
+          </div>
+          <div class="grid">
+            <div class="card">
+              <h3>代码验证</h3>
+              <ul class="checks">
+                <li>完整单元与集成测试，含新增搜索、备份和并发回归。</li>
+                <li>TypeScript、ESLint、Prettier 和生产构建。</li>
+                <li>两轮独立审查，分别检查项目规范和用户需求。</li>
+                <li>本地保存、AI 回退与授权撤销都有自动化覆盖。</li>
+              </ul>
+            </div>
+            <div class="card">
+              <h3>真实浏览器验证</h3>
+              <ul class="checks">
+                <li>全新 Chromium profile 加载打包后的 MV3 扩展。</li>
+                <li>65 页导入、旧页面筛选、加载更多、导出去重。</li>
+                <li>本地 HTTP 网页提取、手动保存和删除后的实时搜索。</li>
+                <li>浅色、深色、320px 布局、Esc 清空，无未捕获页面异常。</li>
+                <li>这些 Local-only 流程的 OpenAI 请求数为 0。</li>
+              </ul>
+            </div>
+          </div>
+          <div class="caveat">
+            <p>
+              <strong>这还不是一次正式发布。</strong>没有用真实 API key 做付费端到端测试，没有测试
+              Chrome 商店安装、不同机器上的长期使用或上万页规模。
+            </p>
+            <p>
+              备份限 25 MiB、5,000 页，不含 API
+              key、设置和向量。恢复后的语义索引需要另行授权重建。已经发出去的 AI
+              请求无法撤回；撤销授权阻止后续发送，也不会自动重试结果不明的请求。
+            </p>
+            <p>
+              构建仍有 tokenizer
+              大块提示及现有的构建插件选项警告，构建本身通过。体积数字来自本地构建，不等于启动速度或搜索延迟的实测提升。
+            </p>
+          </div>
+        </section>
+
+        <section aria-labelledby="handoff-title">
+          <div class="section-heading">
+            <span class="number">05</span>
+            <h2 id="handoff-title">改动在哪里</h2>
+          </div>
+          <div class="handoff">
+            <div>
+              <h3>一个分支，随时可以审阅</h3>
+              <p>
+                <a href="https://github.com/SimianW/DevRecall/tree/codex/one-hour-upgrade-20260907"
+                  >codex/one-hour-upgrade-20260907</a
+                >
+              </p>
+              <p>
+                起点 <code>465ce3f</code>，版本
+                <code>0.1.2.0 → 0.1.3.0</code>。原工作目录保持干净，没有合并或部署。
+              </p>
+              <p>本文件所有样式和逻辑内联，下载后双击即可打开。演示状态刷新即重置。</p>
+            </div>
+            <div>
+              <h3>本地检查</h3>
+              <pre><code>cd /tmp/devrecall-upgrade-20260907
+pnpm test
+pnpm typecheck
+pnpm lint
+pnpm format:check
+pnpm build</code></pre>
+              <p class="note">
+                在 Chrome 的扩展管理页选择“加载已解压的扩展程序”，指向这个 worktree 的 dist 目录。
+              </p>
+            </div>
+          </div>
+        </section>
+      </main>
+      <footer>
+        <span>DevRecall · 一小时升级记录 · 2026 年 9 月 7 日</span
+        ><span>prototype / 自包含 HTML / 无外部资源</span>
+      </footer>
+    </div>
+    <script>
+      // A small explanatory model. It is not connected to extension storage.
+      const initialState = () => ({
+        pages: ["已有教程"],
+        revision: 0,
+        pending: null,
+        imported: 0,
+        skipped: 0,
+        importStatus: "尚未导入",
+        message: "从 1 篇已有教程开始。你可以自由操作，或按下方步骤试一遍。",
+      });
+      function reduce(state, action) {
+        if (action === "reset") return initialState();
+        if (action === "start")
+          return {
+            ...state,
+            pending: state.revision,
+            message: "正在提取新文章，尚未写入收藏库。任务记住了此刻的库版本。",
+          };
+        if (action === "clear")
+          return {
+            ...state,
+            pages: [],
+            revision: state.revision + 1,
+            message: "收藏库已清空，版本加一。旧任务即使之后完成，也没有写入权限。",
+          };
+        if (action === "finish") {
+          if (state.pending === null)
+            return { ...state, message: "没有等待中的保存。先点击“开始保存新文章”。" };
+          if (state.pending !== state.revision)
+            return {
+              ...state,
+              pending: null,
+              message: "拦住了过期保存。库版本已经变化，文章没有重新出现。",
+            };
+          return {
+            ...state,
+            pages: [...new Set([...state.pages, "新文章"])],
+            pending: null,
+            message: "页面和关键词文本块一起写入。现在可以在本地找到新文章。",
+          };
+        }
+        if (action === "import") {
+          const backup = ["已有教程", "备份文章"];
+          const incoming = backup.filter((page) => !state.pages.includes(page));
+          return {
+            ...state,
+            pages: [...state.pages, ...incoming],
+            imported: incoming.length,
+            skipped: backup.length - incoming.length,
+            importStatus: "已完成",
+            message: `本次新增 ${incoming.length} 篇，跳过 ${backup.length - incoming.length} 篇重复收藏。已有内容没有被覆盖。`,
+          };
+        }
+        if (action === "fail")
+          return {
+            ...state,
+            imported: 0,
+            skipped: 0,
+            importStatus: "写入失败，整批回滚",
+            message: "模拟第二篇写入失败。事务回滚，收藏库保持导入前的样子。",
+          };
+        return state;
+      }
+      const scenarios = {
+        save: {
+          description: "正常保存：先提取，再一次性写入本地。保存不依赖 AI。",
+          steps: [
+            ["start", "开始保存"],
+            ["finish", "完成写入"],
+          ],
+        },
+        clear: {
+          description:
+            "最容易忽略的顺序：文章还在提取时清空收藏，然后让旧任务完成。最后应当仍是空库。",
+          steps: [
+            ["start", "开始保存"],
+            ["clear", "清空收藏"],
+            ["finish", "旧保存完成"],
+          ],
+        },
+        backup: {
+          description:
+            "备份包含已有教程和一篇新文章。连续导入两次，再模拟写入失败，检查数量和已有内容。",
+          steps: [
+            ["import", "第一次导入"],
+            ["import", "再次导入"],
+            ["fail", "模拟写入失败"],
+          ],
+        },
+      };
+      let state = initialState();
+      let scenario = "save";
+      let step = 0;
+      const element = (id) => document.getElementById(id);
+      function render() {
+        element("library-state").textContent =
+          `${state.pages.length} 篇${state.pages.length ? " · " + state.pages.join("、") : " · 空库"}`;
+        element("pending-state").textContent = state.pending === null ? "无" : "新文章，提取中";
+        element("revision-state").textContent =
+          `${state.revision} / ${state.pending === null ? "无等待任务" : state.pending}`;
+        element("import-state").textContent =
+          `${state.importStatus} · 新增 ${state.imported} · 跳过 ${state.skipped}`;
+        element("state-message").textContent = state.message;
+        element("scenario-description").textContent = scenarios[scenario].description;
+        element("walkthrough").setAttribute("aria-labelledby", `tab-${scenario}`);
+        document.querySelectorAll("[data-scenario]").forEach((button) => {
+          const selected = button.dataset.scenario === scenario;
+          button.setAttribute("aria-selected", String(selected));
+          button.tabIndex = selected ? 0 : -1;
+        });
+        element("steps").replaceChildren(
+          ...scenarios[scenario].steps.map(([action, label], index) => {
+            const button = document.createElement("button");
+            button.textContent = `${index < step ? "已完成" : index + 1} · ${label}`;
+            button.disabled = index !== step;
+            if (index === step) button.className = "current";
+            button.addEventListener("click", () => {
+              state = reduce(state, action);
+              step++;
+              render();
+              const next = element("steps").querySelector(".current");
+              if (next) next.focus();
+            });
+            return button;
+          }),
+        );
+      }
+      document.querySelectorAll("[data-action]").forEach((button) =>
+        button.addEventListener("click", () => {
+          state = reduce(state, button.dataset.action);
+          step = 0;
+          render();
+        }),
+      );
+      function selectScenario(button) {
+        scenario = button.dataset.scenario;
+        state = initialState();
+        step = 0;
+        render();
+      }
+      const tabs = [...document.querySelectorAll("[data-scenario]")];
+      tabs.forEach((button, index) => {
+        button.addEventListener("click", () => selectScenario(button));
+        button.addEventListener("keydown", (event) => {
+          let next;
+          if (event.key === "ArrowRight") next = tabs[(index + 1) % tabs.length];
+          if (event.key === "ArrowLeft") next = tabs[(index + tabs.length - 1) % tabs.length];
+          if (event.key === "Home") next = tabs[0];
+          if (event.key === "End") next = tabs[tabs.length - 1];
+          if (next) {
+            event.preventDefault();
+            selectScenario(next);
+            next.focus();
+          }
+        });
+      });
+      render();
+    </script>
+  </body>
+</html>

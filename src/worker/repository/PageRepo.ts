@@ -1,12 +1,22 @@
 import { ulid } from "ulid";
 
+import { chunkText } from "../../lib/chunking";
+import type { BackupPage } from "../../shared/backup";
 import { deriveExcerpt } from "../../lib/excerpt";
 import { classifyPage } from "../../lib/platformClassifier";
 import { normalizeUrl } from "../../lib/urlNormalize";
-import type { ChunkRecord, PageCaptureInput, PageListItem, PageRecord } from "../../shared/types";
+import type {
+  ChunkRecord,
+  PageCaptureInput,
+  PageListItem,
+  PageRecord,
+  SearchFilter,
+} from "../../shared/types";
 import type { PageListItemWithExcerpt } from "../../shared/messages";
 import { makeWordChunkRecords } from "./ChunkRepo";
 import { db, type DevRecallDatabase } from "./db";
+
+export type MayCommitPage = () => Promise<boolean> | boolean;
 
 export class PageRepo {
   constructor(private readonly database: DevRecallDatabase = db) {}
@@ -16,7 +26,11 @@ export class PageRepo {
    * transaction writes the intermediate `pending` state before the chunks, but
    * callers only receive the committed `keyword_ready` record.
    */
-  async commitCapturedPage(input: PageCaptureInput, texts: string[]): Promise<PageRecord> {
+  async commitCapturedPage(
+    input: PageCaptureInput,
+    texts: string[],
+    mayCommit?: MayCommitPage,
+  ): Promise<PageRecord> {
     const normalized = await normalizeUrl(input.url);
     const now = Date.now();
     let attemptedPage: PageRecord | undefined;
@@ -27,6 +41,9 @@ export class PageRepo {
         this.database.pages,
         this.database.chunks,
         async () => {
+          if (mayCommit && !(await mayCommit())) {
+            throw new Error("Page save authorization was revoked");
+          }
           const existing = await this.database.pages
             .where("urlHash")
             .equals(normalized.urlHash)
@@ -83,7 +100,10 @@ export class PageRepo {
           localSaveError: message,
         };
         try {
-          await this.database.pages.put(failed);
+          await this.database.transaction("rw", this.database.pages, async () => {
+            if (mayCommit && !(await mayCommit())) return;
+            await this.database.pages.put(failed);
+          });
         } catch {
           // The original local write error is more useful to the caller.
         }
@@ -229,20 +249,94 @@ export class PageRepo {
     pagesMissingEmbeddings: number;
   }> {
     const pages = await this.database.pages.toArray();
-    const totalTextBytes = pages.reduce((sum, p) => sum + p.fullText.length, 0);
+    const encoder = new TextEncoder();
+    const totalTextBytes = pages.reduce(
+      (sum, page) => sum + encoder.encode(page.fullText).byteLength,
+      0,
+    );
     const pagesMissingEmbeddings = (await this.pageIdsMissingEmbeddings()).length;
 
     return { pageCount: pages.length, totalTextBytes, pagesMissingEmbeddings };
   }
 
-  async listPages({ limit }: { limit: number }): Promise<PageListItemWithExcerpt[]> {
-    const pages = await this.database.pages.orderBy("savedAt").reverse().limit(limit).toArray();
+  async listPages({
+    limit,
+    offset = 0,
+    filter,
+  }: {
+    limit: number;
+    offset?: number;
+    filter?: SearchFilter;
+  }): Promise<PageListItemWithExcerpt[]> {
+    if (
+      !Number.isInteger(limit) ||
+      limit < 0 ||
+      limit > 2 ** 32 - 1 ||
+      !Number.isInteger(offset) ||
+      offset < 0
+    ) {
+      throw new Error("Invalid library page range");
+    }
+    const ordered = this.database.pages.orderBy("savedAt").reverse();
+    const matching = filter
+      ? ordered.filter(
+          (page) =>
+            (filter.platform === undefined || page.platform === filter.platform) &&
+            (filter.contentType === undefined || page.contentType === filter.contentType),
+        )
+      : ordered;
+    const pages = await matching.offset(offset).limit(limit).toArray();
 
     return pages.map(toPageListItemWithExcerpt);
   }
 
   async exportAll(): Promise<PageRecord[]> {
     return this.database.pages.orderBy("savedAt").toArray();
+  }
+
+  /** Merge a validated backup atomically, rebuilding local search without calling AI. */
+  async importPages(
+    pages: BackupPage[],
+    mayCommit?: MayCommitPage,
+  ): Promise<{ imported: number; skipped: number }> {
+    // Hashing is done before the transaction so Web Crypto cannot let IndexedDB go idle.
+    const prepared = await Promise.all(
+      pages.map(async (page) => ({
+        page,
+        normalized: await normalizeUrl(page.url),
+        texts: chunkText(page.fullText),
+      })),
+    );
+    return this.database.transaction("rw", this.database.pages, this.database.chunks, async () => {
+      let imported = 0;
+      let skipped = 0;
+      for (const { page, normalized, texts } of prepared) {
+        if (mayCommit && !(await mayCommit())) {
+          throw new Error("Library import authorization was revoked");
+        }
+        const existing = await this.database.pages
+          .where("urlHash")
+          .equals(normalized.urlHash)
+          .first();
+        if (existing) {
+          skipped += 1;
+          continue;
+        }
+        const record: PageRecord = {
+          ...page,
+          ...normalized,
+          id: ulid(),
+          schemaVersion: 1,
+          status: texts.length ? "keyword_ready" : "failed",
+          ...(texts.length ? {} : { localSaveError: "Imported page has no searchable text." }),
+        };
+        await this.database.pages.add(record);
+        const chunks = makeWordChunkRecords(record.id, texts);
+        if (chunks.length) await this.database.chunks.bulkAdd(chunks);
+        imported += 1;
+      }
+      return { imported, skipped };
+    });
   }
 
   async deleteAll(): Promise<void> {

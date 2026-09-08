@@ -1,4 +1,5 @@
 import { normalizeUrl } from "../lib/urlNormalize";
+import { parseBackup, type BackupPage } from "../shared/backup";
 import {
   APP_NAME,
   APP_VERSION,
@@ -8,7 +9,7 @@ import {
   type WorkerBroadcast,
 } from "../shared/messages";
 import type { EffectiveMode } from "../shared/modes";
-import type { PageRecord } from "../shared/types";
+import type { PageRecord, SearchFilter } from "../shared/types";
 import { toPageListItem, toPageListItemWithExcerpt } from "./repository/PageRepo";
 import type { SearchInput, SearchOutcome } from "./services/RetrievalService";
 import type { BulkTaskProgress, BulkTaskRunnerPort } from "./services/BulkTaskRunner";
@@ -18,7 +19,11 @@ import type { ModeStore } from "./settings/ModeStore";
 import type { PersistentStoragePort } from "./settings/PersistentStorage";
 
 export type CapturePort = {
-  save(tabId: number, saveMode?: "manual" | "auto"): Promise<PageRecord>;
+  save(
+    tabId: number,
+    saveMode?: "manual" | "auto",
+    mayCommit?: () => Promise<boolean> | boolean,
+  ): Promise<PageRecord>;
   retryLocalPage(pageId: string): Promise<PageRecord>;
   processPage(
     pageId: string,
@@ -34,7 +39,11 @@ export type CapturePort = {
 };
 
 export type PageListPort = {
-  listPages(input: { limit: number }): Promise<PageListItemWithExcerpt[]>;
+  listPages(input: {
+    limit: number;
+    offset?: number;
+    filter?: SearchFilter;
+  }): Promise<PageListItemWithExcerpt[]>;
   getStats(): Promise<{
     pageCount: number;
     totalTextBytes: number;
@@ -46,6 +55,10 @@ export type PageListPort = {
   pageIdsKeywordReady(): Promise<string[]>;
   pageIdsNeedingSemanticIndex(embeddingModel: string, indexVersion: number): Promise<string[]>;
   exportAll(): Promise<PageRecord[]>;
+  importPages(
+    pages: BackupPage[],
+    mayCommit?: () => Promise<boolean> | boolean,
+  ): Promise<{ imported: number; skipped: number }>;
   deleteAll(): Promise<void>;
 };
 
@@ -70,7 +83,19 @@ export type HandlerDeps = {
 
 const automaticPrivacyRevision = new WeakMap<HandlerDeps, number>();
 const bulkConsentRevision = new WeakMap<HandlerDeps, number>();
+const apiKeyRevision = new WeakMap<HandlerDeps, number>();
 const explicitPages = new WeakMap<HandlerDeps, Set<string>>();
+const pageOperationRevision = new WeakMap<HandlerDeps, Map<string, number>>();
+const libraryOperationRevision = new WeakMap<HandlerDeps, number>();
+
+type PageOperationToken = {
+  pageId: string;
+  pageRevision: number;
+  libraryRevision: number;
+  privacyRevision?: number;
+  consentRevision?: number;
+  apiKeyRevision?: number;
+};
 type PreparedBatchKind = "enrich" | "semantic";
 type PreparedBatch = { kind: PreparedBatchKind; pageIds: string[] };
 const preparedBatches = new WeakMap<HandlerDeps, Map<string, PreparedBatch>>();
@@ -125,6 +150,72 @@ function revokeBulkConsent(deps: HandlerDeps): void {
   deps.bulkRunner.cancel();
 }
 
+function pageRevisionFor(deps: HandlerDeps, pageId: string): number {
+  return pageOperationRevision.get(deps)?.get(pageId) ?? 0;
+}
+
+function incrementPageRevision(deps: HandlerDeps, pageId: string): void {
+  const revisions = pageOperationRevision.get(deps) ?? new Map<string, number>();
+  revisions.set(pageId, pageRevisionFor(deps, pageId) + 1);
+  pageOperationRevision.set(deps, revisions);
+}
+
+function startPageOperation(
+  deps: HandlerDeps,
+  pageId: string,
+  options: Pick<PageOperationToken, "privacyRevision" | "consentRevision" | "apiKeyRevision"> & {
+    libraryRevision?: number;
+  } = {},
+): PageOperationToken {
+  incrementPageRevision(deps, pageId);
+  return {
+    pageId,
+    pageRevision: pageRevisionFor(deps, pageId),
+    libraryRevision: options.libraryRevision ?? revisionFor(libraryOperationRevision, deps),
+    ...(options.privacyRevision === undefined ? {} : { privacyRevision: options.privacyRevision }),
+    ...(options.consentRevision === undefined ? {} : { consentRevision: options.consentRevision }),
+    ...(options.apiKeyRevision === undefined ? {} : { apiKeyRevision: options.apiKeyRevision }),
+  };
+}
+
+function isCurrentPageOperation(deps: HandlerDeps, token: PageOperationToken): boolean {
+  return (
+    token.pageRevision === pageRevisionFor(deps, token.pageId) &&
+    token.libraryRevision === revisionFor(libraryOperationRevision, deps) &&
+    (token.privacyRevision === undefined ||
+      token.privacyRevision === revisionFor(automaticPrivacyRevision, deps)) &&
+    (token.consentRevision === undefined ||
+      token.consentRevision === revisionFor(bulkConsentRevision, deps)) &&
+    (token.apiKeyRevision === undefined ||
+      token.apiKeyRevision === revisionFor(apiKeyRevision, deps))
+  );
+}
+
+function isCurrentLibraryOperation(deps: HandlerDeps, libraryRevision: number): boolean {
+  return libraryRevision === revisionFor(libraryOperationRevision, deps);
+}
+
+async function mayProceedPageOperation(
+  deps: HandlerDeps,
+  token: PageOperationToken,
+): Promise<boolean> {
+  if (!isCurrentPageOperation(deps, token)) return false;
+  const page = await deps.pageRepo.getById(token.pageId);
+  const current = isCurrentPageOperation(deps, token);
+  return page !== undefined && current;
+}
+
+async function broadcastCompletedPage(
+  deps: HandlerDeps,
+  token: PageOperationToken,
+  page: PageRecord,
+): Promise<void> {
+  if (!isCurrentPageOperation(deps, token) || page.id !== token.pageId) return;
+  const currentPage = await deps.pageRepo.getById(token.pageId);
+  if (!currentPage || !isCurrentPageOperation(deps, token)) return;
+  broadcastPage(deps, page);
+}
+
 function usableApiKey(apiKey: string | null): apiKey is string {
   return typeof apiKey === "string" && apiKey.trim().length > 0;
 }
@@ -148,28 +239,43 @@ function broadcastPage(deps: HandlerDeps, page: PageRecord): void {
   deps.broadcast({ type: "page.updated", payload: { page: toPageListItemWithExcerpt(page) } });
 }
 
+export async function savePageInBackground(
+  deps: HandlerDeps,
+  tabId: number,
+  saveMode: "manual" | "auto" = "manual",
+): Promise<PageRecord> {
+  const libraryRevision = revisionFor(libraryOperationRevision, deps);
+  const page = await deps.captureService.save(tabId, saveMode, () =>
+    isCurrentLibraryOperation(deps, libraryRevision),
+  );
+  if (isCurrentLibraryOperation(deps, libraryRevision)) {
+    broadcastPage(deps, page);
+    if (page.status === "keyword_ready") {
+      processPageInBackground(deps, page.id);
+    }
+  }
+  return page;
+}
+
 /** Automatic enrichment obeys the latest effective mode. */
 export function processPageInBackground(deps: HandlerDeps, pageId: string): void {
   const privacyRevision = revisionFor(automaticPrivacyRevision, deps);
+  const operation = startPageOperation(deps, pageId, {
+    privacyRevision,
+    apiKeyRevision: revisionFor(apiKeyRevision, deps),
+  });
   void (async () => {
     const { apiKey, effectiveMode } = await currentMode(deps);
-    if (
-      privacyRevision !== revisionFor(automaticPrivacyRevision, deps) ||
-      effectiveMode !== "hybrid" ||
-      !apiKey
-    ) {
+    if (!isCurrentPageOperation(deps, operation) || effectiveMode !== "hybrid" || !apiKey) {
       return;
     }
     // Send-time mode check: if Local-only was enabled after the initial check,
     // the callback will return false and no OpenAI request will be made.
     const processed = await deps.captureService.processPage(pageId, apiKey, async () => {
       const mode = await currentMode(deps);
-      return (
-        privacyRevision === revisionFor(automaticPrivacyRevision, deps) &&
-        mode.effectiveMode === "hybrid"
-      );
+      return mode.effectiveMode === "hybrid" && (await mayProceedPageOperation(deps, operation));
     });
-    broadcastPage(deps, processed);
+    await broadcastCompletedPage(deps, operation, processed);
   })().catch((error) => {
     console.error("[DevRecall] background processing error:", error);
   });
@@ -184,10 +290,16 @@ function processExplicitPageInBackground(deps: HandlerDeps, pageId: string, apiK
   const activePages = explicitPages.get(deps) ?? new Set<string>();
   activePages.add(pageId);
   explicitPages.set(deps, activePages);
+  const operation = startPageOperation(deps, pageId, {
+    apiKeyRevision: revisionFor(apiKeyRevision, deps),
+  });
 
   void deps.captureService
-    .processPage(pageId, apiKey)
-    .then((processed) => broadcastPage(deps, processed))
+    .processPage(pageId, apiKey, async () => {
+      const currentApiKey = await deps.apiKeyStore.getApiKey();
+      return usableApiKey(currentApiKey) && mayProceedPageOperation(deps, operation);
+    })
+    .then((processed) => broadcastCompletedPage(deps, operation, processed))
     .catch((error) => {
       console.error("[DevRecall] explicit enrichment error:", error);
     })
@@ -210,6 +322,17 @@ function startBulkOperation(
   pageIds: string[],
 ): void {
   const consentRevision = revisionFor(bulkConsentRevision, deps);
+  const libraryRevision = revisionFor(libraryOperationRevision, deps);
+  const operationTokens = new Map(
+    pageIds.map((pageId) => [
+      pageId,
+      startPageOperation(deps, pageId, {
+        consentRevision,
+        libraryRevision,
+        apiKeyRevision: revisionFor(apiKeyRevision, deps),
+      }),
+    ]),
+  );
   let approvedApiKey: string | null = null;
 
   deps.bulkRunner.begin({
@@ -228,19 +351,22 @@ function startBulkOperation(
         throw new Error("Bulk consent expired");
       }
 
+      const operation = operationTokens.get(pageId);
+      if (!operation) {
+        throw new Error(`Bulk operation missing page ${pageId}`);
+      }
+
       // Explicit confirmation is valid in either search mode, but canceling the
       // batch or removing the key revokes authorization before the next request.
       const maySend = async () => {
         const currentApiKey = await deps.apiKeyStore.getApiKey();
-        return (
-          consentRevision === revisionFor(bulkConsentRevision, deps) && usableApiKey(currentApiKey)
-        );
+        return usableApiKey(currentApiKey) && (await mayProceedPageOperation(deps, operation));
       };
       const processed =
         kind === "enrich"
           ? await deps.captureService.processPage(pageId, apiKey, maySend)
           : await deps.captureService.reindexSemanticPage(pageId, apiKey, maySend);
-      broadcastPage(deps, processed);
+      await broadcastCompletedPage(deps, operation, processed);
 
       if (kind === "enrich" && processed.status !== "ready") {
         throw new Error(processed.enrichmentError ?? `Could not enrich page ${pageId}`);
@@ -275,10 +401,10 @@ export async function handleRequest(
     }
 
     case "settings.setApiKey": {
-      if (!usableApiKey(request.payload.apiKey)) {
-        revokeAutomaticAndBulkWork(deps);
-      }
+      incrementRevision(apiKeyRevision, deps);
+      revokeAutomaticAndBulkWork(deps);
       await deps.apiKeyStore.setApiKey(request.payload.apiKey);
+      deps.retrievalService.invalidate();
       const { hasApiKey, effectiveMode } = await currentMode(deps);
       deps.broadcast({
         type: "settings.changed",
@@ -315,6 +441,7 @@ export async function handleRequest(
         revokeAutomaticAndBulkWork(deps);
       }
       await deps.modeStore.setStoredMode(request.payload.mode);
+      deps.retrievalService.invalidate();
       const apiKey = await deps.apiKeyStore.getApiKey();
       const hasApiKey = usableApiKey(apiKey);
       const effectiveMode = await deps.modeStore.getEffectiveMode(hasApiKey);
@@ -336,16 +463,14 @@ export async function handleRequest(
     }
 
     case "page.save": {
-      const page = await deps.captureService.save(request.payload.tabId);
-      broadcastPage(deps, page);
-      processPageInBackground(deps, page.id);
+      const page = await savePageInBackground(deps, request.payload.tabId);
       return { type: "page.saved", payload: { page: toPageListItem(page) } };
     }
 
     case "page.list":
       return {
         type: "page.listed",
-        payload: { pages: await deps.pageRepo.listPages({ limit: request.payload.limit }) },
+        payload: { pages: await deps.pageRepo.listPages(request.payload) },
       };
 
     case "storage.getStats": {
@@ -386,6 +511,7 @@ export async function handleRequest(
       const outcome = await deps.retrievalService.search({
         query: request.payload.query,
         topK: request.payload.topK,
+        ...(request.payload.filter ? { filter: request.payload.filter } : {}),
         effectiveMode,
         resolveEffectiveMode: async () => {
           if (privacyRevision !== revisionFor(automaticPrivacyRevision, deps)) {
@@ -398,6 +524,7 @@ export async function handleRequest(
     }
 
     case "page.delete":
+      incrementPageRevision(deps, request.payload.id);
       await deps.pageRepo.deleteWithChunks(request.payload.id);
       deps.retrievalService.invalidate();
       deps.broadcast({ type: "page.removed", payload: { id: request.payload.id } });
@@ -406,6 +533,12 @@ export async function handleRequest(
     case "page.retry":
     case "page.addAiFeatures": {
       const pageId = request.type === "page.retry" ? request.payload.id : request.payload.pageId;
+      const requestToken: PageOperationToken = {
+        pageId,
+        pageRevision: pageRevisionFor(deps, pageId),
+        libraryRevision: revisionFor(libraryOperationRevision, deps),
+        apiKeyRevision: revisionFor(apiKeyRevision, deps),
+      };
       const page = await deps.pageRepo.getById(pageId);
       if (!page) {
         return { type: "error", payload: { message: `Page ${pageId} not found` } };
@@ -413,8 +546,15 @@ export async function handleRequest(
 
       if (request.type === "page.retry" && page.status === "failed") {
         const retried = await deps.captureService.retryLocalPage(pageId);
-        broadcastPage(deps, retried);
-        processPageInBackground(deps, pageId);
+        if (isCurrentPageOperation(deps, requestToken)) {
+          const retryOperation = startPageOperation(deps, pageId, {
+            apiKeyRevision: requestToken.apiKeyRevision,
+          });
+          await broadcastCompletedPage(deps, retryOperation, retried);
+          if (isCurrentPageOperation(deps, retryOperation)) {
+            processPageInBackground(deps, pageId);
+          }
+        }
         return { type: "page.retryStarted", payload: { page: toPageListItem(retried) } };
       }
 
@@ -433,6 +573,9 @@ export async function handleRequest(
       const apiKey = await deps.apiKeyStore.getApiKey();
       if (!usableApiKey(apiKey)) {
         return { type: "error", payload: { message: "No API key set" } };
+      }
+      if (!(await mayProceedPageOperation(deps, requestToken))) {
+        return { type: "error", payload: { message: `Page ${pageId} is no longer available` } };
       }
       if (isExplicitPageActive(deps, pageId)) {
         return {
@@ -534,10 +677,27 @@ export async function handleRequest(
     }
 
     case "data.deleteAll":
+      revokeAutomaticAndBulkWork(deps);
+      incrementRevision(libraryOperationRevision, deps);
+      explicitPages.delete(deps);
+      preparedBatches.delete(deps);
       await deps.pageRepo.deleteAll();
       deps.retrievalService.invalidate();
       deps.broadcast({ type: "library.cleared" });
       return { type: "data.deletedAll" };
+
+    case "data.import": {
+      const libraryRevision = revisionFor(libraryOperationRevision, deps);
+      const pages = parseBackup(request.payload.json);
+      const result = await deps.pageRepo.importPages(pages, () =>
+        isCurrentLibraryOperation(deps, libraryRevision),
+      );
+      if (isCurrentLibraryOperation(deps, libraryRevision)) {
+        deps.retrievalService.invalidate();
+        deps.broadcast({ type: "library.changed" });
+      }
+      return { type: "data.imported", payload: result };
+    }
 
     case "settings.getAutoSave":
       return {

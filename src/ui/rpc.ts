@@ -10,21 +10,31 @@ export async function sendRequest<T extends DevRecallResponse["type"]>(
   request: DevRecallRequest,
   expectedType: T,
 ): Promise<Extract<DevRecallResponse, { type: T }> | null> {
-  if (typeof chrome === "undefined" || !chrome.runtime?.sendMessage) {
-    return null;
-  }
-
   try {
-    const response = (await chrome.runtime.sendMessage(request)) as DevRecallResponse | undefined;
-
-    if (!response || response.type !== expectedType) {
-      return null;
-    }
-
-    return response as Extract<DevRecallResponse, { type: T }>;
+    return await requireResponse(request, expectedType);
   } catch {
     return null;
   }
+}
+
+/** Operations must receive an acknowledgement before the UI reports success. */
+export async function requireResponse<T extends DevRecallResponse["type"]>(
+  request: DevRecallRequest,
+  expectedType: T,
+): Promise<Extract<DevRecallResponse, { type: T }>> {
+  if (typeof chrome === "undefined" || !chrome.runtime?.sendMessage) {
+    throw new Error("DevRecall is unavailable. Reload the extension and try again.");
+  }
+
+  const response = (await chrome.runtime.sendMessage(request)) as DevRecallResponse | undefined;
+
+  if (response?.type === "error") {
+    throw new Error(response.payload.message);
+  }
+  if (!response || response.type !== expectedType) {
+    throw new Error("DevRecall did not confirm the operation. Please try again.");
+  }
+  return response as Extract<DevRecallResponse, { type: T }>;
 }
 
 /** Subscribe to worker broadcasts. Returns an unsubscribe function. */

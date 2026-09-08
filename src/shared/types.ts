@@ -92,10 +92,19 @@ export type ChunkRecord = {
 
 export type SearchMatchReason = "keyword" | "vector" | "both";
 
+export type SearchFilter = {
+  platform?: Platform;
+  contentType?: ContentType;
+};
+
 /** Safe highlight HTML for matching fields; null means that field did not match. */
 export type MetadataMatches = {
   titleHighlightedHtml: string | null;
   summaryHighlightedHtml: string | null;
+  fields?: Array<{
+    field: "topics" | "technologies" | "domain" | "url";
+    highlightedHtml: string;
+  }>;
 };
 
 export type PageHit = {

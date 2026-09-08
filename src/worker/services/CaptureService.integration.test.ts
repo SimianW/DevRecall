@@ -507,7 +507,8 @@ describe("CaptureService integration — local-first capture flow", () => {
   });
 
   it("deduplication treats every non-failed status as saved; a failed page is saved again", async () => {
-    const h = await makeHarness({ apiKey: "sk-test" });
+    // Isolate local deduplication from the separately tested Hybrid lifecycle.
+    const h = await makeHarness({ apiKey: "sk-test", storedMode: "local" });
     const seeded = {
       pending: await seedPage(h, "pending", "https://docs.example.com/pending"),
       keyword_ready: await seedPage(h, "keyword_ready", "https://docs.example.com/keyword-ready"),
@@ -559,8 +560,7 @@ describe("CaptureService integration — local-first capture flow", () => {
     // One record per URL — no duplicate row was created.
     expect(await h.database.pages.count()).toBe(5);
 
-    // Let the fire-and-forget enrichment of the resave settle before teardown.
-    await h.flush(3);
+    expect(h.tagger.summarizeAndTag).not.toHaveBeenCalled();
   });
 
   it("worker startup recovers a stale enriching page back to keyword_ready", async () => {

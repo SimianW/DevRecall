@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 
-import { bm25Search, tokenize } from "./bm25";
+import { Bm25Index, bm25Search, tokenize } from "./bm25";
 
 describe("tokenize", () => {
   it("lowercases, splits on non-alphanumerics, and drops stopwords", () => {
@@ -53,6 +53,15 @@ describe("bm25Search", () => {
   });
 });
 
+describe("Bm25Index", () => {
+  it("reuses corpus statistics across queries", () => {
+    const index = new Bm25Index(["horizontal pod autoscaler", "react hydration mismatch"]);
+
+    expect(index.search("autoscaler")[0].index).toBe(0);
+    expect(index.search("hydration")[0].index).toBe(1);
+  });
+});
+
 describe("tokenize stemming", () => {
   it("stems reporting and report to the same token", () => {
     expect(tokenize("reporting")).toEqual(tokenize("report"));
@@ -70,6 +79,23 @@ describe("tokenize stemming", () => {
     expect(tokenize("css")).toContain("css");
     expect(tokenize("json")).toContain("json");
   });
+
+  it("keeps technical language tokens and exposes camelCase parts", () => {
+    expect(tokenize("C++ C# useState HTTPServer")).toEqual([
+      "c++",
+      "c#",
+      "usest",
+      "us",
+      "state",
+      "httpserver",
+      "http",
+      "server",
+    ]);
+  });
+
+  it("keeps non-ASCII alphabetic words searchable", () => {
+    expect(tokenize("café naïve Straße")).toEqual(["café", "naïve", "straße"]);
+  });
 });
 
 describe("bm25 stemming recall", () => {
@@ -79,6 +105,12 @@ describe("bm25 stemming recall", () => {
 
   it("matches reporting against report", () => {
     expect(bm25Search("reporting", ["...a one-pager report ..."])).toHaveLength(1);
+  });
+
+  it("matches technical identifiers and C++/C# names", () => {
+    expect(bm25Search("state", ["React useState updates"])).toHaveLength(1);
+    expect(bm25Search("C++", ["C++ templates"])).toHaveLength(1);
+    expect(bm25Search("C#", ["C# generics"])).toHaveLength(1);
   });
 });
 

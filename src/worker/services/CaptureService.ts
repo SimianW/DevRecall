@@ -13,13 +13,18 @@ import { ChunkRepo, type EmbeddedChunkInput } from "../repository/ChunkRepo";
 import { PageRepo } from "../repository/PageRepo";
 
 export const SEMANTIC_INDEX_VERSION = 1;
+const CONTENT_SCRIPT_RETRY_DELAYS_MS = [25, 50, 100];
 
 export type PageExtractor = {
   extract(tabId: number): Promise<ExtractedPage>;
 };
 
 export type PageWriter = {
-  commitCapturedPage(input: PageCaptureInput, texts: string[]): Promise<PageRecord>;
+  commitCapturedPage(
+    input: PageCaptureInput,
+    texts: string[],
+    mayCommit?: () => Promise<boolean> | boolean,
+  ): Promise<PageRecord>;
   retryFailedPage?(id: string, texts: string[]): Promise<PageRecord>;
 };
 
@@ -85,9 +90,7 @@ export class ChromePageExtractor implements PageExtractor {
     const settled = await Promise.all(
       frameIds.map(async (frameId): Promise<FrameExtraction | null> => {
         try {
-          const response = (await chrome.tabs.sendMessage(tabId, request, {
-            frameId,
-          })) as ContentExtractResponse;
+          const response = await sendContentExtractMessage(tabId, frameId, request);
           return response.type === "content.extracted" ? { frameId, page: response.payload } : null;
         } catch {
           // Frame has no content script (about:blank/srcdoc, injection blocked) — skip it.
@@ -131,6 +134,24 @@ export class ChromePageExtractor implements PageExtractor {
   }
 }
 
+async function sendContentExtractMessage(
+  tabId: number,
+  frameId: number,
+  request: ContentExtractRequest,
+): Promise<ContentExtractResponse> {
+  for (let attempt = 0; ; attempt += 1) {
+    try {
+      return (await chrome.tabs.sendMessage(tabId, request, { frameId })) as ContentExtractResponse;
+    } catch (error) {
+      const delay = CONTENT_SCRIPT_RETRY_DELAYS_MS[attempt];
+      if (delay === undefined) {
+        throw error;
+      }
+      await new Promise((resolve) => setTimeout(resolve, delay));
+    }
+  }
+}
+
 export class CaptureService {
   constructor(
     private readonly writer: PageWriter = new PageRepo(),
@@ -141,12 +162,17 @@ export class CaptureService {
     private readonly embedder: Embedder = new OpenAIProvider(),
   ) {}
 
-  async save(tabId: number, saveMode: "manual" | "auto" = "manual"): Promise<PageRecord> {
+  async save(
+    tabId: number,
+    saveMode: "manual" | "auto" = "manual",
+    mayCommit?: () => Promise<boolean> | boolean,
+  ): Promise<PageRecord> {
     const extracted = await this.extractor.extract(tabId);
-    return this.writer.commitCapturedPage(
-      { ...extracted, saveMode },
-      chunkText(extracted.fullText),
-    );
+    const input = { ...extracted, saveMode };
+    const texts = chunkText(extracted.fullText);
+    return mayCommit
+      ? this.writer.commitCapturedPage(input, texts, mayCommit)
+      : this.writer.commitCapturedPage(input, texts);
   }
 
   async recoverStaleEnriching(): Promise<number> {

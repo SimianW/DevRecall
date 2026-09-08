@@ -108,6 +108,68 @@ function makeService(
 }
 
 describe("RetrievalService search modes", () => {
+  it("rechecks permission before returning a cached Hybrid result", async () => {
+    const embedder = fakeEmbedder({ meaning: [1, 0] });
+    const keyStore = fakeKeyStore();
+    const service = makeService(vectorChunks, embedder, "sk-test", pages, keyStore);
+    const first = await service.search({ query: "meaning", effectiveMode: "hybrid" });
+    expect(first.results).toHaveLength(1);
+
+    const revoked = await service.search({
+      query: "meaning",
+      effectiveMode: "hybrid",
+      resolveEffectiveMode: vi.fn().mockResolvedValue("local"),
+    });
+    expect(revoked).toEqual({ results: [], searchMode: "local" });
+    expect(embedder.embed).toHaveBeenCalledTimes(1);
+    expect(keyStore.getApiKey).toHaveBeenCalledTimes(1);
+  });
+
+  it("returns visible evidence for matches found only in a URL or technology", async () => {
+    const record = {
+      ...page("evidence", "Unrelated heading", "example.com"),
+      url: "https://example.com/quartz",
+      topics: [],
+      technologies: ["Zig"],
+    };
+    const service = makeService(
+      [chunk("e", record.id, 0, "A generic body.")],
+      fakeEmbedder({}),
+      null,
+      new Map([[record.id, record]]),
+    );
+    const urlResult = await service.search({ query: "quartz", effectiveMode: "local" });
+    expect(urlResult.results[0].metadataMatches.fields).toContainEqual({
+      field: "url",
+      highlightedHtml: "https://example.com/<mark>quartz</mark>",
+    });
+    const technologyResult = await service.search({ query: "Zig", effectiveMode: "local" });
+    expect(technologyResult.results[0].metadataMatches.fields).toContainEqual({
+      field: "technologies",
+      highlightedHtml: "<mark>Zig</mark>",
+    });
+  });
+
+  it("does not conflate camelCase component queries with all-lowercase identifiers in the cache", async () => {
+    const record = {
+      ...page("state-doc", "State guide", "example.com"),
+      topics: [],
+      technologies: [],
+    };
+    const service = makeService(
+      [chunk("e", record.id, 0, "State changes locally.")],
+      fakeEmbedder({}),
+      null,
+      new Map([[record.id, record]]),
+    );
+    expect(
+      (await service.search({ query: "useState", effectiveMode: "local" })).results,
+    ).toHaveLength(1);
+    expect(
+      (await service.search({ query: "usestate", effectiveMode: "local" })).results,
+    ).toHaveLength(0);
+  });
+
   it('effectiveMode "local" runs BM25 only and reports searchMode "local"', async () => {
     const embedder = fakeEmbedder({ "autoscaler pods": [1, 0] });
     const apiKeyStore = fakeKeyStore();
@@ -389,9 +451,195 @@ describe("RetrievalService caching", () => {
     expect(second).not.toBe(first);
     expect(allChunks).toHaveBeenCalledTimes(2);
   });
+
+  it("deduplicates concurrent searches for the same corpus and query", async () => {
+    const { service, allChunks } = countingService();
+
+    const first = service.search({ query: "autoscaler", effectiveMode: "local" });
+    const second = service.search({ query: "autoscaler", effectiveMode: "local" });
+
+    const [firstOutcome, secondOutcome] = await Promise.all([first, second]);
+    expect(firstOutcome).toBe(secondOutcome);
+    expect(allChunks).toHaveBeenCalledOnce();
+  });
+
+  it("does not share an in-flight Hybrid result across privacy resolvers", async () => {
+    const embedder = fakeEmbedder({ autoscaler: [1, 0] });
+    const service = makeService(vectorChunks, embedder);
+
+    const revoked = service.search({
+      query: "autoscaler",
+      effectiveMode: "hybrid",
+      resolveEffectiveMode: vi.fn().mockResolvedValue("local"),
+    });
+    const authorized = service.search({
+      query: "autoscaler",
+      effectiveMode: "hybrid",
+      resolveEffectiveMode: vi.fn().mockResolvedValue("hybrid"),
+    });
+
+    const [revokedOutcome, authorizedOutcome] = await Promise.all([revoked, authorized]);
+    expect(revokedOutcome.searchMode).toBe("local");
+    expect(authorizedOutcome.searchMode).toBe("hybrid");
+    expect(embedder.embed).toHaveBeenCalledOnce();
+  });
+
+  it("does not let an in-flight corpus read repopulate an invalidated cache", async () => {
+    let releaseFirstRead: (chunks: ChunkRecord[]) => void = () => undefined;
+    const firstRead = new Promise<ChunkRecord[]>((resolve) => {
+      releaseFirstRead = resolve;
+    });
+    const freshChunks = [chunk("fresh", "p2", 0, "autoscaler")];
+    const allChunks = vi
+      .fn()
+      .mockImplementationOnce(() => firstRead)
+      .mockResolvedValue(freshChunks);
+    const chunkSource: ChunkSource = { allChunks };
+    const pageSource: PageSource = {
+      getById: vi.fn().mockImplementation((id: string) => pages.get(id)),
+    };
+    const service = new RetrievalService(chunkSource, pageSource, fakeEmbedder({}), fakeKeyStore());
+
+    const staleSearch = service.search({ query: "autoscaler", effectiveMode: "local" });
+    await Promise.resolve();
+    service.invalidate();
+
+    const freshOutcome = await service.search({ query: "autoscaler", effectiveMode: "local" });
+    releaseFirstRead(keywordChunks);
+    const staleOutcome = await staleSearch;
+
+    expect(freshOutcome.results[0].page.id).toBe("p2");
+    expect(staleOutcome.results[0].page.id).toBe("p2");
+    expect(allChunks).toHaveBeenCalledTimes(2);
+  });
 });
 
 describe("RetrievalService keyword arm", () => {
+  it("recalls and highlights technical identifier and language-name matches", async () => {
+    const technicalPage = page("technical-tokens", "Frontend state guide", "docs.example");
+    const outcome = await makeService(
+      [chunk("technical-body", technicalPage.id, 0, "React useState and C++ integration")],
+      fakeEmbedder({}),
+      "sk-test",
+      new Map([[technicalPage.id, technicalPage]]),
+    ).search({ query: "state C++", effectiveMode: "local" });
+
+    expect(outcome.results[0].page.id).toBe(technicalPage.id);
+    expect(outcome.results[0].bestChunk.highlightedHtml).toContain("use<mark>State</mark>");
+    expect(outcome.results[0].bestChunk.highlightedHtml).toContain("<mark>C++</mark>");
+  });
+
+  it("applies platform and content-type filters before the keyword candidate limit", async () => {
+    const excludedPages = Array.from({ length: 55 }, (_, index) =>
+      page(`excluded-${index}`, `Needle page ${index}`, "docs.example"),
+    );
+    const eligiblePage = {
+      ...page("eligible", "A different page", "github.com"),
+      platform: Platform.Github,
+      contentType: ContentType.Repository,
+    };
+    const pageRecords = new Map(
+      [...excludedPages, eligiblePage].map((record): [string, PageRecord] => [record.id, record]),
+    );
+    const chunks = [
+      ...excludedPages.map((record, index) =>
+        chunk(`excluded-chunk-${index}`, record.id, 0, "needle needle needle"),
+      ),
+      chunk("eligible-chunk", eligiblePage.id, 0, "needle"),
+    ];
+
+    const outcome = await makeService(chunks, fakeEmbedder({}), "sk-test", pageRecords).search({
+      query: "needle",
+      effectiveMode: "local",
+      filter: { platform: Platform.Github, contentType: ContentType.Repository },
+    });
+
+    expect(outcome.results.map((hit) => hit.page.id)).toEqual([eligiblePage.id]);
+  });
+
+  it("keeps filtered queries in separate cache entries", async () => {
+    const githubPage = {
+      ...page("github-filter", "Shared result", "github.com"),
+      platform: Platform.Github,
+      contentType: ContentType.Repository,
+    };
+    const webPage = { ...page("web-filter", "Shared result", "docs.example") };
+    const pageRecords = new Map([
+      [githubPage.id, githubPage],
+      [webPage.id, webPage],
+    ]);
+    const chunks = [
+      chunk("github-filter-chunk", githubPage.id, 0, "shared term"),
+      chunk("web-filter-chunk", webPage.id, 0, "shared term"),
+    ];
+    const service = makeService(chunks, fakeEmbedder({}), "sk-test", pageRecords);
+
+    const github = await service.search({
+      query: "shared",
+      effectiveMode: "local",
+      filter: { platform: Platform.Github },
+    });
+    const web = await service.search({
+      query: "shared",
+      effectiveMode: "local",
+      filter: { platform: Platform.Web },
+    });
+
+    expect(github.results[0].page.id).toBe(githubPage.id);
+    expect(web.results[0].page.id).toBe(webPage.id);
+  });
+
+  it("searches all page metadata fields and ranks title matches ahead of summaries", async () => {
+    const titlePage = {
+      ...page("title-match", "Kubernetes Operators", "ops.example"),
+      topics: [],
+      technologies: [],
+      summary: "A guide to maintaining production services.",
+    };
+    const metadataPage = {
+      ...page("metadata-match", "Production services", "monitoring.example"),
+      topics: ["observability"],
+      technologies: ["Prometheus"],
+      summary: "Kubernetes operators and monitoring workflows.",
+      url: "https://monitoring.example/kubernetes/operators",
+    };
+    const pageRecords = new Map([
+      [titlePage.id, titlePage],
+      [metadataPage.id, metadataPage],
+    ]);
+    const chunks = [
+      chunk("title-body", titlePage.id, 0, "unrelated implementation notes"),
+      chunk("metadata-body", metadataPage.id, 0, "unrelated implementation notes"),
+    ];
+
+    const titleOutcome = await makeService(chunks, fakeEmbedder({}), "sk-test", pageRecords).search(
+      {
+        query: "kubernetes",
+        effectiveMode: "local",
+      },
+    );
+    expect(titleOutcome.results.map((hit) => hit.page.id)).toEqual([titlePage.id, metadataPage.id]);
+
+    const technologyOutcome = await makeService(
+      chunks,
+      fakeEmbedder({}),
+      "sk-test",
+      pageRecords,
+    ).search({ query: "prometheus", effectiveMode: "local" });
+    expect(technologyOutcome.results[0].page.id).toBe(metadataPage.id);
+
+    const domainOutcome = await makeService(
+      chunks,
+      fakeEmbedder({}),
+      "sk-test",
+      pageRecords,
+    ).search({
+      query: "monitoring.example",
+      effectiveMode: "local",
+    });
+    expect(domainOutcome.results[0].page.id).toBe(metadataPage.id);
+  });
+
   it.each(["local", "hybrid"] as const)(
     "recalls a saved page in %s mode when only its title contains the query",
     async (effectiveMode) => {

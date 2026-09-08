@@ -54,6 +54,42 @@ const renderOptions = (props: Partial<React.ComponentProps<typeof Options>> = {}
 };
 
 describe("Options", () => {
+  it("shows a failed API key save without pretending a key was stored", async () => {
+    const { user } = renderOptions({
+      saveApiKey: vi.fn().mockRejectedValue(new Error("Browser storage unavailable")),
+    });
+    await user.type(screen.getByLabelText("OpenAI API key"), "sk-test");
+    await user.click(screen.getByRole("button", { name: "Save" }));
+    expect(await screen.findByRole("alert")).toHaveTextContent("Browser storage unavailable");
+    expect(screen.getByRole("button", { name: "Test connection" })).toBeDisabled();
+    expect(screen.getByLabelText("OpenAI API key")).toHaveValue("sk-test");
+  });
+
+  it("shows a rejected connection test as a retryable failure", async () => {
+    const { user } = renderOptions({
+      loadStatus: vi.fn().mockResolvedValue({ hasApiKey: true }),
+      testConnection: vi.fn().mockRejectedValue(new Error("Request timed out")),
+    });
+    await user.click(await screen.findByRole("button", { name: "Test connection" }));
+    expect(await screen.findByText("Request timed out")).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Test connection" })).toBeEnabled();
+  });
+
+  it("explains automatic requests when Hybrid is effective", async () => {
+    renderOptions({
+      loadStatus: vi
+        .fn()
+        .mockResolvedValue({ hasApiKey: true, storedMode: "hybrid", effectiveMode: "hybrid" }),
+      loadMode: vi.fn().mockResolvedValue({ storedMode: "hybrid", effectiveMode: "hybrid" }),
+    });
+    expect(
+      await screen.findByText(/Hybrid search sends search queries to OpenAI/),
+    ).toBeInTheDocument();
+    expect(
+      screen.queryByText(/DevRecall uses keyword search and does not automatically/),
+    ).not.toBeInTheDocument();
+  });
+
   it("renders the settings form", async () => {
     renderOptions();
 
@@ -319,6 +355,49 @@ describe("bulk operation cancel and terminal states", () => {
     );
     await user.click(screen.getByRole("button", { name: "Add AI features" }));
   }
+
+  it("keeps terminal progress when it arrives before the start acknowledgement", async () => {
+    const { subscribe, emit } = makeSubscribe();
+    let acknowledge!: (result: { total: number }) => void;
+    const startBulkEnrich = vi.fn(
+      () =>
+        new Promise<{ total: number }>((resolve) => {
+          acknowledge = resolve;
+        }),
+    );
+    const { user } = renderOptions({ ...bulkProps(), subscribe, startBulkEnrich });
+    await startEnrichBatch(user);
+    await emit({
+      type: "bulk.progress",
+      payload: { kind: "enrich", done: 3, total: 3, failed: 0, remaining: 0 },
+    });
+    expect(screen.getByText("Completed. Processed 3 of 3 pages. 0 failed.")).toBeInTheDocument();
+    await act(async () => acknowledge({ total: 3 }));
+    expect(screen.getByText("Completed. Processed 3 of 3 pages. 0 failed.")).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Cancel" })).not.toBeInTheDocument();
+  });
+
+  it("receives progress emitted synchronously while starting the batch", async () => {
+    let handler: ((message: WorkerBroadcast) => void) | undefined;
+    const subscribe = (callback: (message: WorkerBroadcast) => void) => {
+      handler = callback;
+      return () => {
+        handler = undefined;
+      };
+    };
+    const startBulkEnrich = vi.fn(async () => {
+      handler?.({
+        type: "bulk.progress",
+        payload: { kind: "enrich", done: 3, total: 3, failed: 0, remaining: 0 },
+      });
+      return { total: 3 };
+    });
+    const { user } = renderOptions({ ...bulkProps(), subscribe, startBulkEnrich });
+    await startEnrichBatch(user);
+    expect(
+      await screen.findByText("Completed. Processed 3 of 3 pages. 0 failed."),
+    ).toBeInTheDocument();
+  });
 
   it("keeps showing Canceling... after the cancel RPC resolves", async () => {
     let resolveCancel!: () => void;

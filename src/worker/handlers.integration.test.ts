@@ -130,7 +130,12 @@ async function makeHarness(options: HarnessOptions = {}): Promise<Harness> {
       if (!isChat) {
         const requested = (JSON.parse(String(init?.body)) as { input: unknown[] }).input.length;
         return ok({
-          data: Array.from({ length: requested }, (_, index) => ({ index, embedding: [3, 4] })),
+          data: Array.from({ length: requested }, (_, index) => ({
+            index,
+            embedding: Array.from({ length: 1536 }, (_, dimension) =>
+              dimension === 0 ? 3 : dimension === 1 ? 4 : 0,
+            ),
+          })),
         });
       }
 

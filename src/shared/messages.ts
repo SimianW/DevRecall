@@ -1,8 +1,8 @@
 import type { EffectiveMode, SearchMode, StoredMode } from "./modes";
-import type { ExtractedPage, PageHit, PageListItem, PageStatus } from "./types";
+import type { ExtractedPage, PageHit, PageListItem, PageStatus, SearchFilter } from "./types";
 
 export const APP_NAME = "DevRecall";
-export const APP_VERSION = "0.1.2.0";
+export const APP_VERSION = "0.1.3.0";
 
 export type PersistentStorageState = "unknown" | "granted" | "denied";
 
@@ -21,10 +21,10 @@ export type DevRecallRequest =
   | { type: "settings.getMode" }
   | { type: "settings.setMode"; payload: { mode: StoredMode } }
   | { type: "page.save"; payload: { tabId: number } }
-  | { type: "page.list"; payload: { limit: number } }
+  | { type: "page.list"; payload: { limit: number; offset?: number; filter?: SearchFilter } }
   | { type: "storage.getStats" }
   | { type: "page.statusForUrl"; payload: { url: string } }
-  | { type: "search.run"; payload: { query: string; topK?: number } }
+  | { type: "search.run"; payload: { query: string; topK?: number; filter?: SearchFilter } }
   | { type: "page.delete"; payload: { id: string } }
   | { type: "page.retry"; payload: { id: string } }
   | { type: "page.addAiFeatures"; payload: { pageId: string } }
@@ -35,6 +35,7 @@ export type DevRecallRequest =
   | { type: "library.reindexSemantic"; payload: { batchId: string } }
   | { type: "library.cancelBulk"; payload: Record<string, never> }
   | { type: "data.export" }
+  | { type: "data.import"; payload: { json: string } }
   | { type: "data.deleteAll" }
   | { type: "settings.getAutoSave" }
   | { type: "settings.setAutoSave"; payload: { enabled: boolean } };
@@ -127,6 +128,7 @@ export type DevRecallResponse =
   | { type: "library.reindexSemanticStarted"; payload: { total: number } }
   | { type: "library.bulkCanceled" }
   | { type: "data.exported"; payload: { json: string } }
+  | { type: "data.imported"; payload: { imported: number; skipped: number } }
   | { type: "data.deletedAll" }
   | { type: "settings.autoSave"; payload: { enabled: boolean } }
   | { type: "settings.autoSaveSet"; payload: { enabled: boolean } }
@@ -141,6 +143,7 @@ export type WorkerBroadcast =
   | { type: "page.updated"; payload: { page: PageListItem & { excerpt?: string } } }
   | { type: "page.removed"; payload: { id: string } }
   | { type: "library.cleared" }
+  | { type: "library.changed" }
   | { type: "library.reindexProgress"; payload: { done: number; total: number } }
   | {
       type: "bulk.progress";
