@@ -39,7 +39,7 @@ jobs:
           script: |
             const { owner, repo } = context.repo;
             if (context.eventName === 'issue_comment') {
-              const { data } = await github.repos.getCollaboratorPermissionLevel({
+              const { data } = await github.rest.repos.getCollaboratorPermissionLevel({
                 owner, repo, username: context.payload.comment.user.login,
               });
               if (!['admin', 'maintain', 'write'].includes(data.permission)) {
@@ -53,7 +53,7 @@ jobs:
               core.setFailed('A positive PR number is required.');
               return;
             }
-            const { data: pr } = await github.pulls.get({
+            const { data: pr } = await github.rest.pulls.get({
               owner, repo, pull_number: Number(raw),
             });
             if (pr.state !== 'open' || pr.draft ||
