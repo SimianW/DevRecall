@@ -1,0 +1,137 @@
+name: J-Bot Code Review
+
+on:
+  pull_request:
+    types: [opened, reopened, ready_for_review, synchronize]
+  issue_comment:
+    types: [created]
+  workflow_dispatch:
+    inputs:
+      pr-number:
+        description: Open same-repository PR number
+        required: true
+        type: string
+
+permissions:
+  contents: read
+
+jobs:
+  gate:
+    if: >-
+      github.event_name != 'issue_comment' ||
+      (github.event.issue.pull_request && github.event.comment.body == '/jbot')
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions:
+      contents: read
+      pull-requests: read
+    outputs:
+      proceed: ${{ steps.pr.outputs.proceed }}
+      number: ${{ steps.pr.outputs.number }}
+      head: ${{ steps.pr.outputs.head }}
+    steps:
+      - name: Validate trigger and resolve PR
+        id: pr
+        uses: actions/github-script@f28e40c7f34bde8b3046d885e986cb6290c5673b # v7
+        env:
+          REQUESTED_PR: ${{ inputs.pr-number }}
+        with:
+          script: |
+            const { owner, repo } = context.repo;
+            if (context.eventName === 'issue_comment') {
+              const { data } = await github.rest.repos.getCollaboratorPermissionLevel({
+                owner, repo, username: context.payload.comment.user.login,
+              });
+              if (!['admin', 'maintain', 'write'].includes(data.permission)) {
+                core.notice('/jbot requires repository write permission.');
+                return;
+              }
+            }
+            const raw = context.payload.pull_request?.number ??
+              context.payload.issue?.number ?? process.env.REQUESTED_PR;
+            if (!/^[1-9][0-9]*$/.test(String(raw))) {
+              core.setFailed('A positive PR number is required.');
+              return;
+            }
+            const { data: pr } = await github.rest.pulls.get({
+              owner, repo, pull_number: Number(raw),
+            });
+            if (pr.state !== 'open' || pr.draft ||
+                pr.head.repo?.full_name !== `${owner}/${repo}` ||
+                pr.user.login === 'dependabot[bot]') {
+              core.notice('Review skipped: requires an open, non-draft, same-repo, non-Dependabot PR.');
+              return;
+            }
+            if (context.eventName === 'pull_request' &&
+                pr.head.sha !== context.payload.pull_request.head.sha) {
+              core.notice('Review skipped: this push was superseded.');
+              return;
+            }
+            core.setOutput('number', String(pr.number));
+            core.setOutput('head', pr.head.sha);
+            core.setOutput('proceed', 'true');
+
+  review:
+    needs: gate
+    if: needs.gate.outputs.proceed == 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: 40
+    concurrency:
+      group: jbot-review-${{ needs.gate.outputs.number }}
+      cancel-in-progress: true
+    permissions:
+      contents: read
+      pull-requests: write
+      issues: write
+      checks: read
+    steps:
+      - name: Check GLM configuration
+        env:
+          GLM_KEY: ${{ secrets.ZAI_API_KEY }}
+          GLM_MODEL: ${{ vars.JBOT_GLM_MODEL || 'glm-5.3' }}
+          GLM_BASE_URL: ${{ vars.JBOT_GLM_BASE_URL || 'https://open.bigmodel.cn/api/coding/paas/v4' }}
+        shell: bash
+        run: |
+          if [ -z "$GLM_KEY" ]; then
+            echo "::error::Add the ZAI_API_KEY repository Actions secret. See docs/jbot-review.md."
+            exit 1
+          fi
+          if [[ ! "$GLM_MODEL" =~ ^glm-[a-zA-Z0-9.-]+$ ]]; then
+            echo "::error::JBOT_GLM_MODEL must be a GLM model ID such as glm-5.3."
+            exit 1
+          fi
+          case "$GLM_BASE_URL" in
+            https://open.bigmodel.cn/api/coding/paas/v4|https://api.z.ai/api/coding/paas/v4) ;;
+            *) echo "::error::Use a documented BigModel or Z.AI Coding Plan endpoint."; exit 1 ;;
+          esac
+
+      - name: Checkout reviewed head
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          ref: ${{ needs.gate.outputs.head }}
+          fetch-depth: 0
+          persist-credentials: false
+
+      # The upstream action uses a floating container image, even at a pinned action SHA.
+      # See docs/jbot-review.md before updating or requiring this check for merges.
+      - name: Review with GLM Coding Plan
+        uses: pgup-ai/jbot-review-action/slim@v0
+        with:
+          model: openai-compatible/${{ vars.JBOT_GLM_MODEL || 'glm-5.3' }}
+          openai-compatible-api-key: ${{ secrets.ZAI_API_KEY }}
+          openai-compatible-base-url: ${{ vars.JBOT_GLM_BASE_URL || 'https://open.bigmodel.cn/api/coding/paas/v4' }}
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+          pr-number: ${{ needs.gate.outputs.number }}
+          auto-approve: 'false'
+          review-passes: '1'
+          review-shards: '1'
+          max-concurrent-sessions: '1'
+          verify-findings: 'true'
+          include-prior-comments: 'true'
+          enable-guideline-pass: 'true'
+          min-severity: P2
+          max-findings: '10'
+          time-budget-minutes: '30'
+          skip-doc-only: 'false'
+          enable-context7: 'false'
+          fail-on-error: 'true'

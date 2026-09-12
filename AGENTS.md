@@ -1,4 +1,4 @@
-# CLAUDE.md
+# AGENTS.md
 
 DevRecall is a local-first Chrome extension that captures technical pages and retrieves
 them with BM25 keyword search or optional Hybrid search. Hybrid combines BM25 and
@@ -71,3 +71,15 @@ Auto-save stays opt-in and off. The allowlist lives in `src/shared/allowlist.ts`
   `docs/specs/2026-05-16-devrecall-mvp-design.md`. It predates the keyword-first
   pipeline. Verify current behavior in code and tests before restructuring capture or
   retrieval.
+
+## Automated PR review
+
+J-Bot should use the domain vocabulary in `CONTEXT.md` and the invariants above.
+Report concrete regressions introduced by the PR, with an affected changed line,
+a reachable failure scenario, and the smallest useful correction. Verify behavior
+in current code and tests; historical plans do not establish current requirements.
+Prioritize MV3 restart safety, asynchronous races, local transaction consistency,
+mode/consent boundaries around paid calls, RPC type compatibility, and search fallback.
+Check documentation against the changed behavior without duplicating RPC types in prose.
+Avoid style-only findings already covered by formatting or linting.
+Review comments may suggest fixes, but J-Bot does not implement changes or approve PRs.
