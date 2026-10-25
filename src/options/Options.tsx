@@ -2,7 +2,7 @@ import { useEffect, useState } from "react";
 import type { ChangeEvent } from "react";
 import { SurfaceShell } from "../ui/components";
 import type { DevRecallResponse, WorkerBroadcast } from "../shared/messages";
-import { sendRequest, subscribeToBroadcasts } from "../ui/rpc";
+import { sendRequest, sendRequestOrThrow, subscribeToBroadcasts } from "../ui/rpc";
 import { ALLOWLIST_DISPLAY } from "../shared/allowlist";
 
 type SettingsStatusPayload = Extract<DevRecallResponse, { type: "settings.status" }>["payload"];
@@ -148,13 +148,15 @@ const defaultCancelBulk = async (): Promise<void> => {
 
 const defaultSubscribe = subscribeToBroadcasts;
 
+/** Rejects on any failure so the UI never downloads an empty export as a backup. */
 const defaultExportData = async (): Promise<string> => {
-  const response = await sendRequest({ type: "data.export" }, "data.exported");
-  return response?.payload.json ?? "{}";
+  const response = await sendRequestOrThrow({ type: "data.export" }, "data.exported");
+  return response.payload.json;
 };
 
+/** Rejects on any failure so the confirmation stays open with the error. */
 const defaultDeleteAll = async (): Promise<void> => {
-  await sendRequest({ type: "data.deleteAll" }, "data.deletedAll");
+  await sendRequestOrThrow({ type: "data.deleteAll" }, "data.deletedAll");
 };
 
 const defaultLoadAutoSave = async (): Promise<boolean> => {

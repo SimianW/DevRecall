@@ -570,6 +570,83 @@ it("shows an error message when deleteAll rejects", async () => {
   expect(screen.getByRole("button", { name: /Cancel/i })).toBeInTheDocument();
 });
 
+// ── Default export/delete requests surface worker errors ─────────────────────
+
+describe("default data management requests", () => {
+  const originalCreateObjectURL = URL.createObjectURL;
+  const originalRevokeObjectURL = URL.revokeObjectURL;
+
+  afterEach(() => {
+    URL.createObjectURL = originalCreateObjectURL;
+    URL.revokeObjectURL = originalRevokeObjectURL;
+  });
+
+  function stubWorker(responses: Record<string, unknown>) {
+    const sendMessage = vi
+      .fn()
+      .mockImplementation(async (request: { type: string }) => responses[request.type]);
+    vi.stubGlobal("chrome", { runtime: { sendMessage } });
+    return sendMessage;
+  }
+
+  function stubDownloads() {
+    const createObjectURL = vi.fn().mockReturnValue("blob:devrecall");
+    URL.createObjectURL = createObjectURL;
+    URL.revokeObjectURL = vi.fn();
+    return createObjectURL;
+  }
+
+  it("downloads the worker's export", async () => {
+    const json = JSON.stringify({ schemaVersion: 1, pages: [] });
+    stubWorker({ "data.export": { type: "data.exported", payload: { json } } });
+    const createObjectURL = stubDownloads();
+    const { user } = renderOptions({ exportData: undefined });
+
+    await user.click(await screen.findByRole("button", { name: /Export Data/ }));
+
+    await waitFor(() => expect(createObjectURL).toHaveBeenCalledOnce());
+    await expect((createObjectURL.mock.calls[0][0] as Blob).text()).resolves.toBe(json);
+  });
+
+  it("shows the worker error and downloads nothing when export fails", async () => {
+    stubWorker({ "data.export": { type: "error", payload: { message: "IndexedDB is closed" } } });
+    const createObjectURL = stubDownloads();
+    const { user } = renderOptions({ exportData: undefined });
+
+    await user.click(await screen.findByRole("button", { name: /Export Data/ }));
+
+    expect(await screen.findByText("IndexedDB is closed")).toBeInTheDocument();
+    expect(createObjectURL).not.toHaveBeenCalled();
+  });
+
+  it("keeps the delete confirmation open with the worker error when Delete All fails", async () => {
+    stubWorker({
+      "data.deleteAll": { type: "error", payload: { message: "Transaction aborted" } },
+    });
+    const { user } = renderOptions({ deleteAll: undefined });
+
+    await user.click(await screen.findByRole("button", { name: /Delete All Data/ }));
+    await user.click(await screen.findByRole("button", { name: /Confirm/i }));
+
+    expect(await screen.findByText("Transaction aborted")).toBeInTheDocument();
+    expect(screen.getByText(/Are you sure you want to delete all saved pages/)).toBeInTheDocument();
+  });
+
+  it("closes the delete confirmation once the worker confirms", async () => {
+    stubWorker({ "data.deleteAll": { type: "data.deletedAll" } });
+    const { user } = renderOptions({ deleteAll: undefined });
+
+    await user.click(await screen.findByRole("button", { name: /Delete All Data/ }));
+    await user.click(await screen.findByRole("button", { name: /Confirm/i }));
+
+    await waitFor(() =>
+      expect(
+        screen.queryByText(/Are you sure you want to delete all saved pages/),
+      ).not.toBeInTheDocument(),
+    );
+  });
+});
+
 // ── Auto-save toggle ─────────────────────────────────────────────────────────
 
 it("renders the auto-save toggle from the stored flag", async () => {
@@ -605,6 +682,7 @@ it("lists the allowlisted domains", async () => {
   expect(await screen.findByText("github.com")).toBeInTheDocument();
   expect(screen.getByText("stackoverflow.com")).toBeInTheDocument();
   expect(screen.getByText("*.readthedocs.io")).toBeInTheDocument();
+  expect(screen.getByText(/docs\.\* .*except docs\.google\.com/)).toBeInTheDocument();
 });
 
 // ── Status-text dark: variant assertions ─────────────────────────────────────

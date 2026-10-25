@@ -1,6 +1,6 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 
-import { sendRequest, subscribeToBroadcasts } from "./rpc";
+import { sendRequest, sendRequestOrThrow, subscribeToBroadcasts } from "./rpc";
 
 type ChromeStub = {
   runtime?: {
@@ -56,6 +56,58 @@ describe("sendRequest", () => {
     const result = await sendRequest({ type: "devrecall.ping" }, "devrecall.pong");
 
     expect(result).toBeNull();
+  });
+});
+
+describe("sendRequestOrThrow", () => {
+  it("returns the typed response when the type matches", async () => {
+    const response = { type: "data.exported", payload: { json: "{}" } };
+    installChrome({ runtime: { sendMessage: vi.fn().mockResolvedValue(response) } });
+
+    await expect(sendRequestOrThrow({ type: "data.export" }, "data.exported")).resolves.toEqual(
+      response,
+    );
+  });
+
+  it("rejects with the worker's message when the worker answers with an error", async () => {
+    const sendMessage = vi
+      .fn()
+      .mockResolvedValue({ type: "error", payload: { message: "IndexedDB is closed" } });
+    installChrome({ runtime: { sendMessage } });
+
+    await expect(sendRequestOrThrow({ type: "data.export" }, "data.exported")).rejects.toThrow(
+      "IndexedDB is closed",
+    );
+  });
+
+  it("rejects when the worker gives no response or a mismatched one", async () => {
+    const sendMessage = vi
+      .fn()
+      .mockResolvedValueOnce(undefined)
+      .mockResolvedValueOnce({ type: "page.listed", payload: { pages: [] } });
+    installChrome({ runtime: { sendMessage } });
+
+    await expect(sendRequestOrThrow({ type: "data.deleteAll" }, "data.deletedAll")).rejects.toThrow(
+      "DevRecall did not respond",
+    );
+    await expect(sendRequestOrThrow({ type: "data.deleteAll" }, "data.deletedAll")).rejects.toThrow(
+      "DevRecall did not respond",
+    );
+  });
+
+  it("rejects when the channel rejects", async () => {
+    const sendMessage = vi.fn().mockRejectedValue(new Error("Message length exceeded maximum"));
+    installChrome({ runtime: { sendMessage } });
+
+    await expect(sendRequestOrThrow({ type: "data.export" }, "data.exported")).rejects.toThrow(
+      "Message length exceeded maximum",
+    );
+  });
+
+  it("rejects when chrome.runtime is unavailable", async () => {
+    await expect(sendRequestOrThrow({ type: "data.export" }, "data.exported")).rejects.toThrow(
+      "DevRecall is unavailable",
+    );
   });
 });
 
