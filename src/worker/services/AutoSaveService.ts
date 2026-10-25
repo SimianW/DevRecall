@@ -15,6 +15,13 @@
  * • All chrome.* calls are hidden behind injectable ports so unit tests never touch
  *   real browser APIs and never wait a real 30 s.
  *
+ * • Only a tab in front (the active tab of its window) dwells. Window focus does
+ *   not matter, so a page left in front while the user types in another app still
+ *   saves. Each window can have one dwelling tab. Tabs that load in the
+ *   background never start a timer, and activating a tab cancels the dwell of
+ *   any tab that is no longer in front. Alarms cannot pause, so returning to a
+ *   tab starts its dwell again from zero.
+ *
  * Alarm naming
  * ------------
  *   `autosave:<tabId>`  — one alarm per tab, created on dwell start.
@@ -28,9 +35,6 @@ import { normalizeUrl } from "../../lib/urlNormalize";
 import { isAllowlisted } from "../../shared/allowlist";
 import type { PageStatus } from "../../shared/types";
 
-// Re-export so existing test imports continue to work.
-export { ALLOWLIST_PATTERNS, isAllowlisted } from "../../shared/allowlist";
-
 // ---------------------------------------------------------------------------
 // Injectable ports (thin wrappers around Chrome APIs in production)
 // ---------------------------------------------------------------------------
@@ -40,6 +44,8 @@ export type AlarmPort = {
   create(name: string, when: number): Promise<void>;
   /** Cancel an alarm by name. Resolves to true if the alarm existed. */
   clear(name: string): Promise<boolean>;
+  /** Names of every scheduled alarm. */
+  getAllNames(): Promise<string[]>;
 };
 
 export type SessionStoragePort = {
@@ -49,7 +55,10 @@ export type SessionStoragePort = {
 };
 
 export type TabQueryPort = {
-  /** Returns the URL of the currently active tab in the focused window, or null. */
+  /**
+   * Returns the tab's URL while it is the active tab of its window, whether or
+   * not that window is focused. Returns null for background and closed tabs.
+   */
   getActiveTabUrl(tabId: number): Promise<string | null>;
 };
 
@@ -89,22 +98,6 @@ function isDwellEntry(value: unknown): value is DwellEntry {
 const ALARM_PREFIX = "autosave:";
 
 export class AutoSaveService {
-  /**
-   * tabId of the tab whose dwell is currently in progress, or null.
-   * This in-memory field is only used to cancel a previous dwell when switching
-   * tabs — the actual dwell state is persisted in session storage.
-   *
-   * Residual scenario after worker restart: this field is reset to null whenever
-   * the worker is killed and restarted by Chrome. If the user switches tabs
-   * during that restart window, the cancel for the old tab is skipped (we have
-   * no memory of it). The alarm for the old tab may still fire, but
-   * `onAlarmFired` re-verifies the current tab URL and performs a dedup check,
-   * so double-capture or stale-URL capture cannot occur — the worst outcome is
-   * a missed cancel that leaves a harmless orphan alarm entry which fires and
-   * is then discarded.
-   */
-  private currentDwellTabId: number | null = null;
-
   constructor(
     private readonly alarm: AlarmPort,
     private readonly session: SessionStoragePort,
@@ -122,16 +115,17 @@ export class AutoSaveService {
 
   /** Called from chrome.tabs.onActivated. */
   async onTabActivated(tabId: number): Promise<void> {
-    // Cancel the previous tab's dwell (if any).
-    if (this.currentDwellTabId !== null && this.currentDwellTabId !== tabId) {
-      await this.cancelDwell(this.currentDwellTabId);
+    // The tab this one replaced in its window is now in the background.
+    await this.cancelBackgroundDwells(tabId);
+
+    const url = await this.tab.getActiveTabUrl(tabId);
+    if (!url) {
+      // Already replaced by a later activation.
+      await this.cancelDwell(tabId);
+      return;
     }
 
-    // Resolve the URL of the newly activated tab and maybe start a dwell.
-    const url = await this.tab.getActiveTabUrl(tabId);
-    if (url) {
-      await this.startDwell(tabId, url);
-    }
+    await this.startDwell(tabId, url);
   }
 
   /** Called from chrome.tabs.onUpdated with the updated tab's status and url. */
@@ -143,15 +137,17 @@ export class AutoSaveService {
     // A navigation on the same tab resets any existing dwell.
     await this.cancelDwell(tabId);
 
+    // Pages that finish loading in a background tab were never viewed.
+    if ((await this.tab.getActiveTabUrl(tabId)) !== url) {
+      return;
+    }
+
     await this.startDwell(tabId, url);
   }
 
   /** Called from chrome.tabs.onRemoved. */
   async onTabRemoved(tabId: number): Promise<void> {
     await this.cancelDwell(tabId);
-    if (this.currentDwellTabId === tabId) {
-      this.currentDwellTabId = null;
-    }
   }
 
   // -------------------------------------------------------------------------
@@ -173,14 +169,30 @@ export class AutoSaveService {
     const startedAt = Date.now();
     await this.session.set(alarmName(tabId), { url, startedAt });
     await this.alarm.create(alarmName(tabId), startedAt + this.dwellMs);
-
-    this.currentDwellTabId = tabId;
   }
 
   /** Cancel a dwell timer and remove its session state. */
   async cancelDwell(tabId: number): Promise<void> {
     await this.alarm.clear(alarmName(tabId));
     await this.session.remove(alarmName(tabId));
+  }
+
+  /**
+   * Cancel the dwell of every tab other than `exceptTabId` that is no longer in
+   * front. Dwells in other windows stay. Pending dwells are read from the
+   * scheduled alarms, so this also holds after a worker restart.
+   */
+  private async cancelBackgroundDwells(exceptTabId: number): Promise<void> {
+    const names = await this.alarm.getAllNames();
+    for (const name of names) {
+      const tabId = parseAlarmTabId(name);
+      if (tabId === null || tabId === exceptTabId) {
+        continue;
+      }
+      if ((await this.tab.getActiveTabUrl(tabId)) === null) {
+        await this.cancelDwell(tabId);
+      }
+    }
   }
 
   // -------------------------------------------------------------------------
@@ -192,13 +204,9 @@ export class AutoSaveService {
    * triggering the capture pipeline.
    */
   async onAlarmFired(name: string): Promise<void> {
-    if (!name.startsWith(ALARM_PREFIX)) {
+    const tabId = parseAlarmTabId(name);
+    if (tabId === null) {
       return; // Not one of ours.
-    }
-
-    const tabId = parseInt(name.slice(ALARM_PREFIX.length), 10);
-    if (isNaN(tabId)) {
-      return;
     }
 
     // Load session state (may be absent if the worker was restarted with no storage).
@@ -207,7 +215,8 @@ export class AutoSaveService {
       return;
     }
 
-    // Re-verify: the tab must still be on the exact same allowlisted URL.
+    // Re-verify: the tab must still be in front (active in its window) on the
+    // exact same allowlisted URL.
     const currentUrl = await this.tab.getActiveTabUrl(tabId);
     if (currentUrl !== entry.url) {
       await this.session.remove(alarmName(tabId));
@@ -256,6 +265,10 @@ export const chromeAlarmPort: AlarmPort = {
   async clear(name) {
     return chrome.alarms.clear(name);
   },
+  async getAllNames() {
+    const alarms = await chrome.alarms.getAll();
+    return alarms.map((alarm) => alarm.name);
+  },
 };
 
 /**
@@ -281,7 +294,7 @@ export const chromeTabPort: TabQueryPort = {
   async getActiveTabUrl(tabId) {
     try {
       const tab = await chrome.tabs.get(tabId);
-      return tab.url ?? null;
+      return tab.active && tab.url ? tab.url : null;
     } catch {
       return null;
     }
@@ -294,4 +307,13 @@ export const chromeTabPort: TabQueryPort = {
 
 function alarmName(tabId: number): string {
   return `${ALARM_PREFIX}${tabId}`;
+}
+
+/** Returns the tab id encoded in an auto-save alarm name, or null for other alarms. */
+function parseAlarmTabId(name: string): number | null {
+  if (!name.startsWith(ALARM_PREFIX)) {
+    return null;
+  }
+  const tabId = parseInt(name.slice(ALARM_PREFIX.length), 10);
+  return isNaN(tabId) ? null : tabId;
 }

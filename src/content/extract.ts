@@ -29,7 +29,24 @@ function collapseWhitespace(value: string): string {
   return value.replace(/\s+/g, " ").trim();
 }
 
-if (typeof chrome !== "undefined" && chrome.runtime?.onMessage) {
+/**
+ * The worker re-injects this script into tabs opened before install or update,
+ * and Chrome can still run the manifest copy afterwards (e.g. while the page is
+ * loading). The flag lives in this extension's isolated world, so each frame
+ * registers the listener at most once.
+ */
+const LISTENER_FLAG = "__devrecallExtractListener";
+
+function claimListener(): boolean {
+  const scope = globalThis as typeof globalThis & { [LISTENER_FLAG]?: true };
+  if (scope[LISTENER_FLAG]) {
+    return false;
+  }
+  scope[LISTENER_FLAG] = true;
+  return true;
+}
+
+if (typeof chrome !== "undefined" && chrome.runtime?.onMessage && claimListener()) {
   chrome.runtime.onMessage.addListener(
     (
       request: ContentExtractRequest,

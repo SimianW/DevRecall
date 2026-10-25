@@ -10,21 +10,35 @@ export async function sendRequest<T extends DevRecallResponse["type"]>(
   request: DevRecallRequest,
   expectedType: T,
 ): Promise<Extract<DevRecallResponse, { type: T }> | null> {
-  if (typeof chrome === "undefined" || !chrome.runtime?.sendMessage) {
-    return null;
-  }
-
   try {
-    const response = (await chrome.runtime.sendMessage(request)) as DevRecallResponse | undefined;
-
-    if (!response || response.type !== expectedType) {
-      return null;
-    }
-
-    return response as Extract<DevRecallResponse, { type: T }>;
+    return await sendRequestOrThrow(request, expectedType);
   } catch {
     return null;
   }
+}
+
+/**
+ * Like `sendRequest`, but rejects instead of returning null. A worker `error`
+ * response rejects with the worker's message. Use it where a silent fallback
+ * would look like success, such as exporting or deleting the library.
+ */
+export async function sendRequestOrThrow<T extends DevRecallResponse["type"]>(
+  request: DevRecallRequest,
+  expectedType: T,
+): Promise<Extract<DevRecallResponse, { type: T }>> {
+  if (typeof chrome === "undefined" || !chrome.runtime?.sendMessage) {
+    throw new Error("DevRecall is unavailable");
+  }
+
+  const response = (await chrome.runtime.sendMessage(request)) as DevRecallResponse | undefined;
+
+  if (response?.type === expectedType) {
+    return response as Extract<DevRecallResponse, { type: T }>;
+  }
+  if (response?.type === "error") {
+    throw new Error(response.payload.message);
+  }
+  throw new Error("DevRecall did not respond");
 }
 
 /** Subscribe to worker broadcasts. Returns an unsubscribe function. */

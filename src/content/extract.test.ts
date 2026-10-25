@@ -1,4 +1,4 @@
-import { beforeEach, describe, expect, it } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import { extractPage } from "./extract";
 
@@ -33,5 +33,29 @@ describe("extractPage", () => {
     document.body.innerHTML = "<main></main>";
 
     expect(() => extractPage(document, () => 1)).toThrow("No readable page text found");
+  });
+});
+
+describe("content script listener", () => {
+  const LISTENER_FLAG = "__devrecallExtractListener";
+
+  afterEach(() => {
+    delete (globalThis as Record<string, unknown>)["chrome"];
+    delete (globalThis as Record<string, unknown>)[LISTENER_FLAG];
+    vi.resetModules();
+  });
+
+  it("registers its message listener once when the script is injected twice", async () => {
+    const addListener = vi.fn();
+    (globalThis as Record<string, unknown>)["chrome"] = { runtime: { onMessage: { addListener } } };
+
+    vi.resetModules();
+    await import("./extract");
+    // A second evaluation, as when the worker injects into a tab that also
+    // received the manifest copy.
+    vi.resetModules();
+    await import("./extract");
+
+    expect(addListener).toHaveBeenCalledTimes(1);
   });
 });
