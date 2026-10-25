@@ -73,36 +73,99 @@ export function mergeFrameExtractions(frames: FrameExtraction[]): ExtractedPage 
   };
 }
 
+/**
+ * Waits between re-sends after an on-demand injection. The crxjs loader
+ * registers the listener through a dynamic import that `executeScript` does not
+ * await, so the first message can still find no receiver.
+ */
+const INJECTION_RETRY_DELAYS_MS = [50, 150, 300, 500];
+
+type FrameRequestResult = {
+  frames: FrameExtraction[];
+  /** Frames where `sendMessage` rejected, typically because no listener exists. */
+  unreachable: number[];
+};
+
 export class ChromePageExtractor implements PageExtractor {
+  constructor(private readonly retryDelaysMs: number[] = INJECTION_RETRY_DELAYS_MS) {}
+
   async extract(tabId: number): Promise<ExtractedPage> {
     if (typeof chrome === "undefined" || !chrome.tabs?.sendMessage) {
       throw new Error("Chrome tabs messaging is unavailable");
     }
 
-    const request: ContentExtractRequest = { type: "content.extract" };
     const frameIds = await this.frameIds(tabId);
+    const initial = await this.requestFrames(tabId, frameIds);
+    let frames = initial.frames;
 
-    const settled = await Promise.all(
-      frameIds.map(async (frameId): Promise<FrameExtraction | null> => {
-        try {
-          const response = (await chrome.tabs.sendMessage(tabId, request, {
-            frameId,
-          })) as ContentExtractResponse;
-          return response.type === "content.extracted" ? { frameId, page: response.payload } : null;
-        } catch {
-          // Frame has no content script (about:blank/srcdoc, injection blocked) — skip it.
-          return null;
+    // Chrome does not inject manifest content scripts into tabs that were open
+    // before an install or update. A silent top frame means this tab has none,
+    // so inject them on demand and ask the frames that did not answer again.
+    if (initial.unreachable.includes(0) && (await this.injectContentScripts(tabId))) {
+      let pending = initial.unreachable;
+      for (const delayMs of this.retryDelaysMs) {
+        if (pending.length === 0) {
+          break;
         }
-      }),
-    );
-
-    const frames = settled.filter((entry): entry is FrameExtraction => entry !== null);
+        await new Promise((resolve) => setTimeout(resolve, delayMs));
+        const retry = await this.requestFrames(tabId, pending);
+        frames = frames.concat(retry.frames);
+        pending = retry.unreachable;
+      }
+    }
 
     if (frames.length === 0) {
       throw new Error("No readable page text found");
     }
 
     return mergeFrameExtractions(frames);
+  }
+
+  private async requestFrames(tabId: number, frameIds: number[]): Promise<FrameRequestResult> {
+    const request: ContentExtractRequest = { type: "content.extract" };
+
+    const settled = await Promise.all(
+      frameIds.map(async (frameId): Promise<FrameExtraction | null | "unreachable"> => {
+        try {
+          const response = (await chrome.tabs.sendMessage(tabId, request, {
+            frameId,
+          })) as ContentExtractResponse;
+          return response.type === "content.extracted" ? { frameId, page: response.payload } : null;
+        } catch {
+          // Frame has no content script (about:blank/srcdoc, injection blocked, or
+          // opened before install) — skip it unless injection makes it reachable.
+          return "unreachable";
+        }
+      }),
+    );
+
+    return {
+      frames: settled.filter(
+        (entry): entry is FrameExtraction => entry !== null && entry !== "unreachable",
+      ),
+      unreachable: frameIds.filter((_, index) => settled[index] === "unreachable"),
+    };
+  }
+
+  /**
+   * Injects the manifest-declared content scripts into every frame of the tab.
+   * The built file names are hashed, so they are read from the runtime manifest.
+   * `extract.ts` guards its listener, so frames that already run it stay at one.
+   */
+  private async injectContentScripts(tabId: number): Promise<boolean> {
+    const files =
+      chrome.runtime?.getManifest?.().content_scripts?.flatMap((script) => script.js ?? []) ?? [];
+    if (files.length === 0 || !chrome.scripting?.executeScript) {
+      return false;
+    }
+
+    try {
+      await chrome.scripting.executeScript({ target: { tabId, allFrames: true }, files });
+      return true;
+    } catch {
+      // Restricted page (chrome://, Web Store) or the tab closed meanwhile.
+      return false;
+    }
   }
 
   /**

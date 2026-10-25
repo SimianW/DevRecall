@@ -763,4 +763,117 @@ describe("ChromePageExtractor", () => {
 
     expect(result.fullText).toBe(fakeExtracted.fullText);
   });
+
+  describe("on-demand injection for tabs opened before install or update", () => {
+    const loaderFile = "assets/extract.ts-loader-abc123.js";
+    type InjectChrome = {
+      runtime: { getManifest: ReturnType<typeof vi.fn> };
+      tabs: { sendMessage: ReturnType<typeof vi.fn> };
+      scripting: { executeScript: ReturnType<typeof vi.fn> };
+    };
+
+    function installChrome(): InjectChrome {
+      const chrome: InjectChrome = {
+        runtime: {
+          getManifest: vi.fn().mockReturnValue({ content_scripts: [{ js: [loaderFile] }] }),
+        },
+        tabs: { sendMessage: vi.fn() },
+        scripting: { executeScript: vi.fn().mockResolvedValue([{ frameId: 0 }]) },
+      };
+      (globalThis as Record<string, unknown>)["chrome"] = chrome;
+      return chrome;
+    }
+
+    function fileInjections(chrome: InjectChrome) {
+      return chrome.scripting.executeScript.mock.calls
+        .map((call) => call[0] as { target: unknown; files?: string[] })
+        .filter((injection) => injection.files);
+    }
+
+    it("injects the built content script and retries until the listener answers", async () => {
+      const chrome = installChrome();
+      chrome.tabs.sendMessage
+        .mockRejectedValueOnce(new Error("Receiving end does not exist."))
+        // The loader's dynamic import has not registered the listener yet.
+        .mockRejectedValueOnce(new Error("Receiving end does not exist."))
+        .mockResolvedValueOnce({ type: "content.extracted", payload: fakeExtracted });
+
+      const result = await new ChromePageExtractor([0, 0, 0]).extract(tabId);
+
+      expect(result).toEqual(fakeExtracted);
+      expect(fileInjections(chrome)).toEqual([
+        { target: { tabId, allFrames: true }, files: [loaderFile] },
+      ]);
+      expect(chrome.tabs.sendMessage).toHaveBeenCalledTimes(3);
+    });
+
+    it("re-asks only the frames that did not answer", async () => {
+      const chrome = installChrome();
+      chrome.scripting.executeScript.mockImplementation(async (injection: { files?: string[] }) =>
+        injection.files ? [] : [{ frameId: 0 }, { frameId: 3 }],
+      );
+      const iframeText: ExtractedPage = { ...fakeExtracted, fullText: "Longer article text." };
+      chrome.tabs.sendMessage.mockImplementation(
+        async (_tab: number, _request: unknown, options: { frameId: number }) => {
+          const calls = chrome.tabs.sendMessage.mock.calls.length;
+          if (options.frameId === 0 && calls <= 2) {
+            throw new Error("Receiving end does not exist.");
+          }
+          if (options.frameId === 3 && calls > 2) {
+            throw new Error("frame 3 must not be asked again");
+          }
+          return {
+            type: "content.extracted",
+            payload: options.frameId === 3 ? iframeText : fakeExtracted,
+          };
+        },
+      );
+
+      const result = await new ChromePageExtractor([0]).extract(tabId);
+
+      expect(result.fullText).toBe(iframeText.fullText);
+      expect(result.url).toBe(fakeExtracted.url);
+      expect(chrome.tabs.sendMessage).toHaveBeenCalledTimes(3);
+    });
+
+    it("does not inject when the top frame already answers", async () => {
+      const chrome = installChrome();
+      chrome.scripting.executeScript.mockResolvedValue([{ frameId: 0 }, { frameId: 5 }]);
+      chrome.tabs.sendMessage
+        .mockResolvedValueOnce({ type: "content.extracted", payload: fakeExtracted })
+        .mockRejectedValueOnce(new Error("about:blank frame has no content script"));
+
+      await new ChromePageExtractor([0]).extract(tabId);
+
+      expect(fileInjections(chrome)).toEqual([]);
+      expect(chrome.tabs.sendMessage).toHaveBeenCalledTimes(2);
+    });
+
+    it("throws once the retries are exhausted", async () => {
+      const chrome = installChrome();
+      chrome.tabs.sendMessage.mockRejectedValue(new Error("Receiving end does not exist."));
+
+      await expect(new ChromePageExtractor([0, 0]).extract(tabId)).rejects.toThrow(
+        "No readable page text found",
+      );
+      expect(fileInjections(chrome)).toHaveLength(1);
+      expect(chrome.tabs.sendMessage).toHaveBeenCalledTimes(3);
+    });
+
+    it("does not retry when the injection itself is rejected", async () => {
+      const chrome = installChrome();
+      chrome.scripting.executeScript.mockImplementation(async (injection: { files?: string[] }) => {
+        if (injection.files) {
+          throw new Error("Cannot access contents of the page");
+        }
+        return [{ frameId: 0 }];
+      });
+      chrome.tabs.sendMessage.mockRejectedValue(new Error("Receiving end does not exist."));
+
+      await expect(new ChromePageExtractor([0, 0]).extract(tabId)).rejects.toThrow(
+        "No readable page text found",
+      );
+      expect(chrome.tabs.sendMessage).toHaveBeenCalledTimes(1);
+    });
+  });
 });
